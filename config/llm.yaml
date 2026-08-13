@@ -1,0 +1,42 @@
+# LLM configuration for LLMReasoningClient and the orchestrator's router.
+#
+# Model IDs live here, not in code, so cost can be traded against quality without
+# a code change — the mitigation for R5 (LLM quota/cost exhaustion mid-sprint).
+# Verify the exact IDs against the provider's current model list before the demo;
+# they change more often than this file does.
+
+provider: openai
+
+models:
+  # Routing is a short classification with a fixed output schema. It runs on
+  # every single query, so it takes the cheapest model that can hold the schema.
+  router:
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 300
+
+  # Merging several agents' findings into one coherent answer is the hardest
+  # generation in the system (SRS 3.1.2 forbids concatenation), so it gets the
+  # stronger model.
+  merge:
+    model: gpt-4o
+    temperature: 0.2
+    max_tokens: 1200
+
+  # Per-agent explanation of its own figures.
+  explanation:
+    model: gpt-4o-mini
+    temperature: 0.2
+    max_tokens: 600
+
+limits:
+  request_timeout_s: 8.0     # below the 10s single-sector budget in SRS 3.4.1
+  max_retries: 1             # one retry, then degrade — retries eat the budget
+  daily_spend_cap_usd: 5.0
+
+cache:
+  # Prompt-hash cache. Required from Day 6 (R5) and it is also what makes the
+  # demo fast and repeatable.
+  enabled: true
+  path: .cache/llm
+  ttl_hours: 168

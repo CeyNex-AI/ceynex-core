@@ -1,0 +1,51 @@
+# Trade Economics agent — elasticity assumptions (SRS 3.1.5).
+#
+# These live in a documented config table rather than buried in code because
+# SRS 3.1.5 requires the simulation to state its assumptions, and because a
+# marker will ask where these numbers come from. Every entry needs a `source`.
+#
+# Populated properly on Day 7. Values below are PLACEHOLDERS carrying literature
+# ranges, not fitted estimates — the agent must surface `basis` in its
+# `assumptions` list so a reader knows which is which.
+
+fx_pass_through:
+  # Share of a depreciation that reaches USD export prices within one year.
+  # <1.0 because contracts are priced in USD and repriced with a lag.
+  agriculture:
+    value: 0.6
+    basis: literature_range
+    source: "TBD Day 7 — cite the source used"
+  apparel:
+    value: 0.4
+    basis: literature_range
+    source: "TBD Day 7 — apparel is more contract-priced than agriculture"
+
+export_demand_elasticity:
+  # % change in export volume per 1% change in the buyer's landed price.
+  # Negative by construction.
+  agriculture:
+    value: -0.8
+    basis: literature_range
+    source: "TBD Day 7"
+  apparel:
+    value: -1.2
+    basis: literature_range
+    source: "TBD Day 7 — apparel buyers substitute to Bangladesh/Vietnam more readily"
+
+tariff_incidence:
+  # Share of a tariff borne by the Sri Lankan exporter rather than the importer.
+  default:
+    value: 0.5
+    basis: assumption
+    source: "TBD Day 7 — symmetric split is the neutral prior; state it as such"
+
+model:
+  # The simulation is a documented linear elasticity model. This is an explicit,
+  # acceptable scope decision (M2 plan, load warning), not an unfinished one.
+  form: linear
+  horizon_months: 12
+  note: >
+    Net export revenue response is computed as a first-order linear elasticity.
+    It does not model substitution between destination markets, capacity
+    constraints, or second-round exchange-rate effects. The agent must state
+    these limits in its `assumptions` list on every simulation.
