@@ -1,0 +1,60 @@
+# CeyNex local development stack.
+#
+# Per ARCHITECTURE_DELTA (R8): Neo4j Community 5.x serves a single user database,
+# so each team member runs their own stack on their own ports rather than sharing
+# one instance with per-member database names. Override the *_PORT vars in .env.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ceynex-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ceynex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ceynex_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-ceynex}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./ceynex/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ceynex} -d ${POSTGRES_DB:-ceynex}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: ceynex-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-ceynex_dev_pw}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_apoc_export_file_enabled: "true"
+      NEO4J_apoc_import_file_enabled: "true"
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_server_memory_heap_max__size: 1G
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  adminer:
+    image: adminer:4
+    container_name: ceynex-adminer
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
