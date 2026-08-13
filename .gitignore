@@ -1,0 +1,38 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Data and artefacts — never committed, except reference tables and fixtures.
+data/raw/
+data/staging/
+data/parquet/
+models/
+!ceynex/data/reference/
+!tests/**/fixtures/
+
+# LLM prompt-hash cache
+.cache/
+
+# Frontend (M3)
+web/node_modules/
+web/dist/
+
+# Local-only working docs — not this repo's concern.
+# Anchored: ceynex/contracts/CLAUDE.md IS tracked, it guards the frozen package.
+/CLAUDE.md
+CeyNex_plan_updated/
+CeyNex_plan.tar.gz
+
+# Governing documents live in the team docs repo, not here (15MB of PDF/DOCX
+# that pre-commit's large-file check would reject anyway). Markdown under docs/
+# that this repo produces — ARCHITECTURE_DELTA, EVALUATION, DEFERRED — is tracked.
+docs/*
+!docs/*.md
