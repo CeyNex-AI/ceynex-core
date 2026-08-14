@@ -20,6 +20,8 @@ dependencies = [
     "statsmodels>=0.14",
     "lightgbm>=4.3",
     "scikit-learn>=1.5",
+    "pdfplumber>=0.11",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]

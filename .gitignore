@@ -10,8 +10,15 @@ venv/
 dist/
 build/
 
-# Data and artefacts — never committed, except reference tables and fixtures.
-data/raw/
+# Data and artefacts — never committed, except reference tables, fixtures,
+# and each connector's PROFILE.md (per .claude/commands/new-connector.md).
+# Layered on purpose: a negation can't re-include a file whose parent
+# directory is itself ignored, so `data/raw/<source>/` is un-ignored first
+# and only its contents are ignored again one level down.
+data/raw/*
+!data/raw/*/
+data/raw/*/*
+!data/raw/*/PROFILE.md
 data/staging/
 data/parquet/
 models/
