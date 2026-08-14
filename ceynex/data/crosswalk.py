@@ -272,3 +272,12 @@ def market_to_iso3(market_name: str) -> tuple[str | None, int | None]:
     if key is None:
         return None, None
     return _COUNTRIES[key]
+
+
+def known_aliases() -> tuple[str, ...]:
+    """Every recognized free-text alias, for scanning free-text (e.g. a user's
+    natural-language query) for a country mention — a different use case from
+    `market_to_iso3`, which resolves one already-known exact name. Returns a
+    plain tuple (not the live dict) so callers can't mutate the crosswalk.
+    """
+    return tuple(_ALIASES.keys())
