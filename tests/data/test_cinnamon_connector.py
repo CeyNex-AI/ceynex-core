@@ -29,9 +29,13 @@ def test_cinnamon_connector_stages_and_maps_annual_exports(tmp_path: Path) -> No
     connector = CinnamonConnector(workbook, tmp_path / "staging")
 
     raw = connector.fetch()
-    assert len(raw) == 2
+    repeated_raw = connector.fetch()
+    assert len(raw) == len(repeated_raw) == 2
+    assert raw["source_hash"].tolist() == repeated_raw["source_hash"].tolist()
     assert set(raw["source"]) == {"FAOSTAT", "DEA_EAC"}
-    assert connector.stage().exists()
+    first_stage, second_stage = connector.stage(), connector.stage()
+    assert first_stage == second_stage
+    assert first_stage.exists()
     assert connector.manifest().period_start == "2017"
 
     fact_trade = connector.to_fact_trade(raw)

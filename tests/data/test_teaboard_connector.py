@@ -41,9 +41,13 @@ def test_teaboard_connector_stages_and_maps_total_exports(tmp_path: Path) -> Non
     connector = TeaBoardConnector(workbook, tmp_path / "staging")
 
     raw = connector.fetch()
-    assert len(raw) == 20
+    repeated_raw = connector.fetch()
+    assert len(raw) == len(repeated_raw) == 20
+    assert raw["source_hash"].tolist() == repeated_raw["source_hash"].tolist()
     assert set(raw["metric"]) == {"export", "production"}
-    assert connector.stage().exists()
+    first_stage, second_stage = connector.stage(), connector.stage()
+    assert first_stage == second_stage
+    assert first_stage.exists()
     assert connector.manifest().period_start == "2024"
 
     fact_trade = connector.to_fact_trade(raw)
