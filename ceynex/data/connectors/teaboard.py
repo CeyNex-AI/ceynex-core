@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import resolve_snapshot_file
 
 
 class TeaBoardConnector(DataSourceConnector):
@@ -45,19 +46,22 @@ class TeaBoardConnector(DataSourceConnector):
         self._fetched_at: datetime | None = None
 
     def fetch(self) -> pd.DataFrame:
-        if not self.workbook_path.exists():
-            raise FileNotFoundError(self.workbook_path)
+        workbook = resolve_snapshot_file(
+            self.workbook_path, "tea_annual_production_exports_2011_2025.xlsx"
+        )
+        if not workbook.exists():
+            raise FileNotFoundError(workbook)
 
         production = self._read_sheet("Production", self._PRODUCTION_COLUMNS)
         exports = self._read_sheet("Exports", self._EXPORT_COLUMNS)
-        source_hash = hashlib.sha256(self.workbook_path.read_bytes()).hexdigest()
+        source_hash = hashlib.sha256(workbook.read_bytes()).hexdigest()
 
         frames = [
             self._to_long(production, "production", self._PRODUCTION_COLUMNS),
             self._to_long(exports, "export", self._EXPORT_COLUMNS),
         ]
         result = pd.concat(frames, ignore_index=True)
-        result["source_file"] = self.workbook_path.name
+        result["source_file"] = workbook.name
         result["source_hash"] = source_hash
         result = result.sort_values(["year", "metric", "category"], ignore_index=True)
         self._last, self._fetched_at = result, datetime.now(UTC)
@@ -82,7 +86,9 @@ class TeaBoardConnector(DataSourceConnector):
             period_end=str(int(years.max())),
             frequency="A",
             notes={
-                "workbook": self.workbook_path.name,
+                "workbook": resolve_snapshot_file(
+                    self.workbook_path, "tea_annual_production_exports_2011_2025.xlsx"
+                ).name,
                 "metrics": sorted(self._last["metric"].unique().tolist()),
                 "production_mapping": "staged only; fact_trade lacks production_volume",
             },
@@ -121,7 +127,10 @@ class TeaBoardConnector(DataSourceConnector):
         )
 
     def _read_sheet(self, sheet_name: str, value_columns: tuple[str, ...]) -> pd.DataFrame:
-        frame = pd.read_excel(self.workbook_path, sheet_name=sheet_name, header=3)
+        workbook = resolve_snapshot_file(
+            self.workbook_path, "tea_annual_production_exports_2011_2025.xlsx"
+        )
+        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=3)
         required = {"year", *value_columns, "source", "dq_flags"}
         missing = required.difference(frame.columns)
         if missing:

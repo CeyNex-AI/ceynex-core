@@ -6,7 +6,9 @@ from ceynex.data.connectors.pinksheet import PinkSheetConnector
 
 
 def test_pinksheet_connector_is_repeatable_with_offline_workbook_fixture(tmp_path: Path) -> None:
-    workbook = tmp_path / "pink_sheet.xlsx"
+    raw_dir = tmp_path / "pinksheet"
+    workbook = raw_dir / "2026-08-15" / "CMO-Historical-Data-Monthly.xlsx"
+    workbook.parent.mkdir(parents=True)
     pd.DataFrame(
         [
             ["Period", "Tea, Colombo", "Copper"],
@@ -15,7 +17,7 @@ def test_pinksheet_connector_is_repeatable_with_offline_workbook_fixture(tmp_pat
             ["Notes", None, None],
         ]
     ).to_excel(workbook, sheet_name="Monthly Prices", header=False, index=False)
-    connector = PinkSheetConnector(workbook, tmp_path / "staging")
+    connector = PinkSheetConnector(raw_dir, tmp_path / "staging")
 
     first = connector.fetch()
     second = connector.fetch()

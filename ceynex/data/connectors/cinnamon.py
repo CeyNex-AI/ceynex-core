@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import resolve_snapshot_file
 
 
 class CinnamonConnector(DataSourceConnector):
@@ -44,12 +45,15 @@ class CinnamonConnector(DataSourceConnector):
         self._fetched_at: datetime | None = None
 
     def fetch(self) -> pd.DataFrame:
-        if not self.workbook_path.exists():
-            raise FileNotFoundError(self.workbook_path)
+        workbook = resolve_snapshot_file(
+            self.workbook_path, "cinnamon_annual_fallback_2011_2025.xlsx"
+        )
+        if not workbook.exists():
+            raise FileNotFoundError(workbook)
 
         frames = [self._read_sheet(sheet_name) for sheet_name in self._SHEETS]
         result = pd.concat(frames, ignore_index=True)
-        result["source_hash"] = hashlib.sha256(self.workbook_path.read_bytes()).hexdigest()
+        result["source_hash"] = hashlib.sha256(workbook.read_bytes()).hexdigest()
         result = result.sort_values(
             ["year", "source", "metric", "category", "unit"], ignore_index=True
         )
@@ -75,7 +79,9 @@ class CinnamonConnector(DataSourceConnector):
             period_end=str(int(years.max())),
             frequency="A",
             notes={
-                "workbook": self.workbook_path.name,
+                "workbook": resolve_snapshot_file(
+                    self.workbook_path, "cinnamon_annual_fallback_2011_2025.xlsx"
+                ).name,
                 "sources": sorted(self._last["source"].unique().tolist()),
                 "scope": "fallback annual series; not Liyanage--Silva purchasing-price panel",
                 "fact_trade_mapping": "DEA/EAC annual total exports only",
@@ -120,12 +126,15 @@ class CinnamonConnector(DataSourceConnector):
         )
 
     def _read_sheet(self, sheet_name: str) -> pd.DataFrame:
-        frame = pd.read_excel(self.workbook_path, sheet_name=sheet_name, header=3)
+        workbook = resolve_snapshot_file(
+            self.workbook_path, "cinnamon_annual_fallback_2011_2025.xlsx"
+        )
+        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=3)
         missing = set(self._REQUIRED_COLUMNS).difference(frame.columns)
         if missing:
             raise ValueError(f"{sheet_name} sheet missing columns: {sorted(missing)}")
         frame = frame.loc[:, list(self._REQUIRED_COLUMNS)].copy()
         frame["year"] = pd.to_numeric(frame["year"], errors="raise").astype("int64")
         frame["value"] = pd.to_numeric(frame["value"], errors="raise")
-        frame["source_file"] = self.workbook_path.name
+        frame["source_file"] = workbook.name
         return frame

@@ -5,12 +5,13 @@ from ceynex.data.connectors.faostat import FAOSTATConnector
 
 def test_faostat_connector_is_repeatable_with_offline_csv_fixture(tmp_path: Path) -> None:
     raw_dir = tmp_path / "faostat"
-    raw_dir.mkdir()
-    (raw_dir / "producer_prices.csv").write_text(
+    snapshot = raw_dir / "2026-08-15"
+    snapshot.mkdir(parents=True)
+    (snapshot / "producer_prices.csv").write_text(
         "Year,Area,Item,Value\n2024,Sri Lanka,Cinnamon,3023119.4\n",
         encoding="utf-8",
     )
-    (raw_dir / "production.csv").write_text(
+    (snapshot / "production.csv").write_text(
         "Year,Area,Item,Value\n2024,Sri Lanka,Tea,264122\n",
         encoding="utf-8",
     )

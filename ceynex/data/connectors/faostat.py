@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import latest_snapshot_dir
 
 
 class FAOSTATConnector(DataSourceConnector):
@@ -24,9 +25,10 @@ class FAOSTATConnector(DataSourceConnector):
         self._fetched_at: datetime | None = None
 
     def fetch(self) -> pd.DataFrame:
-        files = sorted(self.raw_dir.glob("*.csv"))
+        source_dir = latest_snapshot_dir(self.raw_dir)
+        files = sorted(source_dir.glob("*.csv"))
         if not files:
-            raise FileNotFoundError(f"No FAOSTAT CSV files in {self.raw_dir}")
+            raise FileNotFoundError(f"No FAOSTAT CSV files in {source_dir}")
         frames = []
         for path in files:
             frame = pd.read_csv(path, encoding="latin1")

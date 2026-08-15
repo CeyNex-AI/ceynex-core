@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import resolve_snapshot_file
 
 
 class PinkSheetConnector(DataSourceConnector):
@@ -24,9 +25,10 @@ class PinkSheetConnector(DataSourceConnector):
         self._fetched_at: datetime | None = None
 
     def fetch(self) -> pd.DataFrame:
-        if not self.workbook_path.exists():
-            raise FileNotFoundError(self.workbook_path)
-        sheet = pd.read_excel(self.workbook_path, sheet_name="Monthly Prices", header=None)
+        workbook = resolve_snapshot_file(self.workbook_path, "CMO-Historical-Data-Monthly.xlsx")
+        if not workbook.exists():
+            raise FileNotFoundError(workbook)
+        sheet = pd.read_excel(workbook, sheet_name="Monthly Prices", header=None)
         header_row = next(i for i, row in sheet.iterrows() if "Tea, Colombo" in row.astype(str).tolist())
         data = sheet.iloc[header_row + 1 :].copy()
         data.columns = sheet.iloc[header_row].astype(str).str.strip()
@@ -38,7 +40,7 @@ class PinkSheetConnector(DataSourceConnector):
         price_columns = data.columns.drop("period")
         data[price_columns] = data[price_columns].apply(pd.to_numeric, errors="coerce")
         data = data.replace({"…": pd.NA, "â€¦": pd.NA})
-        data["source_hash"] = hashlib.sha256(self.workbook_path.read_bytes()).hexdigest()
+        data["source_hash"] = hashlib.sha256(workbook.read_bytes()).hexdigest()
         self._last, self._fetched_at = data.reset_index(drop=True), datetime.now(UTC)
         return self._last
 
@@ -52,4 +54,5 @@ class PinkSheetConnector(DataSourceConnector):
     def manifest(self) -> SourceManifest:
         if self._last is None or self._fetched_at is None:
             raise RuntimeError("Call fetch() before manifest().")
-        return SourceManifest(self.source_id, self._fetched_at.isoformat(), len(self._last), str(self._last["period"].min()), str(self._last["period"].max()), "M", {"workbook": self.workbook_path.name})
+        workbook = resolve_snapshot_file(self.workbook_path, "CMO-Historical-Data-Monthly.xlsx")
+        return SourceManifest(self.source_id, self._fetched_at.isoformat(), len(self._last), str(self._last["period"].min()), str(self._last["period"].max()), "M", {"workbook": workbook.name})

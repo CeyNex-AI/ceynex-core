@@ -24,9 +24,11 @@ def _write_workbook(path: Path) -> None:
 
 
 def test_cinnamon_connector_stages_and_maps_annual_exports(tmp_path: Path) -> None:
-    workbook = tmp_path / "cinnamon.xlsx"
+    raw_dir = tmp_path / "cinnamon"
+    workbook = raw_dir / "2026-08-15" / "cinnamon_annual_fallback_2011_2025.xlsx"
+    workbook.parent.mkdir(parents=True)
     _write_workbook(workbook)
-    connector = CinnamonConnector(workbook, tmp_path / "staging")
+    connector = CinnamonConnector(raw_dir, tmp_path / "staging")
 
     raw = connector.fetch()
     repeated_raw = connector.fetch()

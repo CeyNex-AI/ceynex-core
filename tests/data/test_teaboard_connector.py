@@ -36,9 +36,11 @@ def _write_workbook(path: Path) -> None:
 
 
 def test_teaboard_connector_stages_and_maps_total_exports(tmp_path: Path) -> None:
-    workbook = tmp_path / "tea.xlsx"
+    raw_dir = tmp_path / "tea_board"
+    workbook = raw_dir / "2026-08-15" / "tea_annual_production_exports_2011_2025.xlsx"
+    workbook.parent.mkdir(parents=True)
     _write_workbook(workbook)
-    connector = TeaBoardConnector(workbook, tmp_path / "staging")
+    connector = TeaBoardConnector(raw_dir, tmp_path / "staging")
 
     raw = connector.fetch()
     repeated_raw = connector.fetch()
