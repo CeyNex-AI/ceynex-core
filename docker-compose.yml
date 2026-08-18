@@ -5,7 +5,7 @@
 # one instance with per-member database names. Override the *_PORT vars in .env.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18
     container_name: ceynex-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ceynex}
@@ -14,8 +14,13 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./ceynex/data/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      # postgres:18 places its data in a version-named subdirectory and wants the
+      # mount here, not at /var/lib/postgresql/data. Mounting the inner path is
+      # what crash-looped the deployed database VM.
+      - postgres_data:/var/lib/postgresql
+    # No initdb mount: the schema lives in the ceynex-contracts package and is
+    # applied by `make db-init`, so the same code path serves this stack and the
+    # deployed VM (whose compose has no initdb hook at all).
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ceynex} -d ${POSTGRES_DB:-ceynex}"]
       interval: 5s
