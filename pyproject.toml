@@ -51,6 +51,13 @@ include = ["ceynex*", "eval*"]
 exclude = ["ceynex.contracts*"]
 namespaces = true
 
+# Data files the code reads at runtime. Without this they exist in a source
+# checkout and vanish once installed, so everything passes locally and the
+# container dies on startup. tests/test_layout.py asserts each one is reachable
+# through importlib.resources rather than through a source-relative path.
+[tool.setuptools.package-data]
+"ceynex.data" = ["reference/*.csv"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

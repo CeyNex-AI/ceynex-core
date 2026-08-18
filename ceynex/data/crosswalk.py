@@ -23,11 +23,16 @@ from __future__ import annotations
 import csv
 import functools
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 import pandas as pd
 
-REFERENCE_DIR = Path(__file__).parent / "reference"
+# importlib.resources, not `Path(__file__).parent`: these CSVs ship as package
+# data, and a source-relative path resolves to a directory that does not exist
+# once the package is installed into site-packages — which is exactly how the
+# container failed on its first deploy.
+REFERENCE_DIR = Path(str(files("ceynex.data") / "reference"))
 
 
 class CrosswalkError(KeyError):

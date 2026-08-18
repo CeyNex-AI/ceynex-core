@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import logging
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,8 @@ from ceynex.kg.client import KnowledgeGraphClient
 
 log = logging.getLogger(__name__)
 
-REFERENCE_DIR = Path(__file__).parent.parent.parent / "data" / "reference"
+# Shipped as package data — see the note in ceynex/data/crosswalk.py.
+REFERENCE_DIR = Path(str(files("ceynex.data") / "reference"))
 
 
 def _rows(filename: str) -> list[dict[str, str]]:
