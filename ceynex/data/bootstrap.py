@@ -41,29 +41,43 @@ def apply_schema(conn: psycopg.Connection) -> None:
         cur.execute(schema_sql())
 
 
-def apply_upsert_index(conn: psycopg.Connection) -> None:
-    """Deviation D5 — a NULLS NOT DISTINCT unique index for the writer to upsert on.
+UPSERT_CONSTRAINT = "fact_trade_upsert_key"
+
+
+def apply_upsert_constraint(conn: psycopg.Connection) -> None:
+    """Deviation D5 — a NULLS NOT DISTINCT unique constraint to upsert against.
 
     `fact_trade`'s declared UNIQUE spans `hs_code` and `partner_iso3`, both
-    nullable. Postgres treats NULLs as distinct within a unique constraint, so
-    the world-partner rows (partner_iso3 IS NULL) never conflict and `ON
-    CONFLICT` silently inserts a duplicate on every re-ingest instead of
-    updating. `NULLS NOT DISTINCT` (Postgres 15+) is the fix.
+    nullable. Postgres treats NULLs as distinct inside a unique constraint, so
+    rows differing only in a NULL never conflict: `ON CONFLICT` would miss them
+    and every re-ingest would insert duplicates instead of updating, silently.
+    `NULLS NOT DISTINCT` (Postgres 15+) is the fix.
 
-    Added as a second index rather than by editing the frozen DDL: the contract's
-    declared constraint is untouched, and this is recorded in
-    docs/ARCHITECTURE_DELTA.md.
+    A *constraint* rather than a bare index, because `ON CONFLICT ON CONSTRAINT`
+    names it explicitly. Inferring an arbiter from a column list would be
+    ambiguous here — the contract's own constraint covers the same columns, and
+    letting Postgres pick between them is how this silently reverts.
+
+    The declared constraint is left in place. It is strictly weaker than this
+    one, so it never blocks anything, and keeping it means the frozen DDL remains
+    literally true of the database.
     """
     with conn.cursor() as cur:
         cur.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS fact_trade_upsert_key
-                ON fact_trade (
-                    source_id, item, hs_code, reporter_iso3,
-                    partner_iso3, period_start, frequency
-                )
-                NULLS NOT DISTINCT
-            """
+            "SELECT 1 FROM pg_constraint WHERE conname = %s",
+            (UPSERT_CONSTRAINT,),
+        )
+        if cur.fetchone():
+            return
+        cur.execute(
+            f"""
+            ALTER TABLE fact_trade
+              ADD CONSTRAINT {UPSERT_CONSTRAINT}
+              UNIQUE NULLS NOT DISTINCT (
+                  source_id, item, hs_code, reporter_iso3,
+                  partner_iso3, period_start, frequency
+              )
+            """  # noqa: S608 - identifier is a module constant
         )
 
 
@@ -125,7 +139,7 @@ def bootstrap(dsn: str | None = None, *, dry_run: bool = False) -> dict[str, int
 
     with psycopg.connect(dsn) as conn:
         apply_schema(conn)
-        apply_upsert_index(conn)
+        apply_upsert_constraint(conn)
         countries, hs_codes = seed_dimensions(conn)
         conn.commit()
         counts = verify(conn)
