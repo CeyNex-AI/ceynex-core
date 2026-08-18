@@ -11,7 +11,14 @@ dist/
 build/
 
 # Data and artefacts — never committed, except reference tables and fixtures.
-data/raw/
+# Raw pulls and derived artefacts are never committed, but each source's
+# PROFILE.md is. Ignoring `data/raw/*/` as a directory would make that
+# impossible — git cannot re-include a file whose parent directory is excluded —
+# so the cached payloads are ignored by extension instead.
+data/raw/**/*.json
+data/raw/**/*.csv
+data/raw/**/*.zip
+data/raw/**/*.xlsx
 data/staging/
 data/parquet/
 models/

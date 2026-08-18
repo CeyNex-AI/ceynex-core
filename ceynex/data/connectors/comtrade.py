@@ -70,6 +70,9 @@ class ComtradeConnector(DataSourceConnector):
     source_id = SOURCE_ID
     refresh_mode = "scheduled"
 
+    #: (hs_code, year) pairs that returned no rows on the last fetch.
+    empty_pulls: list[tuple[str, int]]
+
     def __init__(
         self,
         hs_codes: tuple[str, ...] = DEFAULT_HS_CODES,
@@ -86,6 +89,7 @@ class ComtradeConnector(DataSourceConnector):
         self.cache_root = cache_root or (data_dir() / "raw" / "comtrade")
         self.timeout_s = timeout_s
         self.offline = offline
+        self.empty_pulls = []
         self._manifest: SourceManifest | None = None
 
     # --- provenance ------------------------------------------------------
@@ -107,12 +111,18 @@ class ComtradeConnector(DataSourceConnector):
     def fetch(self) -> pd.DataFrame:
         """One call per (hs_code, year). Cached responses are reused, not re-fetched."""
         frames: list[pd.DataFrame] = []
+        self.empty_pulls: list[tuple[str, int]] = []
         for hs_code in self.hs_codes:
             for year in self.years:
                 payload = self._load_or_fetch(hs_code, year)
                 rows = payload.get("data") or []
                 if not rows:
+                    # Not an error, and not nothing either: Sri Lanka has years
+                    # it did not report to Comtrade at all. A gap year silently
+                    # breaks CAGR endpoints and leaves a hole in every forecast
+                    # window, so it is recorded rather than logged and forgotten.
                     log.info("comtrade: no rows for hs=%s year=%s", hs_code, year)
+                    self.empty_pulls.append((hs_code, year))
                     continue
                 frames.append(pd.DataFrame(rows))
 
@@ -140,6 +150,8 @@ class ComtradeConnector(DataSourceConnector):
                 "subscription": self.uses_subscription,
                 "hs_codes": list(self.hs_codes),
                 "years": list(self.years),
+                "empty_pulls": [f"{hs}:{year}" for hs, year in self.empty_pulls],
+                "missing_years": sorted(_fully_missing_years(self.empty_pulls, self.hs_codes)),
             },
         )
         return raw
@@ -289,6 +301,17 @@ FACT_TRADE_COLUMNS = [
     "price_unit",
     "fx_usd_lkr",
 ]
+
+
+def _fully_missing_years(
+    empty: list[tuple[str, int]], hs_codes: tuple[str, ...]
+) -> set[int]:
+    """Years where *every* HS code came back empty — a reporting gap, not a
+    commodity that simply was not traded."""
+    by_year: dict[int, set[str]] = {}
+    for hs_code, year in empty:
+        by_year.setdefault(year, set()).add(hs_code)
+    return {year for year, codes in by_year.items() if codes >= set(hs_codes)}
 
 
 def _default_years() -> tuple[int, ...]:

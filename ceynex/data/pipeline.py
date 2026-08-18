@@ -49,7 +49,21 @@ def run_source(
     records = connector.to_fact_trade(raw)
     log.info("%s: %d raw rows -> %d fact_trade rows", name, len(raw), len(records))
 
-    return writer.write(records, source_id=connector.source_id)
+    result = writer.write(records, source_id=connector.source_id)
+
+    # A year the source did not report is a hole in every time series built on
+    # it. Reported here rather than left in the logs, because CAGR endpoints and
+    # forecast windows both break quietly on a gap.
+    try:
+        missing = connector.manifest().notes.get("missing_years") or []
+    except RuntimeError:
+        missing = []
+    if missing:
+        result.warnings.append(
+            f"{connector.source_id} reported no data at all for {missing} — "
+            "any growth rate or forecast spanning those years has a gap in it"
+        )
+    return result
 
 
 def verify(dsn: str | None = None) -> list[tuple[str, int]]:
@@ -102,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
               f"  {result.dq_flags:>4} dq flags")
         if result.error:
             print(f"       {result.error}")
+        for warning in result.warnings:
+            print(f"       warning: {warning}")
 
     print()
     _print_counts()
