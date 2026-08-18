@@ -63,12 +63,22 @@ def apply_upsert_constraint(conn: psycopg.Connection) -> None:
     literally true of the database.
     """
     with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_constraint WHERE conname = %s", (UPSERT_CONSTRAINT,))
+        if cur.fetchone():
+            return
+
+        # An earlier version of this function created a bare unique index under
+        # the same name. `ON CONFLICT ON CONSTRAINT` cannot name an index, so the
+        # index has to give way to a real constraint — and checking pg_constraint
+        # alone would miss it and fail with "relation already exists".
         cur.execute(
-            "SELECT 1 FROM pg_constraint WHERE conname = %s",
+            "SELECT 1 FROM pg_class WHERE relname = %s AND relkind = 'i'",
             (UPSERT_CONSTRAINT,),
         )
         if cur.fetchone():
-            return
+            log.info("replacing the legacy %s index with a constraint", UPSERT_CONSTRAINT)
+            cur.execute(f"DROP INDEX IF EXISTS {UPSERT_CONSTRAINT}")  # noqa: S608
+
         cur.execute(
             f"""
             ALTER TABLE fact_trade
