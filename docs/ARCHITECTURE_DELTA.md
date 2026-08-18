@@ -140,3 +140,44 @@ Import paths are unchanged — `from ceynex.contracts import AgentState` still
 works — so no teammate code needed editing. Neither repo ships a
 `ceynex/__init__.py`; adding one back shadows the other distribution.
 `tests/test_layout.py` guards it.
+
+---
+
+## D8 — Comtrade variant partner codes are aliased, not treated as unknown
+
+**Spec touched:** SRS 3.1.7, 3.6.1. **Found by running the connector, not by reading the spec.**
+
+The M2 plan names the EU aggregate (`partner = 97`) as *the* Comtrade partner
+trap, and D4 added World (`partner = 0`). Both are about rows that must be
+**excluded**. There is a third case, and it fails in the opposite direction.
+
+Comtrade does not use ISO 3166-1 numeric codes for territories it reports
+together with their dependencies. It reports the USA as **842** (ISO: 840),
+France as **251** (250), India as **699** (356), Switzerland as **757** (756) and
+Norway as **579** (578). None of these resolve against a plain M49 table, so a
+crosswalk built only from ISO 3166-1 drops them as unknown partners.
+
+Measured on a 2021–2023 pull of HS 0902/0906/4001/61/62:
+
+| Code | Country | Rows | Export value dropped |
+|---|---|---:|---:|
+| 842 | USA | 15 | USD 6,658,410,898 |
+| 251 | France | 15 | USD 342,438,422 |
+| 699 | India | 15 | USD 198,045,891 |
+| 757 | Switzerland | 12 | USD 23,042,363 |
+| 579 | Norway | 12 | USD 12,846,506 |
+| | **total** | | **USD 7,234,784,080** |
+
+The USA is Sri Lanka's largest apparel market. Losing it silently would have made
+every market-share, top-partner and CAGR figure in the system wrong, with nothing
+raising — the same failure mode as the EU aggregate, in the opposite direction.
+
+`ceynex/data/reference/partner_aliases.csv` maps these onto their ISO-3 codes and
+`to_iso3()` consults it. `tests/data/test_comtrade_connector.py` asserts all
+three of USA, India and France survive the mapping, and a further test asserts
+the committed fixture still contains the traps, so regenerating the fixture
+cannot quietly disarm them.
+
+**Sanity check, human-verified once:** the 2023 pull sums to USD 1.27bn of tea
+exports against a published figure of roughly USD 1.3bn, and USA/UK/Italy/Germany
+come out as the top four apparel destinations, which is the expected ordering.
