@@ -20,7 +20,7 @@ import sys
 from importlib.resources import files
 
 from ceynex.kg.client import KnowledgeGraphClient, KnowledgeGraphUnavailableError
-from ceynex.kg.loaders import trade_agreements
+from ceynex.kg.loaders import trade_agreements, trade_flows
 from ceynex.kg.queries import graph_summary
 from ceynex.settings import neo4j_config
 
@@ -44,7 +44,7 @@ async def summarize(kg: KnowledgeGraphClient) -> list[dict[str, object]]:
     return rows
 
 
-async def run(*, schema: bool, agreements: bool, verify: bool) -> int:
+async def run(*, schema: bool, agreements: bool, flows: bool, verify: bool) -> int:
     async with KnowledgeGraphClient() as kg:
         if not await kg.verify_connectivity():
             uri = neo4j_config()[0]
@@ -59,7 +59,14 @@ async def run(*, schema: bool, agreements: bool, verify: bool) -> int:
                 f"  trade agreements  {counts['agreements']:>4}"
                 f"\n  coverage edges    {counts['coverage_edges']:>4}"
             )
-        if verify or schema or agreements:
+        if flows:
+            counts = await trade_flows.load(kg)
+            print(
+                f"  countries         {counts['countries']:>6}"
+                f"\n  items             {counts['items']:>6}"
+                f"\n  export flows      {counts['flows']:>6}"
+            )
+        if verify or schema or agreements or flows:
             rows = await summarize(kg)
             if not rows:
                 print("  graph is empty")
@@ -72,17 +79,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply the CeyNex Neo4j schema and shared nodes.")
     parser.add_argument("--schema", action="store_true", help="apply constraints and indexes")
     parser.add_argument("--agreements", action="store_true", help="merge TradeAgreement nodes and coverage")
+    parser.add_argument("--flows", action="store_true", help="project fact_trade into EXPORTS_TO edges")
     parser.add_argument("--verify", action="store_true", help="report node counts and exit")
     args = parser.parse_args(argv)
 
     # Bare `python -m ceynex.kg.load` should do the useful thing, not nothing.
-    if not (args.schema or args.agreements or args.verify):
-        args.schema = args.agreements = True
+    if not (args.schema or args.agreements or args.flows or args.verify):
+        args.schema = args.agreements = args.flows = True
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     try:
-        return asyncio.run(run(schema=args.schema, agreements=args.agreements, verify=args.verify))
+        return asyncio.run(
+            run(
+                schema=args.schema,
+                agreements=args.agreements,
+                flows=args.flows,
+                verify=args.verify,
+            )
+        )
     except KnowledgeGraphUnavailableError as exc:
         log.error("%s", exc)
         return 1
