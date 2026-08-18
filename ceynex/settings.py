@@ -24,7 +24,33 @@ import yaml
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CONFIG_DIR = REPO_ROOT / "config"
+
+
+def config_dir() -> Path:
+    """Where `config/*.yaml` lives, in a source checkout or an installed package.
+
+    Not a constant, because the answer differs between the two layouts and the
+    difference only shows up on deployment. In a checkout the files sit beside
+    the `ceynex` package; installed into site-packages, `__file__.parent.parent`
+    is site-packages itself and the config is wherever the image put it — /app
+    for our container. Candidates are tried in order of specificity.
+    """
+    override = os.environ.get("CEYNEX_CONFIG_DIR")
+    candidates = [
+        Path(override) if override else None,
+        Path.cwd() / "config",
+        REPO_ROOT / "config",
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "llm.yaml").is_file():
+            return candidate
+
+    searched = [str(c) for c in candidates if c is not None]
+    raise FileNotFoundError(
+        "could not find config/llm.yaml. Looked in: "
+        + ", ".join(searched)
+        + ". Set CEYNEX_CONFIG_DIR to point at it."
+    )
 
 # Loaded once, and never overriding what is already exported: a value set in the
 # real environment (the container, CI) must win over a stray local .env.
@@ -90,7 +116,7 @@ def models_dir() -> Path:
 @functools.lru_cache(maxsize=8)
 def load_config(name: str) -> dict[str, Any]:
     """Read `config/<name>.yaml`. Cached — these are read on every agent call."""
-    path = CONFIG_DIR / f"{name}.yaml"
+    path = config_dir() / f"{name}.yaml"
     if not path.is_file():
         raise FileNotFoundError(f"missing config file: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
