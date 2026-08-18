@@ -23,7 +23,12 @@ import logging
 from types import TracebackType
 from typing import Any, Self
 
-from neo4j import AsyncDriver, AsyncGraphDatabase, NotificationDisabledClassification
+from neo4j import (
+    AsyncDriver,
+    AsyncGraphDatabase,
+    NotificationDisabledClassification,
+    NotificationMinimumSeverity,
+)
 from neo4j import exceptions as neo4j_exceptions
 
 from ceynex.settings import neo4j_config
@@ -88,6 +93,11 @@ class KnowledgeGraphClient:
                 notifications_disabled_classifications=[
                     NotificationDisabledClassification.UNRECOGNIZED,
                 ],
+                # Every schema re-application logs "index already exists" at
+                # INFORMATION, once per statement, with the full query text.
+                # `make kg-load` is idempotent by design, so that is the normal
+                # case, not news.
+                notifications_min_severity=NotificationMinimumSeverity.WARNING,
             )
         return self._driver
 
