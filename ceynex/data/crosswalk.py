@@ -76,6 +76,20 @@ def _aggregate_partners() -> dict[int, str]:
 
 
 @functools.lru_cache(maxsize=1)
+def _partner_aliases() -> dict[int, str]:
+    """Comtrade partner codes that are countries but not their ISO 3166-1 numeric.
+
+    Comtrade reports the USA as 842 rather than 840, France as 251 rather than
+    250, India as 699 rather than 356. These are real partners; treating them as
+    unknown drops them from the dataset silently.
+    """
+    path = REFERENCE_DIR / "partner_aliases.csv"
+    with path.open(encoding="utf-8") as fh:
+        rows = csv.DictReader(line for line in fh if not line.startswith("#"))
+        return {int(row["source_code"]): row["iso3"] for row in rows}
+
+
+@functools.lru_cache(maxsize=1)
 def _hs_codes() -> dict[str, tuple[str, str]]:
     """hs_code -> (description, sector)."""
     with (REFERENCE_DIR / "hs_codes.csv").open(encoding="utf-8") as fh:
@@ -104,6 +118,9 @@ def to_iso3(value: str | int) -> str:
 
     country = _by_m49().get(int(value))
     if country is None:
+        alias = _partner_aliases().get(int(value))
+        if alias is not None:
+            return alias
         if int(value) in _aggregate_partners():
             raise CrosswalkError(
                 f"M49 {value} is {_aggregate_partners()[int(value)]!r}, an aggregate partner, "
@@ -139,6 +156,19 @@ def is_known_country(value: str | int) -> bool:
 
 
 # --- Comtrade partner aggregates -----------------------------------------
+
+
+def is_partner_alias(code: str | int) -> bool:
+    """True for a Comtrade variant code that maps onto a real country."""
+    try:
+        return int(code) in _partner_aliases()
+    except (TypeError, ValueError):
+        return False
+
+
+def partner_alias_note(code: str | int) -> str | None:
+    """Why this code differs from the ISO numeric, for the data-quality log."""
+    return _partner_aliases().get(int(code))
 
 
 def is_aggregate_partner(m49: str | int) -> bool:
