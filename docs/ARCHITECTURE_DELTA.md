@@ -74,3 +74,69 @@ trap. Comtrade also emits **World** as `partner = 0`, which aggregates every
 partner and so double-counts far more aggressively. Both are excluded at the
 connector, and both exclusions are asserted in `tests/data/test_crosswalk.py`.
 Any market-share figure computed with either row present is wrong.
+
+---
+
+## D5 — a second unique index on `fact_trade` for the writer to upsert against
+
+**Spec touched:** team overview §4.2, SRS 3.10.2. **No contract file edited.**
+
+The frozen DDL declares
+
+```sql
+UNIQUE (source_id, item, hs_code, reporter_iso3, partner_iso3, period_start, frequency)
+```
+
+and both `hs_code` and `partner_iso3` are nullable. Postgres treats NULLs as
+distinct inside a unique constraint, so two rows that differ in nothing but a
+NULL `partner_iso3` do not conflict. The world-partner rows would therefore never
+match `ON CONFLICT`, and every re-ingest would insert duplicates rather than
+update — silently, since nothing raises.
+
+`ceynex/data/bootstrap.py` adds
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS fact_trade_upsert_key
+    ON fact_trade (source_id, item, hs_code, reporter_iso3,
+                   partner_iso3, period_start, frequency)
+    NULLS NOT DISTINCT
+```
+
+and `UnifiedDatasetWriter` upserts against `fact_trade_upsert_key` by name. The
+contract's own constraint is untouched, so this is an addition rather than a
+contract change. `NULLS NOT DISTINCT` requires Postgres 15+; the dev stack and
+the deployed VM both run 18.
+
+---
+
+## D6 — schemas are applied from code, not from a docker initdb mount
+
+**Spec touched:** SAD §7 (deployment), SRS 3.10.
+
+The dev stack mounted `schema.sql` into `/docker-entrypoint-initdb.d/`. That hook
+only ever fires on a first-boot empty volume, so it cannot apply anything to a
+database that already exists — and the deployed database VM's compose had no
+initdb hook at all, meaning the schema was never applied there by any mechanism.
+
+`schema.sql` and `schema.cypher` now ship as package data inside
+`ceynex-contracts` and are applied by `ceynex.data.bootstrap` (`make db-init`)
+and `ceynex.kg.load` (`make kg-load`). One code path serves a developer's local
+stack and the VM, and both are idempotent, so re-running them against a database
+two teammates are already loading into is free.
+
+---
+
+## D7 — `ceynex` split across two distributions as a namespace package
+
+**Spec touched:** none — this is a packaging decision, not an architectural one.
+
+The frozen contracts moved to their own repository, `ceynex-contracts`, so that
+the 3-way approval rule is enforced by pull-request review rather than by
+everyone remembering it. `ceynex` is therefore an implicit namespace package:
+`ceynex-contracts` supplies `ceynex.contracts`, `ceynex-core` supplies
+`ceynex.data`, `.kg`, `.models`, `.agents`, `.orchestrator`, `.llm` and `.api`.
+
+Import paths are unchanged — `from ceynex.contracts import AgentState` still
+works — so no teammate code needed editing. Neither repo ships a
+`ceynex/__init__.py`; adding one back shadows the other distribution.
+`tests/test_layout.py` guards it.
