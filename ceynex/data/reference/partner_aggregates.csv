@@ -1,0 +1,30 @@
+# Comtrade "partner" codes that are NOT countries. Every one of these must be
+# excluded before any market-share, CAGR or top-partner figure is computed:
+# summing them alongside real partners double-counts, silently, and every
+# derived percentage comes out wrong with no error anywhere.
+#
+# World (0) is the total across all partners. EU (97) is the bloc reported
+# alongside its own member states, so including it counts German, French and
+# Italian trade twice. Those two are the ones that will actually bite; the rest
+# are residual buckets Comtrade uses when a partner cannot be resolved.
+m49,label,reason
+0,World,total across all partners
+97,EU (as reported),bloc reported alongside its own member states
+129,Caribbean nes,residual bucket
+221,"Africa CAMEU region, nes",residual bucket
+290,Northern America nes,residual bucket
+471,CACM nes,residual bucket
+473,LAIA nes,residual bucket
+490,Other Asia nes,residual bucket
+527,Oceania nes,residual bucket
+536,Neutral Zone,not a reporting territory
+568,Other Europe nes,residual bucket
+577,Other Africa nes,residual bucket
+636,Rest of America nes,residual bucket
+637,North America and Central America nes,residual bucket
+697,Europe EFTA nes,residual bucket
+837,Bunkers,ship and aircraft stores
+838,Free Zones,not a destination country
+839,Special Categories,unclassified
+879,Western Asia nes,residual bucket
+899,Areas nes,residual bucket
