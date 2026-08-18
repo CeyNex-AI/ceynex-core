@@ -37,12 +37,18 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pandas as pd
+
 from ceynex.contracts.evidence import Evidence
+from ceynex.contracts.forecast import ForecastPoint
 from ceynex.contracts.protocols import KnowledgeGraphClientProtocol, LLMReasoningClientProtocol
 from ceynex.contracts.state import AgentOutput, AgentState, failed_output
 from ceynex.data.crosswalk import known_aliases, market_to_iso3
 from ceynex.kg.client import Neo4jClient
+from ceynex.models.apparel import MIN_OBSERVATIONS_FOR_FORECAST, NaiveApparelForecastModel
 from ceynex.orchestrator.confidence import clamp, staleness_penalty
+
+_FORECAST_HORIZON = 2
 
 _EDB_APPAREL_KEYS = ["apparel:apprel", "apparel:apparel"]
 _JAAF_COVERED_ISO3 = {"USA": "us", "GBR": "uk"}  # iso3 -> JAAF's own market label
@@ -134,6 +140,31 @@ def _derive_confidence(observation_count: int, latest_period: date | None) -> fl
     return clamp(base - staleness_penalty(months_stale))
 
 
+def _maybe_forecast(
+    iso3: str, edb_rows: list[dict]
+) -> tuple[list[ForecastPoint] | None, dict[str, float] | None]:
+    """Naive forecast + its own backtest, only when there's enough EDB history
+    to honestly evaluate it (see ceynex/models/apparel.py's module docstring
+    for why a naive baseline, not a fitted model, is the right choice here).
+    Returns (None, None) below that floor rather than a forecast nobody checked.
+    """
+    if len(edb_rows) < MIN_OBSERVATIONS_FOR_FORECAST:
+        return None, None
+
+    series = pd.DataFrame(
+        [
+            {"period": period.year, "value": float(row["value"])}
+            for row in edb_rows
+            if (period := _to_date(row["period"])) is not None
+        ]
+    )
+    if len(series) < MIN_OBSERVATIONS_FOR_FORECAST:
+        return None, None
+
+    model = NaiveApparelForecastModel(iso3).fit(series)
+    return model.predict(_FORECAST_HORIZON), model.backtest()
+
+
 async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) -> AgentOutput:
     edb_rows, edb_cypher = await kg.run(
         _PARTNER_QUERY, {"iso3": iso3, "product_keys": _EDB_APPAREL_KEYS}
@@ -160,6 +191,8 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
                 continue
             periods.append(period)
             figures[f"EDB_{period.year}"] = float(row["value"])
+
+    forecast_points, forecast_metrics = _maybe_forecast(iso3, edb_rows)
 
     jaaf_label = _JAAF_COVERED_ISO3.get(iso3)
     if jaaf_label is not None:
@@ -200,7 +233,7 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
             "side, not reconciled or averaged."
         )
 
-    return AgentOutput(
+    output = AgentOutput(
         agent="apparel_manufacturing",
         summary=(
             f"Sri Lanka's apparel exports to {iso3}: {len(edb_rows)} years of "
@@ -213,6 +246,38 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
         confidence=confidence,
         degraded=False,
     )
+
+    if forecast_points is not None:
+        output["forecast"] = forecast_points
+        evidence.append(
+            Evidence(
+                source_id="MODEL",
+                claim=(
+                    f"Naive (last-value) baseline forecast for {iso3} apparel exports, "
+                    f"backtested on {int(forecast_metrics['n_obs'])} years "
+                    f"({int(forecast_metrics['folds'])} rolling-origin folds): "
+                    f"MAPE {forecast_metrics['mape']:.1%}, "
+                    f"80% interval coverage {forecast_metrics['coverage']:.0%}."
+                ),
+                detail=(
+                    "NaiveApparelForecastModel (ceynex/models/apparel.py): last observed "
+                    "value carried forward, 80% interval from a bootstrap of one-step "
+                    "residuals. No published Sri Lankan apparel-export forecasting "
+                    "benchmark exists to compare against (.claude/commands/backtest.md)."
+                ),
+                period=str(edb_rows[0]["period"])[:10],
+            )
+        )
+        assumptions.append(
+            f"The forecast is a naive (flat) baseline, not a fitted model — the "
+            f"underlying series is only {len(edb_rows)} annual points, well under "
+            "the ~40-observation floor for anything more (risk register R3). "
+            "Its own backtest MAPE and interval coverage are reported alongside it "
+            "rather than a bare number, so the forecast's reliability is checkable, "
+            "not just asserted."
+        )
+
+    return output
 
 
 async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:

@@ -21,7 +21,7 @@ data/raw/*/*
 !data/raw/*/PROFILE.md
 data/staging/
 data/parquet/
-models/
+/models/
 !ceynex/data/reference/
 !tests/**/fixtures/
 

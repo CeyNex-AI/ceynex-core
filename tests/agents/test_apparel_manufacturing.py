@@ -37,6 +37,15 @@ _EDB_ROWS = [
     {"period": "2023-01-01", "value": 1782720000.0, "product_name": "APPREL"},
     {"period": "2022-01-01", "value": 2300240000.0, "product_name": "APPREL"},
 ]
+# Real EDB Apparel sub-category exports to the USA -- enough years (>=
+# MIN_OBSERVATIONS_FOR_FORECAST) to exercise the naive forecast path.
+_EDB_ROWS_FORECASTABLE = [
+    {"period": "2024-01-01", "value": 1875850000.0, "product_name": "APPREL"},
+    {"period": "2023-01-01", "value": 1782720000.0, "product_name": "APPREL"},
+    {"period": "2022-01-01", "value": 2300240000.0, "product_name": "APPREL"},
+    {"period": "2021-01-01", "value": 2082600000.0, "product_name": "APPREL"},
+    {"period": "2020-01-01", "value": 1649270000.0, "product_name": "APPREL"},
+]
 _JAAF_ROWS = [{"year": "2025-01-01", "total": 1947370000.0, "latest_month": "2025-05-01"}]
 _OVERVIEW_ROWS = [
     {"partner": "USA", "value": 1782720000.0, "period": "2023-01-01"},
@@ -65,6 +74,35 @@ async def test_happy_path_partner_query_validates_against_agent_output(monkeypat
     assert len(output["evidence"]) >= 2
     assert {e["source_id"] for e in output["evidence"]} == {"EDB", "JAAF"}
     assert output["summary"] == "Explained by LLM."
+    # Only 2 years of EDB history here -- below MIN_OBSERVATIONS_FOR_FORECAST,
+    # so no forecast should be attempted (see test below for the >=3-year case).
+    assert "forecast" not in output
+
+
+async def test_forecast_added_when_enough_edb_history(monkeypatch):
+    monkeypatch.setattr(
+        agent_module,
+        "_get_kg_client",
+        lambda: FakeKGClient(edb_rows=_EDB_ROWS_FORECASTABLE),
+    )
+    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
+
+    state = new_state(query="apparel exports to the United States", user_id="u1")
+    result = await apparel_manufacturing_node(state)
+    output = result["agent_outputs"]["apparel_manufacturing"]
+
+    assert "forecast" in output
+    assert len(output["forecast"]) == 2  # agent_module._FORECAST_HORIZON
+    for point in output["forecast"]:
+        assert point["lower"] <= point["point"] <= point["upper"]
+        assert point["unit"] == "USD"
+    # Naive baseline == last observed year's value (2024), flat across horizon.
+    assert output["forecast"][0]["point"] == pytest.approx(1875850000.0)
+
+    model_evidence = [e for e in output["evidence"] if e["source_id"] == "MODEL"]
+    assert len(model_evidence) == 1
+    assert "MAPE" in model_evidence[0]["claim"]
+    assert any("naive" in a.lower() for a in output["assumptions"])
 
 
 async def test_overview_query_when_no_partner_named(monkeypatch):
