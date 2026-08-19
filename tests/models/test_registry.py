@@ -107,3 +107,38 @@ def test_retrain_keeps_the_model_class_and_leaves_the_old_version_in_place():
     assert retrained.model_class == original.model_class, "a retrain must not swap the model family"
     assert retrained.version != original.version
     assert len(registry.list_models()) == 2, "the previous version must stay loadable"
+
+
+# --- choosing between two registered families ----------------------------
+
+
+def test_load_best_prefers_the_lower_error_not_the_newer_save():
+    """Two families for one item is the normal case, not an edge case."""
+    registry.save(fitted(), version="v1", metrics={"mape": 0.06})
+    registry.save(fitted(), version="v2", metrics={"mape": 0.12})
+
+    best = registry.load_best(item="cinnamon")
+    assert best is not None
+    assert best.version == "v1"
+    assert registry.load_latest(item="cinnamon").version == "v2", "load_latest changed meaning"
+
+
+def test_load_best_ignores_versions_that_were_never_backtested():
+    """An unscored model has made no claim, so it does not win by default."""
+    registry.save(fitted(), version="scored", metrics={"mape": 0.20})
+    registry.save(fitted(), version="unscored")
+
+    assert registry.load_best(item="cinnamon").version == "scored"
+
+
+def test_load_best_is_none_when_nothing_has_been_scored():
+    registry.save(fitted())
+    assert registry.load_best(item="cinnamon") is None
+
+
+def test_load_best_skips_a_nan_metric():
+    """A NaN MAPE compares false against everything and would win a naive min()."""
+    registry.save(fitted(), version="nan", metrics={"mape": float("nan")})
+    registry.save(fitted(), version="real", metrics={"mape": 0.30})
+
+    assert registry.load_best(item="cinnamon").version == "real"

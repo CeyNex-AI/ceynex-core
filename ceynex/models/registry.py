@@ -282,6 +282,44 @@ def load_latest(
     return load(newest.sector, newest.item, newest.target, newest.version)
 
 
+def load_best(
+    *,
+    item: str,
+    sector: str | None = None,
+    target: str | None = None,
+    metric: str = "mape",
+) -> ForecastModel | None:
+    """The best-scoring registered model for an item, or None if none is scored.
+
+    `load_latest` answers "what was registered most recently", which is the wrong
+    question when two families are registered for the same item: measured on real
+    Sri Lankan data, SARIMA scores 6.3% MAPE on cinnamon and LightGBM 12.2%, and
+    serving the worse one because it happened to be saved second is a silent
+    accuracy loss with no signal that it happened.
+
+    Only versions carrying a backtest metric are eligible — an unscored model has
+    made no claim to be better, so it does not get to win by default.
+    """
+    scored = [
+        m
+        for m in list_models()
+        if _slug(m.item) == _slug(item)
+        and (sector is None or _slug(m.sector) == _slug(sector))
+        and (target is None or _slug(m.target) == _slug(target))
+        and m.metrics is not None
+        and _usable(m.metrics.get(metric))
+    ]
+    if not scored:
+        return None
+    best = min(scored, key=lambda m: m.metrics[metric])
+    return load(best.sector, best.item, best.target, best.version)
+
+
+def _usable(value: Any) -> bool:
+    """A metric that is missing or NaN cannot rank anything."""
+    return isinstance(value, int | float) and value == value
+
+
 def list_models(sector: str | None = None, item: str | None = None) -> list[ModelMetadata]:
     """Every registered version, newest first. Empty registry is not an error."""
     root = _root()
@@ -366,6 +404,7 @@ __all__ = [
     "RegistryError",
     "list_models",
     "load",
+    "load_best",
     "load_latest",
     "record_metrics",
     "retrain",

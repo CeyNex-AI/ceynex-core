@@ -261,11 +261,14 @@ def _load_registered_model(item: str) -> Any | None:
     sprint, and this node has to work before it does.
     """
     try:
-        from ceynex.models.registry import load_latest
+        from ceynex.models.registry import load_best, load_latest
     except ImportError:
         return None
     try:
-        return load_latest(item=item)
+        # Best-scoring first. Newest is only the right answer when nothing has
+        # been backtested yet, and serving a model with twice the error because
+        # it was registered second is a loss nobody would see.
+        return load_best(item=item) or load_latest(item=item)
     except Exception as exc:  # noqa: BLE001 - no registered model is the normal case
         log.debug("no registered model for %s: %s", item, exc)
         return None
