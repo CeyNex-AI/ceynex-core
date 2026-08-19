@@ -19,10 +19,11 @@ figure is added as corroborating evidence; JAAF's own scope is the broader
 two are never averaged or reconciled against each other here — surfaced
 side by side, with that scope difference stated in `assumptions`.
 
-`ceynex/llm/` has no real client implementation yet (empty placeholder), so
-`_get_llm_client` returns `None` until one exists — this node treats that
-identically to a live provider failure (SRS 3.4.3): figures and evidence are
-still returned, `degraded=True`, with a templated (non-LLM) summary.
+`deps.llm.generate_explanation` (`ceynex/llm/client.py`) returns `""` rather
+than raising when the provider is unreachable, out of budget, or unconfigured
+— this node treats an empty return identically to that live provider failure
+(SRS 3.4.3): figures and evidence are still returned, `degraded=True`, with
+the templated (non-LLM) summary standing in for prose.
 
 Confidence derivation (SRS 3.1.4, never hardcoded): a base term that scales
 with how many real KG-backed observations support the answer, minus
@@ -36,15 +37,16 @@ in its place.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pandas as pd
 
+from ceynex.agents.common import AgentDeps
 from ceynex.contracts.evidence import Evidence
 from ceynex.contracts.forecast import ForecastPoint
-from ceynex.contracts.protocols import KnowledgeGraphClientProtocol, LLMReasoningClientProtocol
+from ceynex.contracts.protocols import KnowledgeGraphClientProtocol
 from ceynex.contracts.state import AgentOutput, AgentState, failed_output
 from ceynex.data.crosswalk import known_aliases, market_to_iso3
-from ceynex.kg.client import Neo4jClient
 from ceynex.models.apparel import MIN_OBSERVATIONS_FOR_FORECAST, NaiveApparelForecastModel
 from ceynex.orchestrator.confidence import clamp, staleness_penalty
 
@@ -89,15 +91,6 @@ RETURN year, total, latest_month
 ORDER BY year DESC
 LIMIT 3
 """
-
-
-def _get_kg_client() -> KnowledgeGraphClientProtocol:
-    return Neo4jClient()
-
-
-def _get_llm_client() -> LLMReasoningClientProtocol | None:
-    """No shared LLM client implementation exists yet — see module docstring."""
-    return None
 
 
 def _detect_partner(query: str) -> tuple[str, int] | None:
@@ -321,15 +314,14 @@ async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:
     )
 
 
-async def apparel_manufacturing_node(state: AgentState) -> AgentState:
+async def apparel_manufacturing_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     """Answer an apparel-export question from the knowledge graph (SRS 3.1.6)."""
     try:
-        kg = _get_kg_client()
         partner = _detect_partner(state["query"])
         output = (
-            await _query_partner(kg, partner[0], partner[1])
+            await _query_partner(deps.kg, partner[0], partner[1])
             if partner is not None
-            else await _query_overview(kg)
+            else await _query_overview(deps.kg)
         )
     except Exception as exc:  # noqa: BLE001 — contract requires never raising
         return {
@@ -342,17 +334,14 @@ async def apparel_manufacturing_node(state: AgentState) -> AgentState:
     if output.get("error") or not output["evidence"]:
         return {"agent_outputs": {"apparel_manufacturing": output}, "errors": [output.get("error", "")]}
 
-    llm = _get_llm_client()
-    if llm is None:
-        output["degraded"] = True
-        return {"agent_outputs": {"apparel_manufacturing": output}}
-
-    try:
-        prose = await llm.generate_explanation(
-            {"figures": output["figures"], "evidence": output["evidence"]}
-        )
+    # `generate_explanation` never raises — "" is itself the degraded signal
+    # (see `LLMReasoningClientProtocol`/`ceynex/llm/client.py`).
+    prose = await deps.llm.generate_explanation(
+        {"figures": output["figures"], "evidence": output["evidence"]}
+    )
+    if prose:
         output["summary"] = prose
-    except Exception:  # noqa: BLE001 — provider failure degrades, never raises (SRS 3.4.3)
+    else:
         output["degraded"] = True
 
     return {"agent_outputs": {"apparel_manufacturing": output}}

@@ -43,3 +43,7 @@ CeyNex_plan.tar.gz
 # that this repo produces — ARCHITECTURE_DELTA, EVALUATION, DEFERRED — is tracked.
 docs/*
 !docs/*.md
+
+# `make docs` output. Regenerate with `make docs`; the binaries it reads are not
+# in this repo.
+docs/_text/

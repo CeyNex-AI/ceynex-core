@@ -1,0 +1,19 @@
+# Comtrade partner codes that are real countries but do NOT match the ISO 3166-1
+# numeric code for that country. Comtrade uses its own variant for territories
+# that include dependencies in the reporting.
+#
+# These are not aggregates and must not be dropped. Before this table existed,
+# 842 (USA) alone accounted for USD 6.66bn of Sri Lankan exports over 2021-2023
+# that vanished from fact_trade with only a log line — which would have made
+# every market-share, top-partner and CAGR figure in the system wrong.
+#
+# Verified against the raw Comtrade responses cached under data/raw/comtrade/.
+source_code,iso3,note
+842,USA,USA including Puerto Rico and US Virgin Islands
+251,FRA,France including Monaco
+699,IND,India including Sikkim
+757,CHE,Switzerland including Liechtenstein
+579,NOR,Norway including Svalbard and Jan Mayen
+381,ITA,Italy including San Marino and the Holy See
+711,ZAF,Southern African Customs Union reported as South Africa
+590,PAN,Panama including the former Canal Zone

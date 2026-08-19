@@ -1,145 +1,107 @@
-"""Apparel knowledge graph loader (SRS 3.3.4) — provisional, apparel-only.
+"""Implements SRS 3.1.9 — applies schema.cypher and loads the shared graph nodes.
 
-STUB — like `ceynex/data/pipeline.py`, scoped to what M3 owns (apparel) and
-meant to be swapped for a real multi-sector loader, not extended in place.
-The schema it writes to (`ceynex/kg/schema.py`) is deliberately sector-agnostic
-so that swap doesn't require a graph migration, only a different Python
-entrypoint pointed at the same node/relationship shape.
+    make kg-load
+    python -m ceynex.kg.load --schema --agreements
+    python -m ceynex.kg.load --verify        # report what is in the graph
 
-Reads `fact_trade`-shaped rows (currently: the staging parquet produced by
-`ceynex/data/pipeline.py` — swap for a Postgres read once that's the source
-of truth) and MERGEs them into Neo4j via one batched `UNWIND` per run, so
-re-running this loader is a no-op for records already present.
-
-Usage: `python -m ceynex.kg.load --schema` (apply constraints first, then
-load) or `python -m ceynex.kg.load` (load only, assumes schema already
-applied). `--agreements` is accepted for compatibility with the Makefile's
-`kg-load` target but not implemented here — GSP+/FTA agreement edges are
-Trade Economics Agent scope (SRS 3.1.5), not Apparel & Manufacturing's.
-
-First-loaded-wins on a given `source_hash`: `MERGE ... ON CREATE SET` only
-writes properties the first time a node is created, so if two EDB editions'
-overlapping trailing years ever genuinely disagree (a revision, not just a
-duplicate), whichever edition is listed first in `apparel_sources.py` wins,
-not the most recent one. Confirmed on the real data that the one pair of
-overlapping years checked reported identical figures across editions, so
-this hasn't been a live issue — but it's a policy choice, not a guarantee,
-and worth a real "latest edition wins" rule if revisions turn out to matter.
+Idempotent by construction: every schema statement is `IF NOT EXISTS` and every
+loader statement is `MERGE`. Running this against a graph M1 and M3 are already
+loading into adds their missing pieces and touches nothing else, which is what
+makes a shared Neo4j workable at all (see deviation D2 — Community edition
+serves one database, so there is no per-member namespace to hide behind).
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
-import os
-from pathlib import Path
+import logging
+import sys
+from importlib.resources import files
 
-import pandas as pd
-from neo4j import AsyncGraphDatabase
+from ceynex.kg.client import KnowledgeGraphClient, KnowledgeGraphUnavailableError
+from ceynex.kg.loaders import trade_agreements, trade_flows
+from ceynex.kg.queries import graph_summary
+from ceynex.settings import neo4j_config
 
-from ceynex.kg.schema import apply_schema
-
-STAGING_PARQUET = Path("data/staging/fact_trade_apparel.parquet")
-
-_LOAD_QUERY = """
-UNWIND $rows AS row
-MERGE (reporter:Country {iso3: row.reporter_iso3})
-  ON CREATE SET reporter.m49 = row.reporter_m49
-MERGE (partner:Country {iso3: row.partner_iso3})
-  ON CREATE SET partner.m49 = row.partner_m49
-MERGE (product:Product {key: row.product_key})
-  ON CREATE SET product.name = row.item, product.sector = row.sector
-MERGE (record:ExportRecord {source_hash: row.source_hash})
-  ON CREATE SET
-    record.source_id = row.source_id,
-    record.period_start = date(row.period_start),
-    record.period_end = date(row.period_end),
-    record.frequency = row.frequency,
-    record.export_value_usd = row.export_value_usd,
-    record.export_volume = row.export_volume,
-    record.volume_unit = row.volume_unit,
-    record.price = row.price,
-    record.price_unit = row.price_unit,
-    record.fx_usd_lkr = row.fx_usd_lkr
-MERGE (reporter)-[:REPORTED]->(record)
-MERGE (record)-[:TO]->(partner)
-MERGE (record)-[:OF]->(product)
-"""
+log = logging.getLogger(__name__)
 
 
-def _neo4j_uri() -> str:
-    return os.environ.get("NEO4J_URI", "bolt://localhost:7687")
+def schema_cypher() -> str:
+    """The frozen constraints and indexes, from the installed ceynex-contracts."""
+    return (files("ceynex.contracts") / "schema" / "schema.cypher").read_text(encoding="utf-8")
 
 
-def _neo4j_auth() -> tuple[str, str]:
-    return (
-        os.environ.get("NEO4J_USER", "neo4j"),
-        os.environ.get("NEO4J_PASSWORD", "ceynex_dev_pw"),
-    )
+async def apply_schema(kg: KnowledgeGraphClient) -> int:
+    applied = await kg.execute_script(schema_cypher())
+    log.info("applied %d constraints and indexes", applied)
+    return applied
 
 
-def fact_trade_to_rows(df: pd.DataFrame) -> list[dict]:
-    """Convert a `fact_trade`-shaped DataFrame to Bolt-serializable row dicts.
-
-    - `partner_iso3 = NULL` ("World", per `schema.sql`) becomes the graph's
-      `"WLD"` sentinel (`ceynex/kg/schema.py`), not a null property.
-    - NaN (pandas' float null) becomes `None` — the Neo4j driver rejects NaN.
-    """
-    df = df.copy()
-    df["product_key"] = df["sector"].str.lower() + ":" + df["item"].str.strip().str.lower()
-    df["partner_iso3"] = df["partner_iso3"].fillna("WLD")
-    df["partner_m49"] = df["partner_m49"].fillna(0).astype(int)
-    df["period_start"] = df["period_start"].astype(str)
-    df["period_end"] = df["period_end"].astype(str)
-    records = df.to_dict(orient="records")
-    for row in records:
-        for key, value in row.items():
-            if isinstance(value, float) and pd.isna(value):
-                row[key] = None
-    return records
+async def summarize(kg: KnowledgeGraphClient) -> list[dict[str, object]]:
+    cypher, params = graph_summary()
+    rows, _ = await kg.run(cypher, params)
+    return rows
 
 
-async def load_fact_trade(driver, df: pd.DataFrame, batch_size: int = 500) -> int:
-    """MERGE every row of `df` into the graph. Returns the row count loaded."""
-    rows = fact_trade_to_rows(df)
-    async with driver.session() as session:
-        for i in range(0, len(rows), batch_size):
-            await session.run(_LOAD_QUERY, rows=rows[i : i + batch_size])
-    return len(rows)
+async def run(*, schema: bool, agreements: bool, flows: bool, verify: bool) -> int:
+    async with KnowledgeGraphClient() as kg:
+        if not await kg.verify_connectivity():
+            uri = neo4j_config()[0]
+            log.error("neo4j unreachable at %s — is the stack up? `make up`", uri)
+            return 1
+
+        if schema:
+            await apply_schema(kg)
+        if agreements:
+            counts = await trade_agreements.load(kg)
+            print(
+                f"  trade agreements  {counts['agreements']:>4}"
+                f"\n  coverage edges    {counts['coverage_edges']:>4}"
+            )
+        if flows:
+            counts = await trade_flows.load(kg)
+            print(
+                f"  countries         {counts['countries']:>6}"
+                f"\n  items             {counts['items']:>6}"
+                f"\n  export flows      {counts['flows']:>6}"
+            )
+        if verify or schema or agreements or flows:
+            rows = await summarize(kg)
+            if not rows:
+                print("  graph is empty")
+            for row in rows:
+                print(f"  {str(row['label'] or '(no label)'):<18} {row['nodes']:>6} nodes")
+    return 0
 
 
-async def _main_async(apply_schema_first: bool, parquet_path: Path) -> None:
-    if not parquet_path.exists():
-        raise FileNotFoundError(
-            f"{parquet_path} not found — run `python -m ceynex.data.pipeline "
-            "--sources apparel` first to produce it."
-        )
-    driver = AsyncGraphDatabase.driver(_neo4j_uri(), auth=_neo4j_auth())
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Apply the CeyNex Neo4j schema and shared nodes.")
+    parser.add_argument("--schema", action="store_true", help="apply constraints and indexes")
+    parser.add_argument("--agreements", action="store_true", help="merge TradeAgreement nodes and coverage")
+    parser.add_argument("--flows", action="store_true", help="project fact_trade into EXPORTS_TO edges")
+    parser.add_argument("--verify", action="store_true", help="report node counts and exit")
+    args = parser.parse_args(argv)
+
+    # Bare `python -m ceynex.kg.load` should do the useful thing, not nothing.
+    if not (args.schema or args.agreements or args.flows or args.verify):
+        args.schema = args.agreements = args.flows = True
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
     try:
-        if apply_schema_first:
-            await apply_schema(driver)
-            print("Applied schema constraints.")
-        df = pd.read_parquet(parquet_path)
-        count = await load_fact_trade(driver, df)
-        print(f"Loaded {count} ExportRecord nodes from {parquet_path}")
-    finally:
-        await driver.close()
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Load apparel fact_trade data into the KG.")
-    parser.add_argument("--schema", action="store_true", help="apply constraints before loading")
-    parser.add_argument(
-        "--agreements",
-        action="store_true",
-        help="accepted for Makefile compatibility; not implemented (Trade Economics scope)",
-    )
-    parser.add_argument("--parquet", default=str(STAGING_PARQUET), type=Path)
-    args = parser.parse_args()
-
-    if args.agreements:
-        print("--agreements: not implemented in this loader (Trade Economics Agent scope).")
-
-    asyncio.run(_main_async(args.schema, args.parquet))
+        return asyncio.run(
+            run(
+                schema=args.schema,
+                agreements=args.agreements,
+                flows=args.flows,
+                verify=args.verify,
+            )
+        )
+    except KnowledgeGraphUnavailableError as exc:
+        log.error("%s", exc)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

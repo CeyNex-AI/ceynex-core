@@ -1,0 +1,25 @@
+# Which HS chapters/headings each agreement covers. Declared at the coarsest
+# level the agreement itself uses: `agreement_coverage()` expands an HS code to
+# every level of its hierarchy and matches at any of them, so a chapter-level row
+# here answers a 6-digit question correctly.
+#
+# to_year empty means "still in force".
+#
+# VERIFICATION STATUS: unverified, same as trade_agreements.csv. The SRS 3.1.9
+# worked example is "does GSP+ cover HS 6109?" and this table is what makes that
+# resolve — which is exactly why it needs checking against the official schedule
+# before the answer is trusted.
+hs_code,agreement,from_year,to_year,note,verified
+09,GSP+,2017,,Coffee tea mate and spices — covers tea 0902 and cinnamon 0906,unverified
+15,GSP+,2017,,Animal or vegetable fats and oils — covers coconut oil 1513,unverified
+40,GSP+,2017,,Rubber and articles thereof,unverified
+53,GSP+,2017,,Other vegetable textile fibres — coir 5305,unverified
+61,GSP+,2017,,Knitted apparel — includes 6109 the SRS worked example,unverified
+62,GSP+,2017,,Woven apparel,unverified
+61,UK DCTS,2023,,Knitted apparel under the UK scheme,unverified
+62,UK DCTS,2023,,Woven apparel under the UK scheme,unverified
+09,UK DCTS,2023,,Coffee tea mate and spices under the UK scheme,unverified
+09,ISFTA,2000,,Subject to the ISFTA negative list — verify before quoting,unverified
+61,ISFTA,2000,,Apparel subject to ISFTA quota provisions — verify before quoting,unverified
+09,SAFTA,2006,,Subject to SAFTA sensitive lists — verify before quoting,unverified
+09,APTA,1976,,Subject to APTA concession schedules — verify before quoting,unverified

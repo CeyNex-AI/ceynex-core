@@ -1,258 +1,443 @@
-"""Country-name -> (ISO3, UN M49) crosswalk (SAD Figure 4, team plan "build a crosswalk early").
+"""Implements SRS 3.1.8 and 3.6.1 — reconciling UN M49, ISO 3166-1 alpha-3 and HS codes.
 
-Connectors receive partner countries as free-text market names (EDB, JAAF) or
-as M49 codes (Comtrade). This module is the one place that owns the mapping so
-no connector hand-rolls its own, per `ceynex/contracts/protocols.py`'s
-`DataSourceConnector.to_fact_trade` docstring.
+Source data arrives in both country coding conventions and neither may be
+treated as authoritative on its own (SRS 3.6.1), so everything entering
+`fact_trade` or the knowledge graph passes through here first.
 
-Coverage is Sri Lanka's actual top apparel/agriculture export destinations,
-not every UN member state. `market_to_iso3` returns `(None, None)` for a name
-it doesn't recognise rather than guessing — callers must treat that as "flag
-and skip", never as the schema's `partner_iso3 IS NULL` ("World") convention.
-Extend `_COUNTRIES` / `_ALIASES` as new markets show up in real source data.
+**Built from a committed reference table, never an API call.** `reference/`
+holds `countries.csv`, `hs_codes.csv` and `partner_aggregates.csv`. A crosswalk
+that reaches the network is a crosswalk that behaves differently in CI, in the
+demo, and on the marker's machine.
+
+The trap this module exists to prevent: Comtrade reports bloc and residual
+partners in the same result set as real countries. `partner = 97` (EU) is
+reported *alongside* Germany, France and Italy, and `partner = 0` is the World
+total. Summing them together double-counts, silently, and every market-share
+figure downstream comes out wrong with nothing raising. Use
+`is_aggregate_partner()` or `drop_aggregate_partners()` before aggregating
+anything.
 """
 
+from __future__ import annotations
+
+import csv
+import functools
 import re
+from dataclasses import dataclass
+from importlib.resources import files
+from pathlib import Path
 
-# canonical_key -> (iso3, m49)
-_COUNTRIES: dict[str, tuple[str, int]] = {
-    "united_states": ("USA", 842),
-    "united_kingdom": ("GBR", 826),
-    "germany": ("DEU", 276),
-    "italy": ("ITA", 380),
-    "belgium": ("BEL", 56),
-    "netherlands": ("NLD", 528),
-    "france": ("FRA", 250),
-    "spain": ("ESP", 724),
-    "canada": ("CAN", 124),
-    "australia": ("AUS", 36),
-    "japan": ("JPN", 392),
-    "china": ("CHN", 156),
-    "india": ("IND", 356),
-    "poland": ("POL", 616),
-    "denmark": ("DNK", 208),
-    "sweden": ("SWE", 752),
-    "austria": ("AUT", 40),
-    "switzerland": ("CHE", 756),
-    "ireland": ("IRL", 372),
-    "portugal": ("PRT", 620),
-    "south_korea": ("KOR", 410),
-    "uae": ("ARE", 784),
-    "mexico": ("MEX", 484),
-    "brazil": ("BRA", 76),
-    "russia": ("RUS", 643),
-    "turkey": ("TUR", 792),
-    "hong_kong": ("HKG", 344),
-    "chile": ("CHL", 152),
-    "south_africa": ("ZAF", 710),
-    "new_zealand": ("NZL", 554),
-    "norway": ("NOR", 578),
-    "finland": ("FIN", 246),
-    "czech_republic": ("CZE", 203),
-    "panama": ("PAN", 591),
-    "bangladesh": ("BGD", 50),
-    "vietnam": ("VNM", 704),
-    "indonesia": ("IDN", 360),
-    "singapore": ("SGP", 702),
-    "malaysia": ("MYS", 458),
-    "saudi_arabia": ("SAU", 682),
-    "israel": ("ISR", 376),
-    "greece": ("GRC", 300),
-    "romania": ("ROU", 642),
-    "slovenia": ("SVN", 705),
-    "lithuania": ("LTU", 440),
-    "latvia": ("LVA", 428),
-    "estonia": ("EST", 233),
-    "bulgaria": ("BGR", 100),
-    "hungary": ("HUN", 348),
-    "croatia": ("HRV", 191),
-    "slovakia": ("SVK", 703),
-    "luxembourg": ("LUX", 442),
-    "malta": ("MLT", 470),
-    "cyprus": ("CYP", 196),
-    "antigua_and_barbuda": ("ATG", 28),
-    "argentina": ("ARG", 32),
-    "azerbaijan": ("AZE", 31),
-    "bahrain": ("BHR", 48),
-    "barbados": ("BRB", 52),
-    "cambodia": ("KHM", 116),
-    "colombia": ("COL", 170),
-    "costa_rica": ("CRI", 188),
-    "dominican_republic": ("DOM", 214),
-    "egypt": ("EGY", 818),
-    "el_salvador": ("SLV", 222),
-    "ethiopia": ("ETH", 231),
-    "ghana": ("GHA", 288),
-    "haiti": ("HTI", 332),
-    "iran": ("IRN", 364),
-    "iraq": ("IRQ", 368),
-    "jordan": ("JOR", 400),
-    "kazakhstan": ("KAZ", 398),
-    "kenya": ("KEN", 404),
-    "kuwait": ("KWT", 414),
-    "kyrgyzstan": ("KGZ", 417),
-    "lebanon": ("LBN", 422),
-    "macau": ("MAC", 446),
-    "madagascar": ("MDG", 450),
-    "maldives": ("MDV", 462),
-    "mauritius": ("MUS", 480),
-    "morocco": ("MAR", 504),
-    "myanmar": ("MMR", 104),
-    "oman": ("OMN", 512),
-    "pakistan": ("PAK", 586),
-    "papua_new_guinea": ("PNG", 598),
-    "paraguay": ("PRY", 600),
-    "peru": ("PER", 604),
-    "philippines": ("PHL", 608),
-    "qatar": ("QAT", 634),
-    "senegal": ("SEN", 686),
-    "serbia": ("SRB", 688),
-    "seychelles": ("SYC", 690),
-    "swaziland": ("SWZ", 748),
-    "taiwan": ("TWN", 158),
-    "tajikistan": ("TJK", 762),
-    "tanzania": ("TZA", 834),
-    "thailand": ("THA", 764),
-    "trinidad_and_tobago": ("TTO", 780),
-    "tunisia": ("TUN", 788),
-    "ukraine": ("UKR", 804),
-    "uruguay": ("URY", 858),
-    "uzbekistan": ("UZB", 860),
-    "honduras": ("HND", 340),
-    "puerto_rico": ("PRI", 630),
-}
+import pandas as pd
 
-# free-text alias (normalized) -> canonical_key
+# importlib.resources, not `Path(__file__).parent`: these CSVs ship as package
+# data, and a source-relative path resolves to a directory that does not exist
+# once the package is installed into site-packages — which is exactly how the
+# container failed on its first deploy.
+REFERENCE_DIR = Path(str(files("ceynex.data") / "reference"))
+
+
+class CrosswalkError(KeyError):
+    """An identifier that is not in the reference table.
+
+    Deliberately loud. A silent None here becomes a NULL partner in fact_trade
+    and an orphan node in the graph, and neither is noticed until a figure looks
+    wrong weeks later.
+    """
+
+
+@dataclass(frozen=True)
+class Country:
+    iso3: str
+    m49: int
+    name: str
+    status: str  # "current" | "historical"
+
+
+@functools.lru_cache(maxsize=1)
+def _countries() -> tuple[Country, ...]:
+    with (REFERENCE_DIR / "countries.csv").open(encoding="utf-8") as fh:
+        return tuple(
+            Country(row["iso3"], int(row["m49"]), row["name"], row["status"])
+            for row in csv.DictReader(fh)
+        )
+
+
+@functools.lru_cache(maxsize=1)
+def _by_iso3() -> dict[str, Country]:
+    return {c.iso3: c for c in _countries()}
+
+
+@functools.lru_cache(maxsize=1)
+def _by_m49() -> dict[int, Country]:
+    return {c.m49: c for c in _countries()}
+
+
+@functools.lru_cache(maxsize=1)
+def _aggregate_partners() -> dict[int, str]:
+    """M49 codes Comtrade reports that are not countries. See the module docstring."""
+    path = REFERENCE_DIR / "partner_aggregates.csv"
+    with path.open(encoding="utf-8") as fh:
+        rows = csv.DictReader(line for line in fh if not line.startswith("#"))
+        return {int(row["m49"]): row["label"] for row in rows}
+
+
+@functools.lru_cache(maxsize=1)
+def _partner_aliases() -> dict[int, str]:
+    """Comtrade partner codes that are countries but not their ISO 3166-1 numeric.
+
+    Comtrade reports the USA as 842 rather than 840, France as 251 rather than
+    250, India as 699 rather than 356. These are real partners; treating them as
+    unknown drops them from the dataset silently.
+    """
+    path = REFERENCE_DIR / "partner_aliases.csv"
+    with path.open(encoding="utf-8") as fh:
+        rows = csv.DictReader(line for line in fh if not line.startswith("#"))
+        return {int(row["source_code"]): row["iso3"] for row in rows}
+
+
+@functools.lru_cache(maxsize=1)
+def _hs_codes() -> dict[str, tuple[str, str]]:
+    """hs_code -> (description, sector)."""
+    with (REFERENCE_DIR / "hs_codes.csv").open(encoding="utf-8") as fh:
+        return {row["hs_code"]: (row["description"], row["sector"]) for row in csv.DictReader(fh)}
+
+
+# --- countries -----------------------------------------------------------
+
+
+def to_iso3(value: str | int) -> str:
+    """M49 code, ISO-3 code, or country name -> ISO 3166-1 alpha-3.
+
+    Accepts what it already is, so callers can pass a mixed column through
+    without branching on which convention this particular source used.
+    """
+    if isinstance(value, str):
+        candidate = value.strip().upper()
+        if candidate in _by_iso3():
+            return candidate
+        if candidate.isdigit():
+            return to_iso3(int(candidate))
+        for country in _countries():
+            if country.name.upper() == candidate:
+                return country.iso3
+        raise CrosswalkError(f"no ISO-3 for {value!r}")
+
+    country = _by_m49().get(int(value))
+    if country is None:
+        alias = _partner_aliases().get(int(value))
+        if alias is not None:
+            return alias
+        if int(value) in _aggregate_partners():
+            raise CrosswalkError(
+                f"M49 {value} is {_aggregate_partners()[int(value)]!r}, an aggregate partner, "
+                "not a country — exclude it before aggregating (see drop_aggregate_partners)"
+            )
+        raise CrosswalkError(f"no ISO-3 for M49 {value}")
+    return country.iso3
+
+
+def to_m49(value: str | int) -> int:
+    """ISO-3 code, M49 code, or country name -> UN M49 numeric.
+
+    `to_m49("LKA") == 144`.
+    """
+    if isinstance(value, int) or (isinstance(value, str) and value.strip().isdigit()):
+        code = int(value)
+        if code in _by_m49():
+            return code
+        raise CrosswalkError(f"M49 {code} is not in the reference table")
+    return _by_iso3()[to_iso3(value)].m49
+
+
+def country_name(value: str | int) -> str:
+    return _by_iso3()[to_iso3(value)].name
+
+
+def is_known_country(value: str | int) -> bool:
+    try:
+        to_iso3(value)
+    except (CrosswalkError, KeyError):
+        return False
+    return True
+
+
+# --- Comtrade partner aggregates -----------------------------------------
+
+
+def is_partner_alias(code: str | int) -> bool:
+    """True for a Comtrade variant code that maps onto a real country."""
+    try:
+        return int(code) in _partner_aliases()
+    except (TypeError, ValueError):
+        return False
+
+
+def partner_alias_note(code: str | int) -> str | None:
+    """Why this code differs from the ISO numeric, for the data-quality log."""
+    return _partner_aliases().get(int(code))
+
+
+def is_aggregate_partner(m49: str | int) -> bool:
+    """True for World, EU-as-reported, and the residual `nes` buckets."""
+    try:
+        return int(m49) in _aggregate_partners()
+    except (TypeError, ValueError):
+        return False
+
+
+def aggregate_partner_label(m49: str | int) -> str | None:
+    return _aggregate_partners().get(int(m49))
+
+
+def drop_aggregate_partners(frame: pd.DataFrame, column: str = "partner_m49") -> pd.DataFrame:
+    """Remove bloc and residual partner rows before any aggregation.
+
+    Call this on every Comtrade extract. Keeping `partner = 97` alongside the EU
+    member states, or `partner = 0` alongside real partners, inflates every total
+    and every share derived from it.
+    """
+    if column not in frame.columns:
+        raise KeyError(f"{column!r} not in frame; columns are {list(frame.columns)}")
+    codes = pd.to_numeric(frame[column], errors="coerce")
+    return frame.loc[~codes.isin(_aggregate_partners().keys())].copy()
+
+
+# --- HS codes ------------------------------------------------------------
+
+
+def normalize_hs(code: str | int, digits: int = 6) -> str:
+    """Normalize an HS code to `digits` significant digits, zero-padded.
+
+    Comtrade returns codes as integers, which drops the leading zero that tea
+    (0902) and cinnamon (0906) both have — `902` and `906` join against nothing.
+    Restoring it is the entire reason this function exists.
+
+    Truncates rather than rounds, because HS is hierarchical: the first two
+    digits are the chapter, the first four the heading. `normalize_hs("610910", 4)`
+    is `"6109"`, and `normalize_hs("6109", 2)` is `"61"`.
+    """
+    if digits not in (2, 4, 6, 8, 10):
+        raise ValueError(f"HS codes are addressed at 2, 4, 6, 8 or 10 digits, not {digits}")
+
+    text = str(code).strip().replace(".", "").replace(" ", "")
+    if not text.isdigit():
+        raise CrosswalkError(f"{code!r} is not an HS code")
+
+    # An odd length means a leading zero was lost somewhere upstream.
+    if len(text) % 2:
+        text = "0" + text
+
+    if len(text) < digits:
+        raise CrosswalkError(
+            f"HS {text!r} has {len(text)} digits; cannot express it at {digits}. "
+            "Truncating is safe, inventing precision is not"
+        )
+    return text[:digits]
+
+
+def hs_chapter(code: str | int) -> str:
+    """The 2-digit chapter: `hs_chapter("610910") == "61"`."""
+    return normalize_hs(code, digits=2)
+
+
+def hs_sector(code: str | int) -> str:
+    """`agriculture` or `apparel`, resolved by walking up the HS hierarchy.
+
+    A 6-digit code that is not itself in the reference table resolves through its
+    4-digit heading and then its 2-digit chapter, so a new subheading appearing
+    in a fresh Comtrade pull classifies correctly without a reference edit.
+    """
+    table = _hs_codes()
+    text = str(code).strip()
+    for digits in (6, 4, 2):
+        try:
+            candidate = normalize_hs(text, digits=digits)
+        except CrosswalkError:
+            continue
+        if candidate in table:
+            return table[candidate][1]
+    raise CrosswalkError(f"HS {code!r} is outside CeyNex's sector scope (SRS 2.4)")
+
+
+def hs_description(code: str | int) -> str:
+    table = _hs_codes()
+    for digits in (6, 4, 2):
+        try:
+            candidate = normalize_hs(code, digits=digits)
+        except CrosswalkError:
+            continue
+        if candidate in table:
+            return table[candidate][0]
+    raise CrosswalkError(f"no description for HS {code!r}")
+
+
+def is_in_scope(code: str | int) -> bool:
+    """SRS 2.4 scope: tea, cinnamon, rubber, coconut, and HS 61/62 apparel."""
+    try:
+        hs_sector(code)
+    except (CrosswalkError, ValueError):
+        return False
+    return True
+
+
+# --- dimension tables ----------------------------------------------------
+
+
+def dim_country_rows() -> list[tuple[str, int, str]]:
+    """Seed rows for `dim_country`. Current territories only."""
+    return [(c.iso3, c.m49, c.name) for c in _countries() if c.status == "current"]
+
+
+def dim_hs_rows() -> list[tuple[str, str, str]]:
+    """Seed rows for `dim_hs`."""
+    return [(code, description, sector) for code, (description, sector) in _hs_codes().items()]
+
+
+# --- free-text market names -----------------------------------------------
+#
+# EDB and JAAF report partner countries as free-text market names, not M49 or
+# ISO-3 (SAD Figure 4, team plan "build a crosswalk early") — parenthetical
+# alt-names, comma-style official names, and EDB's own abbreviations included,
+# e.g. "Korea South (Korea, Republic of)" or "Taiwan, Province of China".
+# `to_iso3()` above expects an already-clean identifier and raises on anything
+# it doesn't recognize; that's correct for Comtrade's coded partners but wrong
+# here, where an unrecognized market name is routine and callers must treat it
+# as "flag and skip", never guess. `market_to_iso3` resolves through this
+# alias table and falls back to `to_iso3`/`to_m49` against the same reference
+# data everything else in this module uses, rather than hand-rolling a second
+# country table.
+
+# normalized free-text alias -> iso3
 _ALIASES: dict[str, str] = {
-    "united states": "united_states",
-    "united states of america": "united_states",
-    "usa": "united_states",
-    "us": "united_states",
-    "united kingdom": "united_kingdom",
-    "uk": "united_kingdom",
-    "great britain": "united_kingdom",
-    "germany": "germany",
-    "italy": "italy",
-    "belgium": "belgium",
-    "netherlands": "netherlands",
-    "the netherlands": "netherlands",
-    "holland": "netherlands",
-    "france": "france",
-    "spain": "spain",
-    "canada": "canada",
-    "australia": "australia",
-    "japan": "japan",
-    "china": "china",
-    "people's republic of china": "china",
-    "prc": "china",
-    "india": "india",
-    "poland": "poland",
-    "denmark": "denmark",
-    "sweden": "sweden",
-    "austria": "austria",
-    "switzerland": "switzerland",
-    "ireland": "ireland",
-    "portugal": "portugal",
-    "south korea": "south_korea",
-    "korea republic of": "south_korea",
-    "republic of korea": "south_korea",
-    "united arab emirates": "uae",
-    "uae": "uae",
-    "mexico": "mexico",
-    "brazil": "brazil",
-    "russia": "russia",
-    "russian federation": "russia",
-    "turkey": "turkey",
-    "turkiye": "turkey",
-    "hong kong": "hong_kong",
-    "chile": "chile",
-    "south africa": "south_africa",
-    "new zealand": "new_zealand",
-    "norway": "norway",
-    "finland": "finland",
-    "czech republic": "czech_republic",
-    "czechia": "czech_republic",
-    "panama": "panama",
-    "bangladesh": "bangladesh",
-    "vietnam": "vietnam",
-    "viet nam": "vietnam",
-    "indonesia": "indonesia",
-    "singapore": "singapore",
-    "malaysia": "malaysia",
-    "saudi arabia": "saudi_arabia",
-    "israel": "israel",
-    "greece": "greece",
-    "romania": "romania",
-    "slovenia": "slovenia",
-    "lithuania": "lithuania",
-    "latvia": "latvia",
-    "estonia": "estonia",
-    "bulgaria": "bulgaria",
-    "hungary": "hungary",
-    "croatia": "croatia",
-    "slovakia": "slovakia",
-    "luxembourg": "luxembourg",
-    "malta": "malta",
-    "cyprus": "cyprus",
-    "antigua and barbuda": "antigua_and_barbuda",
-    "argentina": "argentina",
-    "azerbaijan": "azerbaijan",
-    "bahrain": "bahrain",
-    "barbados": "barbados",
-    "cambodia": "cambodia",
-    "colombia": "colombia",
-    "costa rica": "costa_rica",
-    "dominican republic": "dominican_republic",
-    "egypt": "egypt",
-    "el salvador": "el_salvador",
-    "ethiopia": "ethiopia",
-    "ghana": "ghana",
-    "haiti": "haiti",
-    "iran": "iran",
-    "iran islamic republic of": "iran",
-    "iraq": "iraq",
-    "jordan": "jordan",
-    "kazakhstan": "kazakhstan",
-    "kenya": "kenya",
-    "korea south": "south_korea",  # EDB's own wording, e.g. "Korea South (Korea, Republic of)"
-    "kuwait": "kuwait",
-    "kyrgyzstan": "kyrgyzstan",
-    "lebanon": "lebanon",
-    "macau": "macau",
-    "madagascar": "madagascar",
-    "maldives": "maldives",
-    "mauritius": "mauritius",
-    "morocco": "morocco",
-    "myanmar": "myanmar",
-    "oman": "oman",
-    "pakistan": "pakistan",
-    "papua new guinea": "papua_new_guinea",
-    "paraguay": "paraguay",
-    "peru": "peru",
-    "philippines": "philippines",
-    "qatar": "qatar",
-    "senegal": "senegal",
-    "serbia": "serbia",
-    "seychelles": "seychelles",
-    "swaziland": "swaziland",
-    "eswatini": "swaziland",
-    "taiwan": "taiwan",
-    "taiwan province of china": "taiwan",  # EDB's own wording
-    "tajikistan": "tajikistan",
-    "tanzania": "tanzania",
-    "tanzania united republic of": "tanzania",  # EDB's own wording
-    "thailand": "thailand",
-    "trinidad and tobago": "trinidad_and_tobago",
-    "tunisia": "tunisia",
-    "ukraine": "ukraine",
-    "uruguay": "uruguay",
-    "uzbekistan": "uzbekistan",
-    "honduras": "honduras",
-    "puerto rico": "puerto_rico",
+    "united states": "USA",
+    "united states of america": "USA",
+    "usa": "USA",
+    "us": "USA",
+    "united kingdom": "GBR",
+    "uk": "GBR",
+    "great britain": "GBR",
+    "germany": "DEU",
+    "italy": "ITA",
+    "belgium": "BEL",
+    "netherlands": "NLD",
+    "the netherlands": "NLD",
+    "holland": "NLD",
+    "france": "FRA",
+    "spain": "ESP",
+    "canada": "CAN",
+    "australia": "AUS",
+    "japan": "JPN",
+    "china": "CHN",
+    "people's republic of china": "CHN",
+    "prc": "CHN",
+    "india": "IND",
+    "poland": "POL",
+    "denmark": "DNK",
+    "sweden": "SWE",
+    "austria": "AUT",
+    "switzerland": "CHE",
+    "ireland": "IRL",
+    "portugal": "PRT",
+    "south korea": "KOR",
+    "korea republic of": "KOR",
+    "republic of korea": "KOR",
+    "united arab emirates": "ARE",
+    "uae": "ARE",
+    "mexico": "MEX",
+    "brazil": "BRA",
+    "russia": "RUS",
+    "russian federation": "RUS",
+    "turkey": "TUR",
+    "turkiye": "TUR",
+    "hong kong": "HKG",
+    "chile": "CHL",
+    "south africa": "ZAF",
+    "new zealand": "NZL",
+    "norway": "NOR",
+    "finland": "FIN",
+    "czech republic": "CZE",
+    "czechia": "CZE",
+    "panama": "PAN",
+    "bangladesh": "BGD",
+    "vietnam": "VNM",
+    "viet nam": "VNM",
+    "indonesia": "IDN",
+    "singapore": "SGP",
+    "malaysia": "MYS",
+    "saudi arabia": "SAU",
+    "israel": "ISR",
+    "greece": "GRC",
+    "romania": "ROU",
+    "slovenia": "SVN",
+    "lithuania": "LTU",
+    "latvia": "LVA",
+    "estonia": "EST",
+    "bulgaria": "BGR",
+    "hungary": "HUN",
+    "croatia": "HRV",
+    "slovakia": "SVK",
+    "luxembourg": "LUX",
+    "malta": "MLT",
+    "cyprus": "CYP",
+    "antigua and barbuda": "ATG",
+    "argentina": "ARG",
+    "azerbaijan": "AZE",
+    "bahrain": "BHR",
+    "barbados": "BRB",
+    "cambodia": "KHM",
+    "colombia": "COL",
+    "costa rica": "CRI",
+    "dominican republic": "DOM",
+    "egypt": "EGY",
+    "el salvador": "SLV",
+    "ethiopia": "ETH",
+    "ghana": "GHA",
+    "haiti": "HTI",
+    "iran": "IRN",
+    "iran islamic republic of": "IRN",
+    "iraq": "IRQ",
+    "jordan": "JOR",
+    "kazakhstan": "KAZ",
+    "kenya": "KEN",
+    "korea south": "KOR",  # EDB's own wording, e.g. "Korea South (Korea, Republic of)"
+    "kuwait": "KWT",
+    "kyrgyzstan": "KGZ",
+    "lebanon": "LBN",
+    "macau": "MAC",
+    "madagascar": "MDG",
+    "maldives": "MDV",
+    "mauritius": "MUS",
+    "morocco": "MAR",
+    "myanmar": "MMR",
+    "oman": "OMN",
+    "pakistan": "PAK",
+    "papua new guinea": "PNG",
+    "paraguay": "PRY",
+    "peru": "PER",
+    "philippines": "PHL",
+    "qatar": "QAT",
+    "senegal": "SEN",
+    "serbia": "SRB",
+    "seychelles": "SYC",
+    "swaziland": "SWZ",
+    "eswatini": "SWZ",
+    "taiwan": "TWN",
+    "taiwan province of china": "TWN",  # EDB's own wording
+    "tajikistan": "TJK",
+    "tanzania": "TZA",
+    "tanzania united republic of": "TZA",  # EDB's own wording
+    "thailand": "THA",
+    "trinidad and tobago": "TTO",
+    "tunisia": "TUN",
+    "ukraine": "UKR",
+    "uruguay": "URY",
+    "uzbekistan": "UZB",
+    "honduras": "HND",
+    "puerto rico": "PRI",
 }
 
 
-def _normalize(name: str) -> str:
+def _normalize_market(name: str) -> str:
     s = name.lower().strip()
     s = s.replace(".", "").replace(",", "")
     # EDB sometimes appends a parenthetical alt-name, e.g. "Croatia (Hrvatska)"
@@ -264,14 +449,17 @@ def _normalize(name: str) -> str:
 def market_to_iso3(market_name: str) -> tuple[str | None, int | None]:
     """Resolve a free-text market/country name to (ISO3, M49).
 
-    Returns `(None, None)` for anything not in the crosswalk — callers must
-    not fall back to writing that as `partner_iso3 = NULL` (that means "World"
-    in `ceynex/data/schema.sql`, a different thing entirely).
+    Returns `(None, None)` for anything not recognized — callers must not
+    fall back to writing that as `partner_iso3 = NULL` (that means "World" in
+    the schema, a different thing entirely).
     """
-    key = _ALIASES.get(_normalize(market_name))
-    if key is None:
+    iso3 = _ALIASES.get(_normalize_market(market_name))
+    if iso3 is None:
         return None, None
-    return _COUNTRIES[key]
+    try:
+        return iso3, to_m49(iso3)
+    except CrosswalkError:
+        return None, None
 
 
 def known_aliases() -> tuple[str, ...]:
