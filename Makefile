@@ -7,7 +7,7 @@ CONTRACTS_SPEC ?= -e ../ceynex-contracts
 
 install:
 	python -m pip install $(CONTRACTS_SPEC)
-	python -m pip install -e ".[dev]"
+	python -m pip install -e ".[dev,docs]"
 	pre-commit install
 
 up:
