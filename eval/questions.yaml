@@ -1,0 +1,265 @@
+# CeyNex evaluation set — 30 questions with expected routes.
+#
+# WRITTEN BEFORE THE HARNESS WAS EVER RUN, and committed in that order on
+# purpose. Questions written after watching the system answer them stop being an
+# evaluation and become a description of whatever the system happens to do; the
+# git history is the evidence that did not happen here.
+#
+# Composition (SRS 3.1.2, 3.1.5, 3.1.6; M2 plan Day 9):
+#   12 single-sector · 12 cross-sector · 6 simulation
+#   3 of those 30 are unanswerable, where the correct behaviour is to say so.
+#
+# `expected_route` is the agent set a correct router selects. Order does not
+# matter; the harness compares sets. `export_analytics` appears alongside a
+# sector agent wherever the question asks for a graph-answerable trend as well
+# as sector judgement.
+#
+# Note on grading: M1's `agriculture_commodity` and M3's `apparel_manufacturing`
+# nodes are stubs at the time of writing. A question routed to them is scored
+# **correct on routing** and **unanswered on content** — those are deliberately
+# separate metrics, because a router that works and an agent that is not built
+# yet is a different situation from a router that sends the query to the wrong
+# place.
+
+questions:
+
+  # --- single-sector: agriculture ---------------------------------------
+
+  - id: S01
+    category: single_sector
+    question: Which country takes the largest share of Sri Lanka's tea exports?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: S02
+    category: single_sector
+    question: How fast have cinnamon exports grown over the last five years?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: S03
+    category: single_sector
+    question: How concentrated are Sri Lanka's rubber export destinations?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: S04
+    category: single_sector
+    question: Which district contributes the largest share of cinnamon production?
+    expected_route: [export_analytics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+    note: District data is M1's to load; routing is still expected to be correct.
+
+  - id: S05
+    category: single_sector
+    question: Forecast tea export earnings for the next three years.
+    expected_route: [forecast]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: S06
+    category: single_sector
+    question: What is driving the recent movement in cinnamon prices?
+    expected_route: [agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  # --- single-sector: apparel -------------------------------------------
+
+  - id: S07
+    category: single_sector
+    question: Which markets buy the most Sri Lankan knitted apparel?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: S08
+    category: single_sector
+    question: Has woven apparel export value grown or fallen since 2020?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: S09
+    category: single_sector
+    question: Which importing country has shown the fastest-growing demand for Sri Lankan apparel?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: S10
+    category: single_sector
+    question: Forecast knitted apparel export value for the next two years.
+    expected_route: [forecast]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: S11
+    category: single_sector
+    question: How exposed is Sri Lanka's apparel sector to a single buyer market?
+    expected_route: [export_analytics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  # --- single-sector: unanswerable --------------------------------------
+
+  - id: S12
+    category: single_sector
+    question: What were Sri Lanka's tea exports in 2035?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    unanswerable_because: >
+      A future year has no observed data. The correct behaviour is to say the
+      period is not in the record, or to answer as an explicit forecast with an
+      interval — never to report a figure as historical fact.
+
+  # --- cross-sector -----------------------------------------------------
+
+  - id: X01
+    category: cross_sector
+    question: Compare the growth of tea and apparel exports over the last five years.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X02
+    category: cross_sector
+    question: Which sector is more dependent on the European Union, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X03
+    category: cross_sector
+    question: Do agriculture and apparel exports go to the same destination markets?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X04
+    category: cross_sector
+    question: Which of Sri Lanka's export sectors is most concentrated in a single market?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X05
+    category: cross_sector
+    question: Compare cinnamon and knitted apparel as export earners.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X06
+    category: cross_sector
+    question: Is Sri Lanka's export base becoming more or less diversified across sectors?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X07
+    category: cross_sector
+    question: Which sector recovered faster after 2020, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X08
+    category: cross_sector
+    question: Forecast both tea and apparel exports and say which is expected to grow faster.
+    expected_route: [forecast, export_analytics]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X09
+    category: cross_sector
+    question: Which sector would be hurt more by losing access to the United States market?
+    expected_route: [export_analytics, trade_economics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X10
+    category: cross_sector
+    question: Compare the destination concentration of rubber and woven apparel.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: X11
+    category: cross_sector
+    question: How does Sri Lanka's tea sector compare with its fisheries sector?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    unanswerable_because: >
+      Fisheries is outside the two sectors this system covers. The correct
+      behaviour is to name the out-of-scope sector and answer only for tea, not
+      to produce plausible fisheries figures.
+
+  - id: X12
+    category: cross_sector
+    question: Which is larger, Sri Lanka's apparel exports or its software services exports?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: false
+    unanswerable_because: >
+      Services exports are not in the knowledge graph or the fact table at all.
+      Saying so is correct; producing a comparison is a hallucination.
+
+  # --- simulation -------------------------------------------------------
+
+  - id: M01
+    category: simulation
+    question: How would a 5% depreciation of the Sri Lankan rupee affect apparel exports compared to agriculture?
+    expected_route: [trade_economics, export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+    note: The plan's Day 7 acceptance query.
+
+  - id: M02
+    category: simulation
+    question: What happens to apparel export revenue if Sri Lanka loses GSP+?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: M03
+    category: simulation
+    question: What if the European Union raised tariffs on Sri Lankan tea by 10%?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: M04
+    category: simulation
+    question: How would a 10% rupee depreciation change cinnamon export earnings?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: M05
+    category: simulation
+    question: If global demand for knitted apparel fell 15%, what would that do to export revenue?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: M06
+    category: simulation
+    question: Which sector should Sri Lanka prioritise for the next decade, and by how much will that raise GDP?
+    expected_route: [trade_economics, export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+    partial: true
+    partial_because: >
+      The comparison is answerable; the GDP figure is not. Nothing here models
+      national accounts, so the correct behaviour is to answer the export
+      comparison and state plainly that the GDP effect cannot be estimated.
+      Scored separately from the three unanswerable questions because refusing
+      the whole query would be wrong too — a partial answer with a stated gap is
+      the SAD §4.1 behaviour, and it is harder than either extreme.
