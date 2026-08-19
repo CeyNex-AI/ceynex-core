@@ -73,6 +73,25 @@ in `CONNECTORS` in `ceynex/data/pipeline.py`; nothing else changes shape.
 their loads add to mine rather than colliding with them. M2 seeds only
 `dim_country`, `dim_hs`, the `TradeAgreement` nodes, and the Comtrade extract.
 
+## Measured but not measured under load
+
+**SRS 3.4.2 wants 50 concurrent users. Nothing has tested that.** The latency
+figures in [EVALUATION.md](EVALUATION.md) are single-user, sequential by design
+so the numbers mean something per query. They pass their budgets with 5–15x
+headroom, and that headroom is partly because no LLM key is configured, so the
+system never pays for a model call.
+
+Two separate things are therefore unverified: throughput at 50 concurrent users,
+and latency with prose generation switched on. Both need re-measuring before any
+claim about SRS 3.4.1/3.4.2 is made in the final report.
+
+## Merge coherence not yet rated
+
+`eval/coherence.py` builds the blind rating sheets and scores them. It needs
+three human raters and the session has not happened, so SRS 3.1.2's "one
+coherent answer, not a list of per-agent responses" is currently supported by
+the merger's design and its unit tests, not by a measurement.
+
 ## Operational
 
 - **`OPENAI_API_KEY` and `COMTRADE_API_KEY` are unset.** The system runs

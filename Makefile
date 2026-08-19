@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded coherence docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -51,6 +51,18 @@ kg-load:
 # usage: make backtest SECTOR=agriculture ITEM=cinnamon
 backtest:
 	python -m eval.backtest --sector $(SECTOR) --item $(ITEM)
+
+# The 30-question orchestrator evaluation. `eval-degraded` runs the same set with
+# the LLM forced unavailable (SRS 3.4.3); both must complete without crashing.
+eval:
+	python -m eval.harness --json eval_results.json
+
+eval-degraded:
+	python -m eval.harness --degraded --json eval_degraded.json
+
+# Blind merge-coherence sheets for three human raters. Needs `make eval` first.
+coherence:
+	python -m eval.coherence sheet --results eval_results.json --out coherence_sheet.csv
 
 # Governing documents -> plain text under docs/_text/ so they are greppable.
 # Reads the .docx whenever one sits beside a .pdf.
