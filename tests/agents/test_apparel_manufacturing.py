@@ -1,8 +1,9 @@
 import pytest
 
-from ceynex.agents import apparel_manufacturing as agent_module
 from ceynex.agents.apparel_manufacturing import apparel_manufacturing_node
+from ceynex.agents.common import AgentDeps
 from ceynex.contracts.state import new_state
+from ceynex.llm import FakeLLMClient
 
 
 class FakeKGClient:
@@ -22,15 +23,8 @@ class FakeKGClient:
         return self.edb_rows, cypher
 
 
-class FakeLLMClient:
-    def __init__(self, raise_exc=None, text="Explained by LLM."):
-        self.raise_exc = raise_exc
-        self.text = text
-
-    async def generate_explanation(self, context):
-        if self.raise_exc:
-            raise self.raise_exc
-        return self.text
+def _deps(kg=None, llm=None):
+    return AgentDeps(kg=kg or FakeKGClient(), llm=llm or FakeLLMClient())
 
 
 _EDB_ROWS = [
@@ -53,16 +47,11 @@ _OVERVIEW_ROWS = [
 ]
 
 
-async def test_happy_path_partner_query_validates_against_agent_output(monkeypatch):
-    monkeypatch.setattr(
-        agent_module,
-        "_get_kg_client",
-        lambda: FakeKGClient(edb_rows=_EDB_ROWS, jaaf_rows=_JAAF_ROWS),
-    )
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
+async def test_happy_path_partner_query_validates_against_agent_output():
+    deps = _deps(kg=FakeKGClient(edb_rows=_EDB_ROWS, jaaf_rows=_JAAF_ROWS))
 
     state = new_state(query="How are apparel exports to the United States doing?", user_id="u1")
-    result = await apparel_manufacturing_node(state)
+    result = await apparel_manufacturing_node(state, deps)
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert output["agent"] == "apparel_manufacturing"
@@ -73,22 +62,17 @@ async def test_happy_path_partner_query_validates_against_agent_output(monkeypat
     assert "error" not in output
     assert len(output["evidence"]) >= 2
     assert {e["source_id"] for e in output["evidence"]} == {"EDB", "JAAF"}
-    assert output["summary"] == "Explained by LLM."
+    assert output["summary"] == "A canned explanation."
     # Only 2 years of EDB history here -- below MIN_OBSERVATIONS_FOR_FORECAST,
     # so no forecast should be attempted (see test below for the >=3-year case).
     assert "forecast" not in output
 
 
-async def test_forecast_added_when_enough_edb_history(monkeypatch):
-    monkeypatch.setattr(
-        agent_module,
-        "_get_kg_client",
-        lambda: FakeKGClient(edb_rows=_EDB_ROWS_FORECASTABLE),
-    )
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
+async def test_forecast_added_when_enough_edb_history():
+    deps = _deps(kg=FakeKGClient(edb_rows=_EDB_ROWS_FORECASTABLE))
 
     state = new_state(query="apparel exports to the United States", user_id="u1")
-    result = await apparel_manufacturing_node(state)
+    result = await apparel_manufacturing_node(state, deps)
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert "forecast" in output
@@ -105,14 +89,11 @@ async def test_forecast_added_when_enough_edb_history(monkeypatch):
     assert any("naive" in a.lower() for a in output["assumptions"])
 
 
-async def test_overview_query_when_no_partner_named(monkeypatch):
-    monkeypatch.setattr(
-        agent_module, "_get_kg_client", lambda: FakeKGClient(overview_rows=_OVERVIEW_ROWS)
-    )
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
+async def test_overview_query_when_no_partner_named():
+    deps = _deps(kg=FakeKGClient(overview_rows=_OVERVIEW_ROWS))
 
     state = new_state(query="How are apparel exports doing overall?", user_id="u1")
-    result = await apparel_manufacturing_node(state)
+    result = await apparel_manufacturing_node(state, deps)
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert output["figures"] == {"USA": 1782720000.0, "GBR": 614620000.0}
@@ -120,18 +101,16 @@ async def test_overview_query_when_no_partner_named(monkeypatch):
     assert output["degraded"] is False
 
 
-async def test_llm_failure_degrades_but_node_still_returns(monkeypatch):
-    monkeypatch.setattr(
-        agent_module,
-        "_get_kg_client",
-        lambda: FakeKGClient(edb_rows=_EDB_ROWS, jaaf_rows=_JAAF_ROWS),
-    )
-    monkeypatch.setattr(
-        agent_module, "_get_llm_client", lambda: FakeLLMClient(raise_exc=RuntimeError("no quota"))
+async def test_llm_failure_degrades_but_node_still_returns():
+    # `generate_explanation` never raises (SRS 3.4.3) — a provider failure is
+    # signalled by an empty string, which `FakeLLMClient(available=False)` gives.
+    deps = _deps(
+        kg=FakeKGClient(edb_rows=_EDB_ROWS, jaaf_rows=_JAAF_ROWS),
+        llm=FakeLLMClient(available=False),
     )
 
     state = new_state(query="apparel exports to the United States", user_id="u1")
-    result = await apparel_manufacturing_node(state)
+    result = await apparel_manufacturing_node(state, deps)
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert output["degraded"] is True
@@ -139,31 +118,11 @@ async def test_llm_failure_degrades_but_node_still_returns(monkeypatch):
     assert "error" not in output
 
 
-async def test_missing_llm_client_degrades_by_default(monkeypatch):
-    monkeypatch.setattr(
-        agent_module,
-        "_get_kg_client",
-        lambda: FakeKGClient(edb_rows=_EDB_ROWS, jaaf_rows=_JAAF_ROWS),
-    )
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: None)
+async def test_kg_failure_sets_error_and_zero_confidence_without_raising():
+    deps = _deps(kg=FakeKGClient(raise_exc=RuntimeError("neo4j unreachable")))
 
     state = new_state(query="apparel exports to the United States", user_id="u1")
-    result = await apparel_manufacturing_node(state)
-    output = result["agent_outputs"]["apparel_manufacturing"]
-
-    assert output["degraded"] is True
-
-
-async def test_kg_failure_sets_error_and_zero_confidence_without_raising(monkeypatch):
-    monkeypatch.setattr(
-        agent_module,
-        "_get_kg_client",
-        lambda: FakeKGClient(raise_exc=RuntimeError("neo4j unreachable")),
-    )
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
-
-    state = new_state(query="apparel exports to the United States", user_id="u1")
-    result = await apparel_manufacturing_node(state)  # must not raise
+    result = await apparel_manufacturing_node(state, deps)  # must not raise
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert output["error"] == "neo4j unreachable"
@@ -172,12 +131,11 @@ async def test_kg_failure_sets_error_and_zero_confidence_without_raising(monkeyp
     assert result["errors"] == ["neo4j unreachable"]
 
 
-async def test_no_data_found_is_a_failed_output_not_a_crash(monkeypatch):
-    monkeypatch.setattr(agent_module, "_get_kg_client", lambda: FakeKGClient())  # empty everywhere
-    monkeypatch.setattr(agent_module, "_get_llm_client", lambda: FakeLLMClient())
+async def test_no_data_found_is_a_failed_output_not_a_crash():
+    deps = _deps(kg=FakeKGClient())  # empty everywhere
 
     state = new_state(query="how are apparel exports doing overall", user_id="u1")
-    result = await apparel_manufacturing_node(state)
+    result = await apparel_manufacturing_node(state, deps)
     output = result["agent_outputs"]["apparel_manufacturing"]
 
     assert output["confidence"] == pytest.approx(0.0)

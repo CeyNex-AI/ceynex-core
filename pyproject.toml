@@ -4,8 +4,15 @@ version = "0.1.0"
 description = "CeyNex — a multi-agent decision intelligence platform for Sri Lanka's national export economy"
 requires-python = ">=3.11"
 dependencies = [
+    # ceynex-contracts is deliberately NOT listed here. It is not on PyPI, and a
+    # bare name would make `pip install -e .` fail while a git+ssh URL would make
+    # it fail for anyone without a deploy key. `make install` installs it from the
+    # sibling checkout; see CONTRACTS_SPEC in the Makefile to point at a git ref
+    # instead. tests/test_layout.py fails loudly if it is missing.
     "langgraph>=0.2",
     "openai>=1.40",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
     "neo4j>=5.20",
     "psycopg[binary]>=3.1",
     "asyncpg>=0.29",
@@ -22,6 +29,7 @@ dependencies = [
     "scikit-learn>=1.5",
     "pdfplumber>=0.11",
     "beautifulsoup4>=4.12",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -37,8 +45,21 @@ dev = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# `ceynex` is an implicit namespace package shared with the ceynex-contracts
+# distribution, which supplies ceynex.contracts. Neither repo ships a
+# ceynex/__init__.py — adding one back shadows the other and breaks every
+# teammate's imports. tests/test_layout.py guards this.
 [tool.setuptools.packages.find]
 include = ["ceynex*", "eval*"]
+exclude = ["ceynex.contracts*"]
+namespaces = true
+
+# Data files the code reads at runtime. Without this they exist in a source
+# checkout and vanish once installed, so everything passes locally and the
+# container dies on startup. tests/test_layout.py asserts each one is reachable
+# through importlib.resources rather than through a source-relative path.
+[tool.setuptools.package-data]
+"ceynex.data" = ["reference/*.csv"]
 
 [tool.ruff]
 line-length = 100
@@ -47,6 +68,13 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N"]
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# ceynex.contracts arrives from a separate installed distribution, so isort would
+# otherwise file it under third-party while ceynex.orchestrator stays first-party
+# — the same top-level package split across two import groups. Nobody reading the
+# code cares which wheel a module came from.
+known-first-party = ["ceynex", "eval"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

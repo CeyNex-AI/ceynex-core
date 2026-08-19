@@ -1,64 +1,158 @@
-"""Provisional data-ingestion pipeline entrypoint (SRS 3.1.7/3.1.8).
+"""Implements SRS 3.1.7 — the ingestion entrypoint.
 
-STUB — same pattern as `NullCrossValidator` (`docs/ARCHITECTURE_DELTA.md` D3):
-a placeholder until the real multi-sector pipeline harness (core-systems
-scope) lands, written so swapping it out later is a small diff, not a
-rewrite. It only knows about apparel sources right now — `--sources all` is
-currently an alias for `--sources apparel` until agriculture/macro sources
-are registered somewhere and wired in here too.
+    make ingest
+    python -m ceynex.data.pipeline --sources all
+    python -m ceynex.data.pipeline --sources comtrade --years 2020 2024 --offline
 
-Writes `fact_trade` rows to a staging parquet file
-(`data/staging/fact_trade_apparel.parquet`) rather than Postgres directly —
-the docker stack (`make up`) isn't assumed to be running. The connector ->
-`to_fact_trade()` -> write boundary below is exactly where a Postgres writer
-(`ceynex.contracts.protocols.CrossValidatorProtocol`-style injection, or a
-plain `psycopg` upsert on `fact_trade`'s natural key) slots in once that's
-ready — nothing upstream of that boundary should need to change.
+Connectors are registered here by source id. M1's and M3's connectors register
+themselves the same way, so `--sources all` picks them up without this file
+learning anything about their internals.
+
+Idempotent: running it twice yields the same `fact_trade` row count. That is a
+property of the writer's upsert, and `--verify` prints the count so it can be
+checked rather than assumed.
 """
 
+from __future__ import annotations
+
 import argparse
+import logging
 import sys
-from pathlib import Path
+from collections.abc import Callable
 
 import pandas as pd
+import psycopg
 
-from ceynex.data.connectors.apparel_sources import APPAREL_SOURCES
+from ceynex.contracts import DataSourceConnector
+from ceynex.data.connectors.apparel_sources import EDB_SOURCE, JAAF_SOURCE
+from ceynex.data.connectors.comtrade import ComtradeConnector
+from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
+from ceynex.settings import postgres_dsn, redacted_dsn
 
-STAGING_DIR = Path("data/staging")
+log = logging.getLogger(__name__)
+
+# source id -> factory. M1 and M3 add theirs here; nothing else changes.
+#
+# EDB and JAAF ignore `years`/`offline`: each is a fixed set of manually-saved
+# report editions (`apparel_sources.py`), not an API pull with a date range or
+# a cache to bypass, so there is nothing for those flags to select between.
+CONNECTORS: dict[str, Callable[..., DataSourceConnector]] = {
+    "comtrade": ComtradeConnector,
+    "edb": lambda **_kwargs: EDB_SOURCE,
+    "jaaf": lambda **_kwargs: JAAF_SOURCE,
+}
 
 
-def run_apparel_sources() -> pd.DataFrame:
-    """Run every registered apparel connector end to end and concatenate the output."""
-    frames = []
-    for connector in APPAREL_SOURCES:
-        raw = connector.fetch()
-        fact = connector.to_fact_trade(raw)
-        print(f"{connector.source_id}: {len(raw)} raw rows -> {len(fact)} fact_trade rows")
-        frames.append(fact)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+def run_source(
+    name: str,
+    writer: UnifiedDatasetWriter,
+    **kwargs: object,
+) -> WriteResult:
+    factory = CONNECTORS[name]
+    connector = factory(**kwargs)  # type: ignore[arg-type]
+
+    log.info("--- %s ---", name)
+    raw = connector.fetch()
+    records = connector.to_fact_trade(raw)
+    log.info("%s: %d raw rows -> %d fact_trade rows", name, len(raw), len(records))
+
+    result = writer.write(records, source_id=connector.source_id)
+
+    # A year the source did not report is a hole in every time series built on
+    # it. Reported here rather than left in the logs, because CAGR endpoints and
+    # forecast windows both break quietly on a gap.
+    try:
+        missing = connector.manifest().notes.get("missing_years") or []
+    except RuntimeError:
+        missing = []
+    if missing:
+        result.warnings.append(
+            f"{connector.source_id} reported no data at all for {missing} — "
+            "any growth rate or forecast spanning those years has a gap in it"
+        )
+    return result
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run registered data source connectors.")
-    parser.add_argument(
-        "--sources",
-        default="apparel",
-        choices=["apparel", "all"],
-        help="'all' currently aliases 'apparel' — no other sector is registered here yet.",
-    )
-    parser.parse_args()
+def verify(dsn: str | None = None) -> list[tuple[str, int]]:
+    """Row counts per source. The Day 3 acceptance check from the plan."""
+    with psycopg.connect(dsn or postgres_dsn()) as conn, conn.cursor() as cur:
+        cur.execute("SELECT source_id, count(*) FROM fact_trade GROUP BY 1 ORDER BY 1")
+        return [(str(row[0]), int(row[1])) for row in cur.fetchall()]
 
-    fact = run_apparel_sources()
-    if fact.empty:
-        print("No rows produced.")
-        sys.exit(1)
 
-    STAGING_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = STAGING_DIR / "fact_trade_apparel.parquet"
-    fact.to_parquet(out_path, index=False)
-    print(f"\nWrote {len(fact)} fact_trade rows to {out_path}")
-    print(fact.groupby("source_id").size().to_string())
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Ingest external sources into fact_trade.")
+    parser.add_argument("--sources", nargs="+", default=["all"], help="'all' or source names")
+    parser.add_argument("--years", nargs=2, type=int, metavar=("FROM", "TO"), default=None)
+    parser.add_argument("--offline", action="store_true", help="use only cached raw responses")
+    parser.add_argument("--verify", action="store_true", help="print row counts per source and exit")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    if args.verify:
+        return _print_counts()
+
+    names = list(CONNECTORS) if "all" in args.sources else args.sources
+    unknown = [n for n in names if n not in CONNECTORS]
+    if unknown:
+        log.error("unknown sources: %s (known: %s)", unknown, sorted(CONNECTORS))
+        return 2
+
+    kwargs: dict[str, object] = {}
+    if args.years:
+        kwargs["years"] = tuple(range(args.years[0], args.years[1] + 1))
+    if args.offline:
+        kwargs["offline"] = True
+
+    writer = UnifiedDatasetWriter()
+    results: list[WriteResult] = []
+    for name in names:
+        try:
+            results.append(run_source(name, writer, **kwargs))
+        except Exception as exc:  # noqa: BLE001 - one bad source must not stop the rest
+            log.exception("%s failed", name)
+            results.append(
+                WriteResult(name, None, 0, 0, 0, None, status="failed", error=str(exc))
+            )
+
+    print()
+    for result in results:
+        marker = "ok " if result.status == "success" else "FAIL"
+        print(f"  {marker} {result.source_id:<14} {result.rows_written:>7,} rows"
+              f"  {result.dq_flags:>4} dq flags")
+        if result.error:
+            print(f"       {result.error}")
+        for warning in result.warnings:
+            print(f"       warning: {warning}")
+
+    print()
+    _print_counts()
+    return 0 if all(r.status == "success" for r in results) else 1
+
+
+def _print_counts() -> int:
+    try:
+        counts = verify()
+    except psycopg.Error as exc:
+        log.error("could not read fact_trade from %s: %s", redacted_dsn(), exc)
+        return 1
+    if not counts:
+        print("  fact_trade is empty")
+        return 0
+    width = max(len(name) for name, _ in counts)
+    print("  fact_trade by source:")
+    for name, count in counts:
+        print(f"    {name:<{width}}  {count:>8,}")
+    print(f"    {'TOTAL':<{width}}  {sum(c for _, c in counts):>8,}")
+    return 0
+
+
+def concat(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    """Combine connector outputs, tolerating empty ones."""
+    non_empty = [f for f in frames if not f.empty]
+    return pd.concat(non_empty, ignore_index=True) if non_empty else pd.DataFrame()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

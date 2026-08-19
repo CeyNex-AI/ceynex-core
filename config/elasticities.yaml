@@ -49,3 +49,22 @@ model:
     It does not model substitution between destination markets, capacity
     constraints, or second-round exchange-rate effects. The agent must state
     these limits in its `assumptions` list on every simulation.
+
+# Tariff rate assumed to apply if a unilateral preference (GSP+, UK DCTS) is
+# lost and MFN rates return. Used only by the agreement-loss simulation, and only
+# after `agreement_coverage()` has confirmed from the knowledge graph that a
+# preference exists — without that confirmation the agent reports that the
+# simulation cannot be completed rather than applying this number (SAD 4.1).
+#
+# This is the documented fallback for the WITS tariff ingestion the plan lists
+# first in its "if you fall behind" cut order. Replace with a real WITS pull and
+# these become fitted rather than assumed.
+agreement_loss_mfn_tariff:
+  agriculture:
+    value: 0.055
+    basis: assumption
+    source: TBD — EU MFN applied rates for HS 09/15/40 vary widely by heading
+  apparel:
+    value: 0.095
+    basis: assumption
+    source: TBD — EU MFN for HS 61/62 is commonly cited near 9.6%, verify per heading

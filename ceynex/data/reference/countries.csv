@@ -1,0 +1,256 @@
+iso3,m49,name,status
+ABW,533,Aruba,current
+AFG,4,Afghanistan,current
+AGO,24,Angola,current
+AIA,660,Anguilla,current
+ALA,248,Åland Islands,current
+ALB,8,Albania,current
+AND,20,Andorra,current
+ANT,530,Netherlands Antilles (former),historical
+ARE,784,United Arab Emirates,current
+ARG,32,Argentina,current
+ARM,51,Armenia,current
+ASM,16,American Samoa,current
+ATA,10,Antarctica,current
+ATF,260,French Southern Territories,current
+ATG,28,Antigua and Barbuda,current
+AUS,36,Australia,current
+AUT,40,Austria,current
+AZE,31,Azerbaijan,current
+BDI,108,Burundi,current
+BEL,56,Belgium,current
+BEN,204,Benin,current
+BES,535,"Bonaire, Sint Eustatius and Saba",current
+BFA,854,Burkina Faso,current
+BGD,50,Bangladesh,current
+BGR,100,Bulgaria,current
+BHR,48,Bahrain,current
+BHS,44,Bahamas,current
+BIH,70,Bosnia and Herzegovina,current
+BLM,652,Saint Barthélemy,current
+BLR,112,Belarus,current
+BLZ,84,Belize,current
+BMU,60,Bermuda,current
+BOL,68,"Bolivia, Plurinational State of",current
+BRA,76,Brazil,current
+BRB,52,Barbados,current
+BRN,96,Brunei Darussalam,current
+BTN,64,Bhutan,current
+BVT,74,Bouvet Island,current
+BWA,72,Botswana,current
+CAF,140,Central African Republic,current
+CAN,124,Canada,current
+CCK,166,Cocos (Keeling) Islands,current
+CHE,756,Switzerland,current
+CHL,152,Chile,current
+CHN,156,China,current
+CIV,384,Côte d'Ivoire,current
+CMR,120,Cameroon,current
+COD,180,"Congo, The Democratic Republic of the",current
+COG,178,Congo,current
+COK,184,Cook Islands,current
+COL,170,Colombia,current
+COM,174,Comoros,current
+CPV,132,Cabo Verde,current
+CRI,188,Costa Rica,current
+CSK,200,Czechoslovakia (former),historical
+CUB,192,Cuba,current
+CUW,531,Curaçao,current
+CXR,162,Christmas Island,current
+CYM,136,Cayman Islands,current
+CYP,196,Cyprus,current
+CZE,203,Czechia,current
+DDR,278,German Democratic Republic (former),historical
+DEU,276,Germany,current
+DJI,262,Djibouti,current
+DMA,212,Dominica,current
+DNK,208,Denmark,current
+DOM,214,Dominican Republic,current
+DZA,12,Algeria,current
+ECU,218,Ecuador,current
+EGY,818,Egypt,current
+ERI,232,Eritrea,current
+ESH,732,Western Sahara,current
+ESP,724,Spain,current
+EST,233,Estonia,current
+ETH,231,Ethiopia,current
+FIN,246,Finland,current
+FJI,242,Fiji,current
+FLK,238,Falkland Islands (Malvinas),current
+FRA,250,France,current
+FRO,234,Faroe Islands,current
+FSM,583,"Micronesia, Federated States of",current
+GAB,266,Gabon,current
+GBR,826,United Kingdom,current
+GEO,268,Georgia,current
+GGY,831,Guernsey,current
+GHA,288,Ghana,current
+GIB,292,Gibraltar,current
+GIN,324,Guinea,current
+GLP,312,Guadeloupe,current
+GMB,270,Gambia,current
+GNB,624,Guinea-Bissau,current
+GNQ,226,Equatorial Guinea,current
+GRC,300,Greece,current
+GRD,308,Grenada,current
+GRL,304,Greenland,current
+GTM,320,Guatemala,current
+GUF,254,French Guiana,current
+GUM,316,Guam,current
+GUY,328,Guyana,current
+HKG,344,Hong Kong,current
+HMD,334,Heard Island and McDonald Islands,current
+HND,340,Honduras,current
+HRV,191,Croatia,current
+HTI,332,Haiti,current
+HUN,348,Hungary,current
+IDN,360,Indonesia,current
+IMN,833,Isle of Man,current
+IND,356,India,current
+IOT,86,British Indian Ocean Territory,current
+IRL,372,Ireland,current
+IRN,364,"Iran, Islamic Republic of",current
+IRQ,368,Iraq,current
+ISL,352,Iceland,current
+ISR,376,Israel,current
+ITA,380,Italy,current
+JAM,388,Jamaica,current
+JEY,832,Jersey,current
+JOR,400,Jordan,current
+JPN,392,Japan,current
+KAZ,398,Kazakhstan,current
+KEN,404,Kenya,current
+KGZ,417,Kyrgyzstan,current
+KHM,116,Cambodia,current
+KIR,296,Kiribati,current
+KNA,659,Saint Kitts and Nevis,current
+KOR,410,"Korea, Republic of",current
+KWT,414,Kuwait,current
+LAO,418,Lao People's Democratic Republic,current
+LBN,422,Lebanon,current
+LBR,430,Liberia,current
+LBY,434,Libya,current
+LCA,662,Saint Lucia,current
+LIE,438,Liechtenstein,current
+LKA,144,Sri Lanka,current
+LSO,426,Lesotho,current
+LTU,440,Lithuania,current
+LUX,442,Luxembourg,current
+LVA,428,Latvia,current
+MAC,446,Macao,current
+MAF,663,Saint Martin (French part),current
+MAR,504,Morocco,current
+MCO,492,Monaco,current
+MDA,498,"Moldova, Republic of",current
+MDG,450,Madagascar,current
+MDV,462,Maldives,current
+MEX,484,Mexico,current
+MHL,584,Marshall Islands,current
+MKD,807,North Macedonia,current
+MLI,466,Mali,current
+MLT,470,Malta,current
+MMR,104,Myanmar,current
+MNE,499,Montenegro,current
+MNG,496,Mongolia,current
+MNP,580,Northern Mariana Islands,current
+MOZ,508,Mozambique,current
+MRT,478,Mauritania,current
+MSR,500,Montserrat,current
+MTQ,474,Martinique,current
+MUS,480,Mauritius,current
+MWI,454,Malawi,current
+MYS,458,Malaysia,current
+MYT,175,Mayotte,current
+NAM,516,Namibia,current
+NCL,540,New Caledonia,current
+NER,562,Niger,current
+NFK,574,Norfolk Island,current
+NGA,566,Nigeria,current
+NIC,558,Nicaragua,current
+NIU,570,Niue,current
+NLD,528,Netherlands,current
+NOR,578,Norway,current
+NPL,524,Nepal,current
+NRU,520,Nauru,current
+NZL,554,New Zealand,current
+OMN,512,Oman,current
+PAK,586,Pakistan,current
+PAN,591,Panama,current
+PCN,612,Pitcairn,current
+PER,604,Peru,current
+PHL,608,Philippines,current
+PLW,585,Palau,current
+PNG,598,Papua New Guinea,current
+POL,616,Poland,current
+PRI,630,Puerto Rico,current
+PRK,408,"Korea, Democratic People's Republic of",current
+PRT,620,Portugal,current
+PRY,600,Paraguay,current
+PSE,275,"Palestine, State of",current
+PYF,258,French Polynesia,current
+QAT,634,Qatar,current
+REU,638,Réunion,current
+ROU,642,Romania,current
+RUS,643,Russian Federation,current
+RWA,646,Rwanda,current
+SAU,682,Saudi Arabia,current
+SCG,891,Serbia and Montenegro (former),historical
+SDN,729,Sudan,current
+SEN,686,Senegal,current
+SGP,702,Singapore,current
+SGS,239,South Georgia and the South Sandwich Islands,current
+SHN,654,"Saint Helena, Ascension and Tristan da Cunha",current
+SJM,744,Svalbard and Jan Mayen,current
+SLB,90,Solomon Islands,current
+SLE,694,Sierra Leone,current
+SLV,222,El Salvador,current
+SMR,674,San Marino,current
+SOM,706,Somalia,current
+SPM,666,Saint Pierre and Miquelon,current
+SRB,688,Serbia,current
+SSD,728,South Sudan,current
+STP,678,Sao Tome and Principe,current
+SUN,810,USSR (former),historical
+SUR,740,Suriname,current
+SVK,703,Slovakia,current
+SVN,705,Slovenia,current
+SWE,752,Sweden,current
+SWZ,748,Eswatini,current
+SXM,534,Sint Maarten (Dutch part),current
+SYC,690,Seychelles,current
+SYR,760,Syrian Arab Republic,current
+TCA,796,Turks and Caicos Islands,current
+TCD,148,Chad,current
+TGO,768,Togo,current
+THA,764,Thailand,current
+TJK,762,Tajikistan,current
+TKL,772,Tokelau,current
+TKM,795,Turkmenistan,current
+TLS,626,Timor-Leste,current
+TON,776,Tonga,current
+TTO,780,Trinidad and Tobago,current
+TUN,788,Tunisia,current
+TUR,792,Türkiye,current
+TUV,798,Tuvalu,current
+TWN,158,"Taiwan, Province of China",current
+TZA,834,"Tanzania, United Republic of",current
+UGA,800,Uganda,current
+UKR,804,Ukraine,current
+UMI,581,United States Minor Outlying Islands,current
+URY,858,Uruguay,current
+USA,840,United States,current
+UZB,860,Uzbekistan,current
+VAT,336,Holy See (Vatican City State),current
+VCT,670,Saint Vincent and the Grenadines,current
+VEN,862,"Venezuela, Bolivarian Republic of",current
+VGB,92,"Virgin Islands, British",current
+VIR,850,"Virgin Islands, U.S.",current
+VNM,704,Viet Nam,current
+VUT,548,Vanuatu,current
+WLF,876,Wallis and Futuna,current
+WSM,882,Samoa,current
+YEM,887,Yemen,current
+YUG,890,Yugoslavia (former),historical
+ZAF,710,South Africa,current
+ZMB,894,Zambia,current
+ZWE,716,Zimbabwe,current

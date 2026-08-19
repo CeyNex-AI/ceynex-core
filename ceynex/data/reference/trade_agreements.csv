@@ -1,0 +1,15 @@
+# Trade agreements relevant to Sri Lankan exports. Loaded into the knowledge
+# graph by ceynex.kg.loaders.trade_agreements — M2 owns these because both
+# sector loaders attach COVERED_BY edges to them and neither should own the node.
+#
+# VERIFICATION STATUS: every row is `unverified`. Per the team rule, no figure
+# derived from this table goes into a report, an answer, or the evaluation until
+# a human has checked it against the cited source. The Trade Economics agent
+# surfaces the status in its `assumptions` list rather than hiding it.
+name,type,in_force_from,partners,source,verified
+GSP+,unilateral_preference,2017-05-19,EU27,EU Regulation 978/2012 — Sri Lanka readmitted to GSP+ on 19 May 2017,unverified
+UK DCTS,unilateral_preference,2023-06-19,GBR,UK Developing Countries Trading Scheme — successor to UK GSP,unverified
+ISFTA,bilateral_fta,2000-03-01,IND,India–Sri Lanka Free Trade Agreement,unverified
+PSFTA,bilateral_fta,2005-06-12,PAK,Pakistan–Sri Lanka Free Trade Agreement,unverified
+SAFTA,regional_fta,2006-01-01,BGD;BTN;IND;MDV;NPL;PAK;AFG,South Asian Free Trade Area,unverified
+APTA,regional_pta,1976-06-17,BGD;CHN;IND;KOR;LAO;MNG,Asia-Pacific Trade Agreement,unverified
