@@ -104,7 +104,12 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     registered = _load_registered_model(item)
     if registered is not None:
         points = registered.predict(horizon)
+        # The version is part of the identity. "A registered model produced this"
+        # is not a traceable claim if two versions of that model disagree.
+        version = getattr(registered, "version", None)
         model_id = f"{registered.sector}/{registered.item}/{registered.target}"
+        if version:
+            model_id = f"{model_id}@{version}"
         assumptions.append(f"Served from the model registry: {model_id}.")
         evidence.append(
             evidence_from_model(
