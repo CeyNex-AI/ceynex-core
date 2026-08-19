@@ -181,3 +181,32 @@ cannot quietly disarm them.
 **Sanity check, human-verified once:** the 2023 pull sums to USD 1.27bn of tea
 exports against a published figure of roughly USD 1.3bn, and USA/UK/Italy/Germany
 come out as the top four apparel destinations, which is the expected ordering.
+
+---
+
+## D9 — `WITSConnector` is not built
+
+**Decided 2026-08-19, M2, under schedule pressure.**
+**Spec touched:** SAD Figure 4 and §5.1, SRS 3.1.7, 3.1.8.
+
+SAD Figure 4 names six concrete `DataSourceConnector` subclasses. Five are being
+built — `ComtradeConnector` (M2), `FAOSTATConnector` and `CBSLConnector` (M1),
+`JAAFConnector` and `EDBConnector` (M3). `WITSConnector` is not, and no static
+tariff table replaces it either.
+
+**Why.** The M2 plan names WITS as the first thing to cut and the 30-question
+evaluation as something that may never be cut. With the schedule roughly two
+weeks behind, that trade is the plan's own instruction, taken deliberately
+rather than by omission.
+
+**Scope of the damage.** One thing, narrowly: the MFN tariff rate re-imposed in
+a preference-loss simulation is a documented constant in
+`config/elasticities.yaml` rather than a queried schedule. FX shocks and
+user-specified tariff shocks are unaffected, and whether GSP+ *covers* a given
+HS code is still answered from the knowledge graph. Full reasoning, including
+what the agent does when coverage is absent, is in
+[DEFERRED.md](DEFERRED.md#wits-tariff-ingestion--cut).
+
+**Reversal cost is low by construction:** add the connector and register it in
+`CONNECTORS` in `ceynex/data/pipeline.py`. The writer, schema and agents do not
+change — which is the point of the `DataSourceConnector` ABC.
