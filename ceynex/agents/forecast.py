@@ -111,11 +111,21 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         if version:
             model_id = f"{model_id}@{version}"
         assumptions.append(f"Served from the model registry: {model_id}.")
+        # The claim restates the figures, not just the model's name. An evidence
+        # entry that says "a model produced this" without saying what it produced
+        # leaves every number in the answer traceable to nothing.
+        head = points[0] if points else None
+        figures_text = (
+            f" First period {head['period']}: {head['point']:,.0f} {head['unit']} "
+            f"({head['lower']:,.0f}–{head['upper']:,.0f} at 80%)."
+            if head
+            else ""
+        )
         evidence.append(
             evidence_from_model(
                 claim=(
                     f"Forecast produced by the registered model {model_id} over a "
-                    f"{horizon}-period horizon."
+                    f"{horizon}-period horizon.{figures_text}"
                 ),
                 model_id=model_id,
             )
@@ -138,6 +148,13 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                     f"Drift baseline fitted to {len(history)} annual observations "
                     f"({history[0][0]}-{history[-1][0]}), mean annual change "
                     f"USD {diagnostics['mean_annual_change_usd']:,.0f}."
+                    + (
+                        f" First period {points[0]['period']}: "
+                        f"{points[0]['point']:,.0f} {points[0]['unit']} "
+                        f"({points[0]['lower']:,.0f}–{points[0]['upper']:,.0f} at 80%)."
+                        if points
+                        else ""
+                    )
                 ),
                 model_id=model_id,
                 period=f"{history[0][0]}-{history[-1][0]}",
