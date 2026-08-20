@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import csv
 import functools
+import re
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -290,3 +291,181 @@ def dim_country_rows() -> list[tuple[str, int, str]]:
 def dim_hs_rows() -> list[tuple[str, str, str]]:
     """Seed rows for `dim_hs`."""
     return [(code, description, sector) for code, (description, sector) in _hs_codes().items()]
+
+
+# --- free-text market names -----------------------------------------------
+#
+# EDB and JAAF report partner countries as free-text market names, not M49 or
+# ISO-3 (SAD Figure 4, team plan "build a crosswalk early") — parenthetical
+# alt-names, comma-style official names, and EDB's own abbreviations included,
+# e.g. "Korea South (Korea, Republic of)" or "Taiwan, Province of China".
+# `to_iso3()` above expects an already-clean identifier and raises on anything
+# it doesn't recognize; that's correct for Comtrade's coded partners but wrong
+# here, where an unrecognized market name is routine and callers must treat it
+# as "flag and skip", never guess. `market_to_iso3` resolves through this
+# alias table and falls back to `to_iso3`/`to_m49` against the same reference
+# data everything else in this module uses, rather than hand-rolling a second
+# country table.
+
+# normalized free-text alias -> iso3
+_ALIASES: dict[str, str] = {
+    "united states": "USA",
+    "united states of america": "USA",
+    "usa": "USA",
+    "us": "USA",
+    "united kingdom": "GBR",
+    "uk": "GBR",
+    "great britain": "GBR",
+    "germany": "DEU",
+    "italy": "ITA",
+    "belgium": "BEL",
+    "netherlands": "NLD",
+    "the netherlands": "NLD",
+    "holland": "NLD",
+    "france": "FRA",
+    "spain": "ESP",
+    "canada": "CAN",
+    "australia": "AUS",
+    "japan": "JPN",
+    "china": "CHN",
+    "people's republic of china": "CHN",
+    "prc": "CHN",
+    "india": "IND",
+    "poland": "POL",
+    "denmark": "DNK",
+    "sweden": "SWE",
+    "austria": "AUT",
+    "switzerland": "CHE",
+    "ireland": "IRL",
+    "portugal": "PRT",
+    "south korea": "KOR",
+    "korea republic of": "KOR",
+    "republic of korea": "KOR",
+    "united arab emirates": "ARE",
+    "uae": "ARE",
+    "mexico": "MEX",
+    "brazil": "BRA",
+    "russia": "RUS",
+    "russian federation": "RUS",
+    "turkey": "TUR",
+    "turkiye": "TUR",
+    "hong kong": "HKG",
+    "chile": "CHL",
+    "south africa": "ZAF",
+    "new zealand": "NZL",
+    "norway": "NOR",
+    "finland": "FIN",
+    "czech republic": "CZE",
+    "czechia": "CZE",
+    "panama": "PAN",
+    "bangladesh": "BGD",
+    "vietnam": "VNM",
+    "viet nam": "VNM",
+    "indonesia": "IDN",
+    "singapore": "SGP",
+    "malaysia": "MYS",
+    "saudi arabia": "SAU",
+    "israel": "ISR",
+    "greece": "GRC",
+    "romania": "ROU",
+    "slovenia": "SVN",
+    "lithuania": "LTU",
+    "latvia": "LVA",
+    "estonia": "EST",
+    "bulgaria": "BGR",
+    "hungary": "HUN",
+    "croatia": "HRV",
+    "slovakia": "SVK",
+    "luxembourg": "LUX",
+    "malta": "MLT",
+    "cyprus": "CYP",
+    "antigua and barbuda": "ATG",
+    "argentina": "ARG",
+    "azerbaijan": "AZE",
+    "bahrain": "BHR",
+    "barbados": "BRB",
+    "cambodia": "KHM",
+    "colombia": "COL",
+    "costa rica": "CRI",
+    "dominican republic": "DOM",
+    "egypt": "EGY",
+    "el salvador": "SLV",
+    "ethiopia": "ETH",
+    "ghana": "GHA",
+    "haiti": "HTI",
+    "iran": "IRN",
+    "iran islamic republic of": "IRN",
+    "iraq": "IRQ",
+    "jordan": "JOR",
+    "kazakhstan": "KAZ",
+    "kenya": "KEN",
+    "korea south": "KOR",  # EDB's own wording, e.g. "Korea South (Korea, Republic of)"
+    "kuwait": "KWT",
+    "kyrgyzstan": "KGZ",
+    "lebanon": "LBN",
+    "macau": "MAC",
+    "madagascar": "MDG",
+    "maldives": "MDV",
+    "mauritius": "MUS",
+    "morocco": "MAR",
+    "myanmar": "MMR",
+    "oman": "OMN",
+    "pakistan": "PAK",
+    "papua new guinea": "PNG",
+    "paraguay": "PRY",
+    "peru": "PER",
+    "philippines": "PHL",
+    "qatar": "QAT",
+    "senegal": "SEN",
+    "serbia": "SRB",
+    "seychelles": "SYC",
+    "swaziland": "SWZ",
+    "eswatini": "SWZ",
+    "taiwan": "TWN",
+    "taiwan province of china": "TWN",  # EDB's own wording
+    "tajikistan": "TJK",
+    "tanzania": "TZA",
+    "tanzania united republic of": "TZA",  # EDB's own wording
+    "thailand": "THA",
+    "trinidad and tobago": "TTO",
+    "tunisia": "TUN",
+    "ukraine": "UKR",
+    "uruguay": "URY",
+    "uzbekistan": "UZB",
+    "honduras": "HND",
+    "puerto rico": "PRI",
+}
+
+
+def _normalize_market(name: str) -> str:
+    s = name.lower().strip()
+    s = s.replace(".", "").replace(",", "")
+    # EDB sometimes appends a parenthetical alt-name, e.g. "Croatia (Hrvatska)"
+    # or "Czech Republic (Czechia)" — the un-parenthesized form is the alias key.
+    s = re.sub(r"\([^)]*\)", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def market_to_iso3(market_name: str) -> tuple[str | None, int | None]:
+    """Resolve a free-text market/country name to (ISO3, M49).
+
+    Returns `(None, None)` for anything not recognized — callers must not
+    fall back to writing that as `partner_iso3 = NULL` (that means "World" in
+    the schema, a different thing entirely).
+    """
+    iso3 = _ALIASES.get(_normalize_market(market_name))
+    if iso3 is None:
+        return None, None
+    try:
+        return iso3, to_m49(iso3)
+    except CrosswalkError:
+        return None, None
+
+
+def known_aliases() -> tuple[str, ...]:
+    """Every recognized free-text alias, for scanning free-text (e.g. a user's
+    natural-language query) for a country mention — a different use case from
+    `market_to_iso3`, which resolves one already-known exact name. Returns a
+    plain tuple (not the live dict) so callers can't mutate the crosswalk.
+    """
+    return tuple(_ALIASES.keys())
