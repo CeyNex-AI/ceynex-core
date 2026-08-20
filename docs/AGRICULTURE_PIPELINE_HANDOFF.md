@@ -2,9 +2,9 @@
 
 ## Status
 
-`DataQualityPipeline` is ready for M2's `UnifiedDatasetWriter`, but the writer
-and a general M49/ISO-3 crosswalk module are not present in this repository or
-any current local branch.  No frozen contract or schema was changed.
+`DataQualityPipeline` is integrated at the ingestion entrypoint with M2's
+`UnifiedDatasetWriter` and the shared country crosswalk.  No frozen contract or
+schema was changed.
 
 ## Exact writer integration
 
@@ -41,8 +41,8 @@ partners and must emit `reporter_iso3`, `reporter_m49`, `partner_iso3`, and
 | --- | --- | --- |
 | Tea Board | annual total tea export volume, HS `0902`, converted MT → kg | production categories |
 | Cinnamon | DEA/EAC annual total cinnamon export volume, HS `0906`, converted MT → kg | FAOSTAT production and price series; DEA/EAC price series |
-| FAOSTAT | raw stage only at present | production and producer prices until a source-specific mapper is added |
-| Pink Sheet | raw stage only at present | Colombo tea price until a source-specific mapper is added |
+| FAOSTAT | annual USD producer prices for tea, cinnamon, rubber and coconut | production, price indices, and LCU prices (the fact-trade identity cannot hold both currencies for one item/year) |
+| Pink Sheet | monthly `Tea, Colombo` price in USD/kg, HS `0902` | other commodity series |
 
 ## Schema issue requiring three-way approval
 
