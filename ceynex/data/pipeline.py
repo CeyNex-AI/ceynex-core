@@ -17,17 +17,24 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 import pandas as pd
 import psycopg
 
 from ceynex.contracts import DataSourceConnector
+from ceynex.data.cleaning import CrossValidator, DataCleaner
 from ceynex.data.connectors.apparel_sources import EDB_SOURCE, JAAF_SOURCE
+from ceynex.data.connectors.cinnamon import CinnamonConnector
 from ceynex.data.connectors.comtrade import ComtradeConnector
+from ceynex.data.connectors.faostat import FAOSTATConnector
+from ceynex.data.connectors.pinksheet import PinkSheetConnector
+from ceynex.data.connectors.teaboard import TeaBoardConnector
 from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
-from ceynex.settings import postgres_dsn, redacted_dsn
+from ceynex.settings import REPO_ROOT, data_dir, postgres_dsn, redacted_dsn
 
 log = logging.getLogger(__name__)
 
@@ -36,16 +43,73 @@ log = logging.getLogger(__name__)
 # EDB and JAAF ignore `years`/`offline`: each is a fixed set of manually-saved
 # report editions (`apparel_sources.py`), not an API pull with a date range or
 # a cache to bypass, so there is nothing for those flags to select between.
+def _agriculture_raw_dir() -> Path:
+    """Find M1's dated raw snapshots without hard-coding a user directory.
+
+    The project workspace keeps agriculture downloads alongside ``ceynex-core``
+    at ``data/raw``.  A checkout that vendors them into the repository can use
+    ``ceynex-core/data/raw`` instead, and deployments can explicitly set
+    ``CEYNEX_AGRICULTURE_RAW_DIR``.
+    """
+    override = os.environ.get("CEYNEX_AGRICULTURE_RAW_DIR")
+    candidates = [
+        Path(override) if override else None,
+        REPO_ROOT.parent / "data" / "raw",
+        data_dir() / "raw",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_dir():
+            return candidate
+    searched = ", ".join(str(candidate) for candidate in candidates if candidate is not None)
+    raise FileNotFoundError(
+        "could not find agriculture raw data; looked in "
+        f"{searched}. Set CEYNEX_AGRICULTURE_RAW_DIR to the directory containing "
+        "faostat, pinksheet, tea_board, and cinnamon."
+    )
+
+
+def _faostat_connector(**_kwargs: object) -> FAOSTATConnector:
+    return FAOSTATConnector(_agriculture_raw_dir() / "faostat", data_dir() / "staging")
+
+
+def _pink_sheet_connector(**_kwargs: object) -> PinkSheetConnector:
+    return PinkSheetConnector(
+        _agriculture_raw_dir() / "pinksheet",
+        data_dir() / "staging",
+    )
+
+
+def _tea_board_connector(**_kwargs: object) -> TeaBoardConnector:
+    return TeaBoardConnector(
+        _agriculture_raw_dir() / "tea_board",
+        data_dir() / "staging",
+    )
+
+
+def _cinnamon_connector(**_kwargs: object) -> CinnamonConnector:
+    return CinnamonConnector(
+        _agriculture_raw_dir() / "cinnamon",
+        data_dir() / "staging",
+    )
+
+
 CONNECTORS: dict[str, Callable[..., DataSourceConnector]] = {
     "comtrade": ComtradeConnector,
     "edb": lambda **_kwargs: EDB_SOURCE,
     "jaaf": lambda **_kwargs: JAAF_SOURCE,
+    "faostat": _faostat_connector,
+    "pink_sheet": _pink_sheet_connector,
+    "tea_board": _tea_board_connector,
+    "cinnamon": _cinnamon_connector,
 }
+
+AGRICULTURE_SOURCES = frozenset({"faostat", "pink_sheet", "tea_board", "cinnamon"})
 
 
 def run_source(
     name: str,
     writer: UnifiedDatasetWriter,
+    cleaner: DataCleaner | None = None,
     **kwargs: object,
 ) -> WriteResult:
     factory = CONNECTORS[name]
@@ -54,6 +118,11 @@ def run_source(
     log.info("--- %s ---", name)
     raw = connector.fetch()
     records = connector.to_fact_trade(raw)
+    if name in AGRICULTURE_SOURCES:
+        # The cleaner is deliberately after each connector's schema mapping:
+        # it standardizes the frozen fact_trade fields while preserving the
+        # connector's raw source files and staging output unchanged.
+        records = (cleaner or DataCleaner()).clean(records)
     log.info("%s: %d raw rows -> %d fact_trade rows", name, len(raw), len(records))
 
     result = writer.write(records, source_id=connector.source_id)
@@ -105,11 +174,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.offline:
         kwargs["offline"] = True
 
-    writer = UnifiedDatasetWriter()
+    # M1 owns discrepancy detection.  Inject it at the entrypoint so the
+    # unified writer persists flags without learning any agriculture details.
+    writer = UnifiedDatasetWriter(cross_validator=CrossValidator())
+    cleaner = DataCleaner()
     results: list[WriteResult] = []
     for name in names:
         try:
-            results.append(run_source(name, writer, **kwargs))
+            results.append(run_source(name, writer, cleaner=cleaner, **kwargs))
         except Exception as exc:  # noqa: BLE001 - one bad source must not stop the rest
             log.exception("%s failed", name)
             results.append(
