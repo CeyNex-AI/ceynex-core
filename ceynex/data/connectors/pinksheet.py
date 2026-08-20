@@ -56,3 +56,47 @@ class PinkSheetConnector(DataSourceConnector):
             raise RuntimeError("Call fetch() before manifest().")
         workbook = resolve_snapshot_file(self.workbook_path, "CMO-Historical-Data-Monthly.xlsx")
         return SourceManifest(self.source_id, self._fetched_at.isoformat(), len(self._last), str(self._last["period"].min()), str(self._last["period"].max()), "M", {"workbook": workbook.name})
+
+    def to_fact_trade(self, raw: pd.DataFrame) -> pd.DataFrame:
+        """Map monthly World Bank ``Tea, Colombo`` prices to ``fact_trade``.
+
+        The workbook's unit row documents this series as nominal ``USD/kg``.
+        It is a price observation, not an export shipment, so all volume and
+        export-value fields remain null.
+        """
+        required = {"period", "Tea, Colombo", "source_hash"}
+        missing = required.difference(raw.columns)
+        if missing:
+            raise ValueError(f"Pink Sheet records missing columns: {sorted(missing)}")
+
+        prices = raw.loc[:, ["period", "Tea, Colombo", "source_hash"]].copy()
+        prices["price"] = pd.to_numeric(prices["Tea, Colombo"], errors="coerce")
+        prices = prices.dropna(subset=["price"]).reset_index(drop=True)
+        periods = pd.to_datetime(
+            prices["period"].astype("string").str.replace("M", "-", regex=False) + "-01",
+            format="%Y-%m-%d",
+            errors="raise",
+        )
+
+        return pd.DataFrame(
+            {
+                "source_id": self.source_id,
+                "sector": "agriculture",
+                "item": "tea",
+                "hs_code": "0902",
+                "reporter_iso3": "LKA",
+                "reporter_m49": 144,
+                "partner_iso3": None,
+                "partner_m49": None,
+                "period_start": periods,
+                "period_end": periods + pd.offsets.MonthEnd(0),
+                "frequency": "M",
+                "export_volume": None,
+                "volume_unit": None,
+                "export_value_usd": None,
+                "price": prices["price"].to_numpy(),
+                "price_unit": "USD/kg",
+                "fx_usd_lkr": None,
+                "source_hash": prices["source_hash"].to_numpy(),
+            }
+        )

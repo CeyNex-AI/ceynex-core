@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ceynex.data.cleaning import DataCleaner
 from ceynex.data.connectors.pinksheet import PinkSheetConnector
 
 
@@ -29,3 +30,17 @@ def test_pinksheet_connector_is_repeatable_with_offline_workbook_fixture(tmp_pat
     assert first_stage.exists()
     assert connector.manifest().period_start == "2024M01"
     assert connector.manifest().period_end == "2024M02"
+
+    fact_trade = connector.to_fact_trade(first)
+    assert fact_trade["period_start"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-01", "2024-02-01"]
+    assert fact_trade["period_end"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-31", "2024-02-29"]
+    assert fact_trade["price"].tolist() == [2.10, 2.20]
+    assert fact_trade["price_unit"].tolist() == ["USD/kg", "USD/kg"]
+    assert fact_trade["reporter_iso3"].tolist() == ["LKA", "LKA"]
+    assert fact_trade["reporter_m49"].tolist() == [144, 144]
+    assert fact_trade["hs_code"].tolist() == ["0902", "0902"]
+
+    cleaned = DataCleaner().clean(fact_trade)
+    assert cleaned["price"].tolist() == [2.10, 2.20]
+    assert cleaned["price_unit"].tolist() == ["USD/kg", "USD/kg"]
+    assert cleaned["original_price_unit"].tolist() == ["USD/kg", "USD/kg"]
