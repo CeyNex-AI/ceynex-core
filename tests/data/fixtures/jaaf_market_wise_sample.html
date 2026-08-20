@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<body>
+<canvas id="marketWiseChart"></canvas>
+<script>
+var ctx = document.getElementById('marketWiseChart').getContext('2d');
+var marketWiseChart = new Chart(ctx, {
+  type: 'pie',
+  data: {
+    labels: ["USA", "UK", "EU", "Other"],
+    datasets: [{
+      data: [38.5, 15.2, 22.1, 24.2],
+      backgroundColor: ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+    }]
+  }
+});
+</script>
+</body>
+</html>

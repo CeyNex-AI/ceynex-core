@@ -24,6 +24,7 @@ import pandas as pd
 import psycopg
 
 from ceynex.contracts import DataSourceConnector
+from ceynex.data.connectors.apparel_sources import EDB_SOURCE, JAAF_SOURCE
 from ceynex.data.connectors.comtrade import ComtradeConnector
 from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
 from ceynex.settings import postgres_dsn, redacted_dsn
@@ -31,8 +32,14 @@ from ceynex.settings import postgres_dsn, redacted_dsn
 log = logging.getLogger(__name__)
 
 # source id -> factory. M1 and M3 add theirs here; nothing else changes.
+#
+# EDB and JAAF ignore `years`/`offline`: each is a fixed set of manually-saved
+# report editions (`apparel_sources.py`), not an API pull with a date range or
+# a cache to bypass, so there is nothing for those flags to select between.
 CONNECTORS: dict[str, Callable[..., DataSourceConnector]] = {
     "comtrade": ComtradeConnector,
+    "edb": lambda **_kwargs: EDB_SOURCE,
+    "jaaf": lambda **_kwargs: JAAF_SOURCE,
 }
 
 
