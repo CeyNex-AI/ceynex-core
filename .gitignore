@@ -10,18 +10,18 @@ venv/
 dist/
 build/
 
-# Data and artefacts — never committed, except reference tables and fixtures.
-# Raw pulls and derived artefacts are never committed, but each source's
-# PROFILE.md is. Ignoring `data/raw/*/` as a directory would make that
-# impossible — git cannot re-include a file whose parent directory is excluded —
-# so the cached payloads are ignored by extension instead.
-data/raw/**/*.json
-data/raw/**/*.csv
-data/raw/**/*.zip
-data/raw/**/*.xlsx
+# Data and artefacts — never committed, except reference tables, fixtures,
+# and each connector's PROFILE.md (per .claude/commands/new-connector.md).
+# Layered on purpose: a negation can't re-include a file whose parent
+# directory is itself ignored, so `data/raw/<source>/` is un-ignored first
+# and only its contents are ignored again one level down.
+data/raw/*
+!data/raw/*/
+data/raw/*/*
+!data/raw/*/PROFILE.md
 data/staging/
 data/parquet/
-models/
+/models/
 !ceynex/data/reference/
 !tests/**/fixtures/
 

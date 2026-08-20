@@ -22,6 +22,8 @@ from ceynex.data.crosswalk import (
     is_aggregate_partner,
     is_in_scope,
     is_known_country,
+    known_aliases,
+    market_to_iso3,
     normalize_hs,
     to_iso3,
     to_m49,
@@ -200,3 +202,45 @@ def test_dim_hs_rows_carry_only_the_two_contracted_sectors():
     rows = dim_hs_rows()
     assert {r[2] for r in rows} == {"agriculture", "apparel"}
     assert len({r[0] for r in rows}) == len(rows)
+
+
+# --- free-text market names (EDB / JAAF) ----------------------------------
+
+
+def test_market_to_iso3_resolves_a_plain_name():
+    assert market_to_iso3("Germany") == ("DEU", 276)
+
+
+def test_market_to_iso3_resolves_common_aliases_and_abbreviations():
+    # 840, not Comtrade's non-standard partner code 842 — see the module
+    # docstring on `_partner_aliases()`. EDB/JAAF market names resolve to the
+    # same official UN M49 that every other source in fact_trade uses.
+    assert market_to_iso3("USA") == ("USA", 840)
+    assert market_to_iso3("U.S.A.") == ("USA", 840)
+    assert market_to_iso3("UK") == ("GBR", 826)
+    assert market_to_iso3("Great Britain") == ("GBR", 826)
+
+
+def test_market_to_iso3_strips_edb_style_parenthetical_alt_names():
+    # Confirmed against the real EDB EPI PDFs (2023/2024 editions).
+    assert market_to_iso3("Croatia (Hrvatska)") == ("HRV", 191)
+    assert market_to_iso3("Czech Republic (Czechia)") == ("CZE", 203)
+    assert market_to_iso3("Korea South (Korea, Republic of)") == ("KOR", 410)
+    assert market_to_iso3("Iran (Islamic Republic of)") == ("IRN", 364)
+
+
+def test_market_to_iso3_handles_edb_comma_style_names_without_parens():
+    assert market_to_iso3("Taiwan, Province of China") == ("TWN", 158)
+    assert market_to_iso3("Tanzania, United Republic of") == ("TZA", 834)
+
+
+def test_market_to_iso3_unresolvable_name_returns_none_none_not_a_guess():
+    assert market_to_iso3("Not Specified") == (None, None)
+    assert market_to_iso3("Wakanda") == (None, None)
+
+
+def test_known_aliases_round_trip_through_market_to_iso3():
+    for alias in known_aliases():
+        iso3, m49 = market_to_iso3(alias)
+        assert iso3 is not None, f"{alias!r} is a known alias but did not resolve"
+        assert to_m49(iso3) == m49
