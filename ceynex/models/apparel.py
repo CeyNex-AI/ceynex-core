@@ -76,7 +76,7 @@ class NaiveApparelForecastModel(ForecastModel):
         self._values: np.ndarray | None = None
         self._residuals: np.ndarray | None = None
 
-    def fit(self, df: pd.DataFrame) -> "NaiveApparelForecastModel":
+    def fit(self, df: pd.DataFrame) -> NaiveApparelForecastModel:
         """`df` needs integer-parseable `period` (year) and float `value` columns,
         one row per year. Order doesn't matter -- sorted here."""
         ordered = df.sort_values("period").reset_index(drop=True)

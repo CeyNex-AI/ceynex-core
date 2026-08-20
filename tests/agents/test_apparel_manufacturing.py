@@ -3,6 +3,7 @@ import pytest
 from ceynex.agents.apparel_manufacturing import apparel_manufacturing_node
 from ceynex.agents.common import AgentDeps
 from ceynex.contracts.state import new_state
+from ceynex.kg.client import KnowledgeGraphClient
 from ceynex.llm import FakeLLMClient
 
 
@@ -141,3 +142,42 @@ async def test_no_data_found_is_a_failed_output_not_a_crash():
     assert output["confidence"] == pytest.approx(0.0)
     assert output["degraded"] is True
     assert "error" in output
+
+
+@pytest.mark.integration
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known gap, PR #1 comment "
+        "(github.com/CeyNex-AI/ceynex-core/pull/1#issuecomment-5345438470): "
+        "there is no ceynex/kg/loaders/apparel.py yet, so nothing populates the "
+        "frozen (:Commodity|:ApparelCategory)-[:EXPORTS_TO]->(:Country) shape "
+        "for EDB/JAAF. This node's own Cypher still targets the *retired* "
+        "(:Country)-[:REPORTED]->(:ExportRecord)-[:OF]->(:Product) shape, which "
+        "nothing in the current codebase writes either -- kg/schema.py and its "
+        "loader were deleted in the PR #1 merge-conflict resolution. Once the "
+        "apparel loader exists AND this node's queries are updated to match the "
+        "frozen schema, this test should start passing (and xfail(strict=True) "
+        "will fail the suite until the marker above is removed, so the fix "
+        "can't be missed)."
+    ),
+)
+async def test_partner_query_against_the_real_merged_graph_finds_nothing_yet():
+    """Turns the gap flagged on PR #1 into something the suite tracks automatically.
+
+    Run against the actual local stack (`make up`, real EDB/JAAF data ingested,
+    `make kg-load` applied) rather than FakeKGClient, so this reflects what the
+    live deployed backend was independently observed doing on 2026-08-20: a real
+    "apparel exports to the United States" query, live-verified via curl against
+    http://35.200.228.142/api/query, came back with the apparel_manufacturing
+    agent listed under `"unanswered"` even though PR #1 (EDB/JAAF connectors +
+    this agent) was already merged to main.
+    """
+    async with KnowledgeGraphClient() as kg:
+        deps = AgentDeps(kg=kg, llm=FakeLLMClient())
+        state = new_state(query="How are apparel exports to the United States doing?", user_id="u1")
+        result = await apparel_manufacturing_node(state, deps)
+        output = result["agent_outputs"]["apparel_manufacturing"]
+
+        assert "error" not in output
+        assert output["evidence"], "expected real EDB/JAAF evidence once kg/loaders/apparel.py exists"
