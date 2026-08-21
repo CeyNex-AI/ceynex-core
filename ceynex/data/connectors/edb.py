@@ -291,6 +291,17 @@ class EDBConnector(DataSourceConnector):
         can currently surface as two distinct `item` strings downstream. A
         controlled product-name vocabulary would fix this properly; flagging
         rather than guessing at one unilaterally.
+
+        EDB editions overlap in the years they cover — the 2023 edition's
+        tables span 2019-2023, the 2024 edition's span 2020-2024 — so
+        `fetch()` concatenating both raw editions means the same (item,
+        market, year) triple gets melted twice, once from each edition.
+        Confirmed against real 2023+2024 data (`data/raw/edb/manual/`):
+        2020-2023 rows were emitted twice, ~37% of all EDB rows, silently
+        doubling any downstream `groupby(year).sum()`. Resolved below by
+        keeping only the highest-`edition_year` row per (item, market,
+        year) — the most recently published figure — rather than letting
+        both survive into the output.
         """
         if raw.empty:
             return pd.DataFrame()
@@ -334,6 +345,18 @@ class EDBConnector(DataSourceConnector):
                         "source_hash": _source_hash(
                             self.source_id, r["product"], iso3, year
                         ),
+                        # dedup helper only, dropped before returning
+                        "_edition_year": int(r["edition_year"]),
                     }
                 )
-        return pd.DataFrame.from_records(out_rows)
+        out = pd.DataFrame.from_records(out_rows)
+        if out.empty:
+            return out
+        out = (
+            out.sort_values("_edition_year", kind="stable")
+            .drop_duplicates(subset=["item", "partner_iso3", "period_start"], keep="last")
+            .drop(columns="_edition_year")
+            .sort_index()
+            .reset_index(drop=True)
+        )
+        return out
