@@ -23,9 +23,19 @@ then arguing about it:
 | Deferred | Spec | Consequence today |
 |---|---|---|
 | Admin routes (retrain, ingest triggers, DQ review) | SRS 3.5.4 | Retraining is CLI-only (`make backtest`, the registry's `retrain()` hook). The hook exists so M3's endpoint is a thin wrapper, not a rewrite |
-| Saved / bookmarked queries | SRS 3.5.2 (second half) | Automatic history exists (below); explicitly starring one for later does not — no route, no UI, and nothing in the SRS distinguishes it from history beyond the name |
 | Help and guidance content | SRS 3.5.5 | — |
 | `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
+
+**Saved / bookmarked queries (SRS 3.5.2, second half) are built**: `saved` is
+a column on `query_history` (`ceynex/api/history.py`), not a second table — a
+saved query is a history entry, just flagged, and every query that could ever
+be saved already has a row there from the moment it was asked. `POST
+/api/history/{id}/save` and `.../unsave` toggle it, scoped to the caller's own
+`user_email` in the same `UPDATE` (never a separate ownership check, same
+reasoning as `auth.authenticate` never distinguishing "no such user" from
+"wrong password") — a 404 covers both "no such entry" and "not yours", not
+just the first. `GET /api/history?saved=true` filters the existing list route
+rather than adding a second one.
 
 **Login exists now; `POST /api/query` itself still does not require a token.**
 `require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs

@@ -124,9 +124,12 @@ def test_get_history_returns_the_signed_in_users_entries(client, monkeypatch):
             confidence=0.5,
             degraded=False,
             asked_at="2026-08-21T00:00:00+00:00",
+            saved=False,
         )
     ]
-    monkeypatch.setattr(history_module, "list_for_user", lambda user_email, limit=20: fake_entries)
+    monkeypatch.setattr(
+        history_module, "list_for_user", lambda user_email, limit=20, saved=None: fake_entries
+    )
 
     response = client.get("/api/history", headers={"Authorization": f"Bearer {token_for()}"})
 
@@ -139,8 +142,22 @@ def test_get_history_returns_the_signed_in_users_entries(client, monkeypatch):
             "confidence": 0.5,
             "degraded": False,
             "asked_at": "2026-08-21T00:00:00+00:00",
+            "saved": False,
         }
     ]
+
+
+def test_get_history_passes_the_saved_filter_through(client, monkeypatch):
+    captured = {}
+
+    def fake_list(user_email, limit=20, saved=None):
+        captured["saved"] = saved
+        return []
+
+    monkeypatch.setattr(history_module, "list_for_user", fake_list)
+
+    client.get("/api/history?saved=true", headers={"Authorization": f"Bearer {token_for()}"})
+    assert captured["saved"] is True
 
 
 def test_get_history_without_a_token_is_rejected(client):
@@ -148,10 +165,63 @@ def test_get_history_without_a_token_is_rejected(client):
 
 
 def test_get_history_surfaces_a_real_postgres_outage_as_503(client, monkeypatch):
-    def boom(user_email, limit=20):
+    def boom(user_email, limit=20, saved=None):
         raise psycopg.OperationalError("db down")
 
     monkeypatch.setattr(history_module, "list_for_user", boom)
 
     response = client.get("/api/history", headers={"Authorization": f"Bearer {token_for()}"})
+    assert response.status_code == 503
+
+
+# --- save / unsave -------------------------------------------------------
+
+
+def test_saving_an_owned_entry_marks_it_saved(client, monkeypatch):
+    monkeypatch.setattr(history_module, "set_saved", lambda entry_id, user_email, saved: True)
+
+    response = client.post(
+        "/api/history/1/save", headers={"Authorization": f"Bearer {token_for()}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": 1, "saved": True}
+
+
+def test_unsaving_an_owned_entry_marks_it_unsaved(client, monkeypatch):
+    monkeypatch.setattr(history_module, "set_saved", lambda entry_id, user_email, saved: True)
+
+    response = client.post(
+        "/api/history/1/unsave", headers={"Authorization": f"Bearer {token_for()}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"id": 1, "saved": False}
+
+
+def test_saving_someone_elses_or_a_nonexistent_entry_is_a_404(client, monkeypatch):
+    """set_saved's ownership check happens inside the UPDATE itself (see
+    ceynex/api/history.py) -- "not yours" and "doesn't exist" both come back
+    as False from there, and both must look identical from the outside."""
+    monkeypatch.setattr(history_module, "set_saved", lambda entry_id, user_email, saved: False)
+
+    response = client.post(
+        "/api/history/999/save", headers={"Authorization": f"Bearer {token_for()}"}
+    )
+    assert response.status_code == 404
+
+
+def test_saving_without_a_token_is_rejected(client):
+    assert client.post("/api/history/1/save").status_code == 401
+
+
+def test_saving_during_a_postgres_outage_is_a_503(client, monkeypatch):
+    def boom(entry_id, user_email, saved):
+        raise psycopg.OperationalError("db down")
+
+    monkeypatch.setattr(history_module, "set_saved", boom)
+
+    response = client.post(
+        "/api/history/1/save", headers={"Authorization": f"Bearer {token_for()}"}
+    )
     assert response.status_code == 503
