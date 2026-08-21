@@ -70,3 +70,16 @@ class LoginResponse(BaseModel):
 class UserResponse(BaseModel):
     email: str
     role: str
+
+
+class QueryHistoryItem(BaseModel):
+    id: int
+    query: str
+    answer: str
+    confidence: float
+    degraded: bool
+    asked_at: str
+
+
+class QueryHistoryResponse(BaseModel):
+    items: list[QueryHistoryItem]
