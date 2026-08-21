@@ -14,9 +14,12 @@ aggregation, joins and analysis belong to the caller.
 from __future__ import annotations
 
 import logging
+from datetime import date
+from typing import Any
 
 import pandas as pd
 import psycopg
+from psycopg.rows import dict_row
 
 from ceynex.settings import postgres_dsn
 
@@ -97,4 +100,52 @@ def items(dsn: str | None = None) -> list[tuple[str, str]]:
         raise DatasetUnavailableError(f"could not read fact_trade: {exc}") from exc
 
 
-__all__ = ["ANNUAL", "DatasetUnavailableError", "annual_series", "items"]
+def relevant_dq_flags(
+    item: str,
+    metric: str,
+    *,
+    period_start: int | None = None,
+    period_end: int | None = None,
+    dsn: str | None = None,
+) -> list[dict[str, Any]]:
+    """Material/severe cross-source flags for an answer's source window.
+
+    This is deliberately a read-only companion to :func:`annual_series`.
+    Callers keep and report their measured value; a DQ flag is evidence of a
+    discrepancy, never authority to silently reconcile or delete it.
+    """
+    if not item or not metric:
+        raise ValueError("item and metric are required to look up data-quality flags")
+    start = date(period_start, 1, 1) if period_start is not None else None
+    end = date(period_end, 12, 31) if period_end is not None else None
+    statement = """
+        SELECT period_start::date AS period_start,
+               metric,
+               source_a,
+               value_a::float8 AS value_a,
+               source_b,
+               value_b::float8 AS value_b,
+               pct_diff::float8 AS pct_diff,
+               severity
+        FROM dq_flag
+        WHERE lower(item) = lower(%(item)s)
+          AND metric = %(metric)s
+          AND severity IN ('material', 'severe')
+          AND (%(period_start)s::date IS NULL OR period_start >= %(period_start)s::date)
+          AND (%(period_end)s::date IS NULL OR period_start <= %(period_end)s::date)
+        ORDER BY period_start, severity, source_a, source_b
+    """
+    try:
+        with psycopg.connect(dsn or postgres_dsn()) as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                statement,
+                {"item": item, "metric": metric, "period_start": start, "period_end": end},
+            )
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        raise DatasetUnavailableError(f"could not read dq_flag: {exc}") from exc
+
+    return [dict(row) for row in rows]
+
+
+__all__ = ["ANNUAL", "DatasetUnavailableError", "annual_series", "items", "relevant_dq_flags"]

@@ -22,6 +22,7 @@ VALUES = [100.0, 105.0, 109.0, 115.0, 121.0, 125.0, 131.0, 140.0, 147.0]
 @pytest.fixture(autouse=True)
 def isolated_registry(tmp_path, monkeypatch):
     monkeypatch.setenv("CEYNEX_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setattr(agriculture, "relevant_dq_flags", lambda *_args, **_kwargs: [])
 
 
 class KG:
@@ -73,6 +74,63 @@ def test_current_cinnamon_price_trend_has_readable_faostat_evidence(monkeypatch)
     assert all(evidence["source_id"] == "FAOSTAT" for evidence in out["evidence"])
     assert all(evidence.get("period") == "2017-2025" for evidence in out["evidence"])
     assert 0.05 <= out["confidence"] <= 0.95
+    assert not any(evidence["source_id"] == "DQ_FLAG" for evidence in out["evidence"])
+
+
+def test_a_material_dq_flag_is_evidence_and_reduces_confidence_without_changing_values(monkeypatch):
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+    baseline = run("What is the current price trend for cinnamon?")
+    monkeypatch.setattr(
+        agriculture,
+        "relevant_dq_flags",
+        lambda *_args, **_kwargs: [
+            {
+                "period_start": "2024-01-01",
+                "metric": "price",
+                "source_a": "FAOSTAT",
+                "value_a": 10.05,
+                "source_b": "PINK_SHEET",
+                "value_b": 11.06,
+                "pct_diff": 10.05,
+                "severity": "material",
+            }
+        ],
+    )
+
+    out = run("What is the current price trend for cinnamon?")
+
+    assert out["figures"] == baseline["figures"]
+    assert out["confidence"] == pytest.approx(baseline["confidence"] - 0.05)
+    assert any("material=1" in assumption for assumption in out["assumptions"])
+    flag = next(evidence for evidence in out["evidence"] if evidence["source_id"] == "DQ_FLAG")
+    assert "FAOSTAT" in flag["claim"] and "PINK_SHEET" in flag["claim"] and "10.1%" in flag["claim"]
+
+
+def test_a_severe_dq_flag_uses_the_shared_severe_penalty(monkeypatch):
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+    baseline = run("What is the current price trend for cinnamon?")
+    monkeypatch.setattr(
+        agriculture,
+        "relevant_dq_flags",
+        lambda *_args, **_kwargs: [
+            {
+                "period_start": "2024-01-01",
+                "metric": "price",
+                "source_a": "FAOSTAT",
+                "value_a": 10.05,
+                "source_b": "PINK_SHEET",
+                "value_b": 15.08,
+                "pct_diff": 50.0,
+                "severity": "severe",
+            }
+        ],
+    )
+
+    out = run("What is the current price trend for cinnamon?")
+
+    assert out["figures"] == baseline["figures"]
+    assert out["confidence"] == pytest.approx(baseline["confidence"] - 0.10)
+    assert any("severe=1" in assumption for assumption in out["assumptions"])
 
 
 def test_cinnamon_forecast_uses_only_registered_price_model_with_80_percent_interval():
