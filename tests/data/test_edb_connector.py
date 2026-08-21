@@ -116,6 +116,74 @@ def test_idempotency_same_input_yields_same_source_hash():
     assert list(first["source_hash"]) == list(second["source_hash"])
 
 
+def test_to_fact_trade_dedupes_overlapping_editions_keeping_the_newer_one():
+    # Real-world shape: the 2023 edition's tables span 2019-2023, the 2024
+    # edition's span 2020-2024, so 2020-2023 is reported by BOTH editions.
+    # Before the fix, concatenating both editions' raw rows made to_fact_trade
+    # emit two rows per overlapping (item, market, year) -- confirmed against
+    # the real 2023+2024 EDB PDFs, ~37% of all EDB rows were exact duplicates
+    # of this shape.
+    edition_2023 = pd.DataFrame.from_records(
+        [
+            {
+                "rank": 1,
+                "market": "United States",
+                "year_minus4": 100.0,
+                "year_minus3": 110.0,
+                "year_minus2": 120.0,
+                "year_minus1": 130.0,
+                "year_latest": 140.0,  # 2023 figure, later superseded
+                "share_pct": 25.0,
+                "avg_growth_pct": 5.0,
+                "table_id": "25.79",
+                "product": "Apparel",
+                "edition_year": 2023,
+                "latest_year": 2023,
+            }
+        ]
+    )
+    edition_2024 = pd.DataFrame.from_records(
+        [
+            {
+                "rank": 1,
+                "market": "United States",
+                "year_minus4": 110.0,
+                "year_minus3": 120.0,
+                "year_minus2": 130.0,
+                "year_minus1": 999.0,  # 2023, revised in the newer edition
+                "year_latest": 150.0,  # 2024
+                "share_pct": 24.0,
+                "avg_growth_pct": 6.0,
+                "table_id": "25.79",
+                "product": "Apparel",
+                "edition_year": 2024,
+                "latest_year": 2024,
+            }
+        ]
+    )
+    raw = pd.concat([edition_2023, edition_2024], ignore_index=True)
+
+    connector = EDBConnector(sources=[EDBReportSource(edition_year=2024, latest_year=2024)])
+    out = connector.to_fact_trade(raw)
+
+    us_rows = out[out["partner_iso3"] == "USA"]
+    # one row per year, not one row per (year, edition) -- the overlap collapses
+    assert sorted(us_rows["period_start"]) == [
+        "2019-01-01",
+        "2020-01-01",
+        "2021-01-01",
+        "2022-01-01",
+        "2023-01-01",
+        "2024-01-01",
+    ]
+    assert not out.duplicated(subset=["item", "partner_iso3", "period_start"]).any()
+
+    # 2023 is reported by both editions -- the newer (2024) edition's revised
+    # figure must win over the older (2023) edition's superseded one.
+    us_2023 = us_rows[us_rows["period_start"] == "2023-01-01"].iloc[0]
+    assert us_2023["export_value_usd"] == pytest.approx(999.0 * 1_000_000.0)
+
+
 # --- "archive" layout: older multi-year volumes, interleaved Value/%Share
 # columns per year rather than 5 values then one trailing %share. Confirmed
 # against a real 2009-2018-titled EDB archive PDF. ---
