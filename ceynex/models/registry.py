@@ -75,9 +75,12 @@ class ModelMetadata:
     model_class: str
     model_module: str
     training_rows: int | None = None
+    training_window: dict[str, int] | None = None
+    source: str | None = None
     params: dict[str, Any] | None = None
     metrics: dict[str, float] | None = None
     interval_level: float = DEFAULT_INTERVAL_LEVEL
+    git_sha: str | None = None
     notes: str | None = None
 
     @property
@@ -141,9 +144,12 @@ def save(
     *,
     version: str | None = None,
     training_rows: int | None = None,
+    training_window: dict[str, int] | None = None,
+    source: str | None = None,
     params: dict[str, Any] | None = None,
     metrics: dict[str, float] | None = None,
     interval_level: float = DEFAULT_INTERVAL_LEVEL,
+    git_sha: str | None = None,
     notes: str | None = None,
 ) -> ModelMetadata:
     """Persist a fitted model and return its metadata.
@@ -174,9 +180,12 @@ def save(
         model_class=type(model).__name__,
         model_module=type(model).__module__,
         training_rows=training_rows,
+        training_window=training_window,
+        source=source,
         params=params if params is not None else _params_of(model),
         metrics=metrics,
         interval_level=interval_level,
+        git_sha=git_sha,
         notes=notes,
     )
 
