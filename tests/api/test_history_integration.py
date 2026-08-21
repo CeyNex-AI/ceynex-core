@@ -75,6 +75,43 @@ def test_list_for_user_respects_the_limit(clean_user):
 
 
 @pytest.mark.integration
+def test_saving_and_unsaving_round_trips_and_filters(clean_user):
+    history.record(user_email=TEST_USER, query="save me", answer="a", confidence=0.5, degraded=False)
+    history.record(
+        user_email=TEST_USER, query="leave me alone", answer="b", confidence=0.5, degraded=False
+    )
+    entries_by_query = {e.query: e.id for e in history.list_for_user(TEST_USER)}
+    entry_id = entries_by_query["save me"]
+
+    assert history.set_saved(entry_id, TEST_USER, saved=True) is True
+
+    saved_only = history.list_for_user(TEST_USER, saved=True)
+    assert [e.id for e in saved_only] == [entry_id]
+    assert saved_only[0].saved is True
+
+    unsaved_only = history.list_for_user(TEST_USER, saved=False)
+    assert entry_id not in [e.id for e in unsaved_only]
+    assert entries_by_query["leave me alone"] in [e.id for e in unsaved_only]
+
+    assert history.set_saved(entry_id, TEST_USER, saved=False) is True
+    assert history.list_for_user(TEST_USER, saved=True) == []
+
+
+@pytest.mark.integration
+def test_saving_someone_elses_entry_does_nothing(clean_user):
+    history.record(user_email=TEST_USER, query="mine", answer="a", confidence=0.5, degraded=False)
+    entry_id = history.list_for_user(TEST_USER)[0].id
+
+    assert history.set_saved(entry_id, "not-the-owner@ceynex.dev", saved=True) is False
+    assert history.list_for_user(TEST_USER)[0].saved is False
+
+
+@pytest.mark.integration
+def test_saving_a_nonexistent_entry_returns_false(clean_user):
+    assert history.set_saved(-1, TEST_USER, saved=True) is False
+
+
+@pytest.mark.integration
 def test_recording_against_an_unreachable_database_does_not_raise(monkeypatch):
     """A history-write failure must never surface as a failed query — see
     ceynex/api/history.py's docstring. Points `record()` at a closed port

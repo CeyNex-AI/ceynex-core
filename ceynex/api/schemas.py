@@ -79,7 +79,13 @@ class QueryHistoryItem(BaseModel):
     confidence: float
     degraded: bool
     asked_at: str
+    saved: bool
 
 
 class QueryHistoryResponse(BaseModel):
     items: list[QueryHistoryItem]
+
+
+class SaveQueryResponse(BaseModel):
+    id: int
+    saved: bool

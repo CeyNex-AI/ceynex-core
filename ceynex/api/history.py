@@ -13,6 +13,14 @@ a history row is not worth failing, or even degrading, the query itself.
 Listing is not: a caller asking for their history and silently getting an
 empty list back on a database outage would be misleading, so `list_for_user`
 raises and the route layer turns that into a 503.
+
+`saved` (SRS 3.5.2's second half — explicitly bookmarking a query, distinct
+from it simply appearing in history) is a column on the same table rather than
+a second one: a saved query *is* a history entry, just flagged, and every
+query that could ever be saved already has a row here the moment it's asked.
+Added via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` in `ensure_table()`
+rather than only in `CREATE_TABLE_SQL`, since `CREATE TABLE IF NOT EXISTS` is a
+no-op against a table that already exists from before this column did.
 """
 
 from __future__ import annotations
@@ -34,8 +42,10 @@ CREATE TABLE IF NOT EXISTS query_history (
     answer TEXT NOT NULL,
     confidence DOUBLE PRECISION NOT NULL,
     degraded BOOLEAN NOT NULL,
-    asked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    asked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    saved BOOLEAN NOT NULL DEFAULT false
 );
+ALTER TABLE query_history ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS query_history_user_asked_idx
     ON query_history (user_email, asked_at DESC);
 """
@@ -73,19 +83,27 @@ class HistoryEntry:
     confidence: float
     degraded: bool
     asked_at: str
+    saved: bool
 
 
-def list_for_user(user_email: str, limit: int = 20) -> list[HistoryEntry]:
+def list_for_user(user_email: str, limit: int = 20, *, saved: bool | None = None) -> list[HistoryEntry]:
+    conditions = ["user_email = %s"]
+    params: list[object] = [user_email]
+    if saved is not None:
+        conditions.append("saved = %s")
+        params.append(saved)
+    params.append(limit)
+
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            """
-            SELECT id, query, answer, confidence, degraded, asked_at
+            f"""
+            SELECT id, query, answer, confidence, degraded, asked_at, saved
             FROM query_history
-            WHERE user_email = %s
+            WHERE {" AND ".join(conditions)}
             ORDER BY asked_at DESC
             LIMIT %s
-            """,
-            (user_email, limit),
+            """,  # noqa: S608 - `conditions` is built from a fixed, hardcoded set above, no raw input
+            params,
         )
         rows = cur.fetchall()
     return [
@@ -96,6 +114,26 @@ def list_for_user(user_email: str, limit: int = 20) -> list[HistoryEntry]:
             confidence=row[3],
             degraded=row[4],
             asked_at=row[5].isoformat(),
+            saved=row[6],
         )
         for row in rows
     ]
+
+
+def set_saved(entry_id: int, user_email: str, *, saved: bool) -> bool:
+    """True if a history entry with this id, owned by this user, was updated.
+
+    Scoped to `user_email` in the `UPDATE` itself, not checked separately —
+    the only way to tell "doesn't exist" apart from "exists but isn't yours"
+    is to not distinguish them, same reasoning as `auth.authenticate`'s
+    single failure outcome. Either way the route returns 404, never leaking
+    which case it was.
+    """
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE query_history SET saved = %s WHERE id = %s AND user_email = %s",
+            (saved, entry_id, user_email),
+        )
+        updated = cur.rowcount > 0
+        conn.commit()
+    return updated
