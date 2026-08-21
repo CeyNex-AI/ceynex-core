@@ -15,6 +15,7 @@ from ceynex.agents.forecast import AGENT, forecast_node
 from ceynex.contracts import new_state
 from ceynex.llm import FakeLLMClient
 from ceynex.models import registry
+from ceynex.models.agriculture.baseline import AnnualNaiveModel
 from ceynex.models.timeseries import TimeSeriesModel
 
 YEARS = [2015, 2016, 2017, 2019, 2020, 2021, 2022, 2023, 2024]
@@ -38,6 +39,13 @@ class KG:
         if "EXPORTS_TO" in cypher and "year" in cypher:
             return [{"year": y, "value": v} for y, v in self.history], cypher
         return [], cypher
+
+
+class NoHistoryKG:
+    """Explicit agriculture models must not query KG export-value history."""
+
+    async def run(self, _cypher, _params=None):
+        raise AssertionError("target-specific registry forecast queried KG history")
 
 
 def run(query="forecast cinnamon exports for the next 3 years", kg=None):
@@ -89,6 +97,82 @@ def test_a_registered_model_is_served_instead_of_the_baseline():
     out = run()
     assert any("model registry" in a for a in out["assumptions"])
     assert not any("baseline" in a.lower() for a in out["assumptions"])
+
+
+def test_tea_export_volume_uses_the_registered_kg_model_without_kg_history():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="tea", target="export_volume", unit="kg"
+        ).fit(frame),
+        metrics={"mape": 0.03, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast tea export volume for the next year", kg=NoHistoryKG())
+
+    assert out["forecast"][0]["unit"] == "kg"
+    assert "export volume" in out["summary"].lower()
+    assert any("own annual source series" in assumption for assumption in out["assumptions"])
+
+
+def test_cinnamon_producer_price_uses_its_usd_per_kg_model():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="cinnamon", target="producer_price", unit="USD/kg"
+        ).fit(frame),
+        metrics={"mape": 0.12, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast cinnamon producer price next year", kg=NoHistoryKG())
+
+    assert out["forecast"][0]["unit"] == "USD/kg"
+    assert "producer price" in out["summary"].lower()
+
+
+def test_generic_cinnamon_exports_do_not_use_a_registered_producer_price_model():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="cinnamon", target="producer_price", unit="USD/kg"
+        ).fit(frame),
+        metrics={"mape": 0.12, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast cinnamon exports for the next year")
+
+    assert out["forecast"][0]["unit"] == "USD"
+    assert any("export-value model" in assumption for assumption in out["assumptions"])
+    assert all("producer_price" not in evidence["detail"] for evidence in out["evidence"])
+
+
+def test_target_specific_selection_cannot_mix_tea_price_and_volume_models():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="tea", target="producer_price", unit="USD/kg"
+        ).fit(frame),
+        metrics={"mape": 0.01, "rmse": 1.0, "coverage": 0.8},
+    )
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="tea", target="export_volume", unit="kg"
+        ).fit(frame),
+        metrics={"mape": 0.99, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast tea tonnes next year", kg=NoHistoryKG())
+
+    assert out["forecast"][0]["unit"] == "kg"
+    assert all("export_volume" in evidence["detail"] for evidence in out["evidence"])
+
+
+def test_missing_explicit_target_does_not_fall_back_to_export_value_or_query_kg():
+    out = run("forecast tea export volume next year", kg=NoHistoryKG())
+
+    assert "forecast" not in out
+    assert len(out["evidence"]) == 2
+    assert "not used" in out["summary"]
 
 
 def test_the_served_model_is_named_with_its_version_in_evidence():
