@@ -104,13 +104,28 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     registered = _load_registered_model(item)
     if registered is not None:
         points = registered.predict(horizon)
+        # The version is part of the identity. "A registered model produced this"
+        # is not a traceable claim if two versions of that model disagree.
+        version = getattr(registered, "version", None)
         model_id = f"{registered.sector}/{registered.item}/{registered.target}"
+        if version:
+            model_id = f"{model_id}@{version}"
         assumptions.append(f"Served from the model registry: {model_id}.")
+        # The claim restates the figures, not just the model's name. An evidence
+        # entry that says "a model produced this" without saying what it produced
+        # leaves every number in the answer traceable to nothing.
+        head = points[0] if points else None
+        figures_text = (
+            f" First period {head['period']}: {head['point']:,.0f} {head['unit']} "
+            f"({head['lower']:,.0f}–{head['upper']:,.0f} at 80%)."
+            if head
+            else ""
+        )
         evidence.append(
             evidence_from_model(
                 claim=(
                     f"Forecast produced by the registered model {model_id} over a "
-                    f"{horizon}-period horizon."
+                    f"{horizon}-period horizon.{figures_text}"
                 ),
                 model_id=model_id,
             )
@@ -133,6 +148,13 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                     f"Drift baseline fitted to {len(history)} annual observations "
                     f"({history[0][0]}-{history[-1][0]}), mean annual change "
                     f"USD {diagnostics['mean_annual_change_usd']:,.0f}."
+                    + (
+                        f" First period {points[0]['period']}: "
+                        f"{points[0]['point']:,.0f} {points[0]['unit']} "
+                        f"({points[0]['lower']:,.0f}–{points[0]['upper']:,.0f} at 80%)."
+                        if points
+                        else ""
+                    )
                 ),
                 model_id=model_id,
                 period=f"{history[0][0]}-{history[-1][0]}",
@@ -256,11 +278,14 @@ def _load_registered_model(item: str) -> Any | None:
     sprint, and this node has to work before it does.
     """
     try:
-        from ceynex.models.registry import load_latest
+        from ceynex.models.registry import load_best, load_latest
     except ImportError:
         return None
     try:
-        return load_latest(item=item)
+        # Best-scoring first. Newest is only the right answer when nothing has
+        # been backtested yet, and serving a model with twice the error because
+        # it was registered second is a loss nobody would see.
+        return load_best(item=item) or load_latest(item=item)
     except Exception as exc:  # noqa: BLE001 - no registered model is the normal case
         log.debug("no registered model for %s: %s", item, exc)
         return None

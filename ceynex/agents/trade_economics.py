@@ -101,8 +101,14 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             )
             continue
 
+        # The Cypher that justifies a refusal is the coverage lookup, not the
+        # baseline — citing the baseline query under a claim about coverage is
+        # evidence that does not support its own claim.
+        refusal_cypher = baseline_cypher
         if shock == "agreement":
-            outcome = await _simulate_agreement_loss(deps, sector, item, baseline, config)
+            outcome, refusal_cypher = await _simulate_agreement_loss(
+                deps, sector, item, baseline, config
+            )
         elif shock == "tariff":
             outcome = _simulate_tariff(sector, baseline, magnitude, config)
         else:
@@ -119,6 +125,20 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                         f"No trade-agreement coverage is recorded for {sector} in the knowledge "
                         "graph, so an agreement-loss simulation would rest on an unchecked "
                         "assumption."
+                    ),
+                    cypher=refusal_cypher,
+                    period=str(baseline_year),
+                )
+            )
+            # A refusal still has to meet the two-evidence floor. The baseline is
+            # the half of the picture that *is* known, and stating it is what
+            # makes the refusal specific rather than a shrug.
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"{sector.title()} exports of {item} were USD {baseline:,.0f} in "
+                        f"{baseline_year}; the baseline is known, only the preference "
+                        "coverage needed to shock it is missing."
                     ),
                     cypher=baseline_cypher,
                     period=str(baseline_year),
@@ -234,20 +254,22 @@ async def _simulate_agreement_loss(
     item: str,
     baseline: float,
     config: dict[str, Any],
-) -> tuple[float, float, str] | None:
-    """Losing a preference re-imposes the MFN tariff. Returns None if coverage is unknown.
+) -> tuple[tuple[float, float, str] | None, str]:
+    """Losing a preference re-imposes the MFN tariff.
 
-    This is the SAD §4.1 refusal path: without coverage in the graph there is no
-    honest number to give.
+    Returns `(outcome, cypher)`. `outcome` is None when the graph records no
+    preference coverage — the SAD §4.1 refusal path, because without coverage
+    there is no honest number to give. The Cypher comes back either way so the
+    caller can cite the query that found nothing as the evidence for saying so.
     """
     hs_code = _hs_for_item(item)
     rows, cypher = await deps.kg.run(*q.agreement_coverage(hs_code))
     if not rows:
-        return None
+        return None, cypher
 
     preferences = [r for r in rows if r["agreement_type"] == "unilateral_preference"]
     if not preferences:
-        return None
+        return None, cypher
 
     # Without a WITS tariff pull this is the documented fallback (the plan's
     # "static GSP+ table" cut). Stated as an assumption, not hidden as a constant.
@@ -266,7 +288,7 @@ async def _simulate_agreement_loss(
         f"as an MFN tariff of {mfn_tariff * 100:.1f}% with exporter incidence {incidence:.2f} "
         f"and demand elasticity {elasticity:.2f}."
     )
-    return baseline * revenue_change, revenue_change, detail
+    return (baseline * revenue_change, revenue_change, detail), cypher
 
 
 # --- helpers -------------------------------------------------------------

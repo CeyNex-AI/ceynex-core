@@ -91,7 +91,14 @@ def keyword_route(query: str) -> RouteDecision:
     wants_forecast = _any(lowered, FORECAST_WORDS)
     wants_analytics = _any(lowered, ANALYTICS_WORDS)
 
-    out_of_scope = _any(lowered, OUT_OF_SCOPE_WORDS) and not (hits_agriculture or hits_apparel)
+    # Flagged whenever an uncovered sector is named, in-scope words present or
+    # not. Suppressing the flag when the query also names tea or apparel is what
+    # made "how does tea compare with fisheries" return a confident tea answer
+    # with no mention of fisheries — the mixed question is the one that most
+    # needs the limit stated, because half of it looks answered.
+    named_out_of_scope = [word.strip() for word in OUT_OF_SCOPE_WORDS if word in lowered]
+    out_of_scope = bool(named_out_of_scope)
+    partly_in_scope = out_of_scope and (hits_agriculture or hits_apparel)
 
     sectors: list[Sector] = []
     if hits_agriculture:
@@ -124,8 +131,25 @@ def keyword_route(query: str) -> RouteDecision:
     if wants_forecast:
         relevance["forecast"] = 0.9 if (hits_agriculture or hits_apparel) else 0.7
 
-    if wants_analytics or not relevance:
-        relevance["export_analytics"] = 1.0 if wants_analytics else 0.6
+    # Export Analytics answers from Cypher (SRS 3.1.6), so it can contribute
+    # market share, concentration and growth to any question naming a sector or
+    # an item — not only to ones using an explicitly analytical word.
+    #
+    # Measured on the 30-question set: adding it only when an analytics keyword
+    # matched left 9 of 30 questions routed exclusively to sector agents, which
+    # returned in ~2 ms having never touched the graph, with no figures and no
+    # evidence. "Which markets buy the most Sri Lankan knitted apparel?" is
+    # answerable from the graph today and was answering nothing.
+    #
+    # Simulations are left alone: trade_economics resolves its own baselines
+    # from the graph, so adding a second grounded agent there widens the route
+    # without adding information.
+    if wants_analytics:
+        relevance["export_analytics"] = 1.0
+    elif (hits_agriculture or hits_apparel) and not wants_simulation:
+        relevance["export_analytics"] = 0.7
+    elif not relevance:
+        relevance["export_analytics"] = 0.6
 
     # Invariant 1. Nothing below this line may produce an empty route.
     if not relevance:
@@ -143,9 +167,15 @@ def keyword_route(query: str) -> RouteDecision:
         reason=reason,
     )
     if out_of_scope:
+        named = ", ".join(sorted(set(named_out_of_scope)))
+        lead = (
+            f"the question also asks about {named}, which CeyNex does not cover"
+            if partly_in_scope
+            else f"the question is about {named}, which CeyNex does not cover"
+        )
         decision.notes.append(
-            "The query names a sector CeyNex does not cover. Scope is agriculture "
-            "(tea, cinnamon, rubber, coconut) and apparel (HS 61/62) — SRS 2.4."
+            f"{lead}. Scope is agriculture (tea, cinnamon, rubber, coconut) and "
+            "apparel (HS 61/62) — SRS 2.4"
         )
     return decision
 
