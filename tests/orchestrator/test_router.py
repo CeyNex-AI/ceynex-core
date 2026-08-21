@@ -103,11 +103,21 @@ def test_an_out_of_scope_sector_is_flagged(query):
     assert decision.route, "even out-of-scope queries get an agent, so the user hears back"
 
 
-def test_an_in_scope_mention_beats_an_out_of_scope_one():
-    """"Prioritise gems or tea" is still answerable about tea."""
+def test_a_partly_covered_question_is_answered_and_its_gap_is_still_flagged():
+    """"Prioritise gems or tea" is answerable about tea, and gems is still named.
+
+    This previously asserted `not out_of_scope`, treating the flag as "the whole
+    query is unanswerable". That let the mixed case through silently: the
+    evaluation set showed "how does tea compare with fisheries" returning a
+    confident tea answer that never mentioned fisheries. The flag now means
+    "something here is not covered", which is the half the reader needs.
+    """
     decision = keyword_route("Should Sri Lanka prioritise gems or tea next year?")
-    assert not decision.out_of_scope
-    assert "agriculture_commodity" in decision.route
+
+    assert "agriculture_commodity" in decision.route, "the tea half must still be answered"
+    assert decision.out_of_scope, "the gems half must not be dropped silently"
+    assert "gem" in decision.notes[0].lower()
+    assert "also asks" in decision.notes[0], "a partial gap must read differently from a total one"
 
 
 # --- invariant 3: relevance is a weight ---------------------------------

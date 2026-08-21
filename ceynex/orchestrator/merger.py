@@ -112,7 +112,7 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     failed = {name: out for name, out in outputs.items() if out.get("error")}
     never_reported = [name for name in route if name not in outputs]
 
-    unanswered = _describe_gaps(failed, never_reported)
+    unanswered = _describe_gaps(failed, never_reported) + _out_of_scope_gaps(state)
     conflicts = detect_conflicts(succeeded)
     evidence = dedupe_evidence(succeeded)
     forecast = _first_forecast(succeeded)
@@ -243,6 +243,27 @@ def _describe_gaps(
         gaps.append(f"{_topic_of(agent)} could not be covered ({output.get('error', 'unknown error')})")
     for agent in sorted(never_reported):
         gaps.append(f"{_topic_of(agent)} did not return in time")
+    return gaps
+
+
+OUT_OF_SCOPE_PREFIX = "out_of_scope: "
+
+
+def _out_of_scope_gaps(state: AgentState) -> list[str]:
+    """Surface the router's out-of-scope finding in the answer, not just in state.
+
+    The router already detects a query naming a sector CeyNex does not cover and
+    records it in `errors`. Nothing read it back, so "how does tea compare with
+    fisheries" returned a confident tea answer that never mentioned fisheries —
+    the reader had no way to tell half their question was silently dropped.
+    Omitting the limit is the same failure as inventing the figure.
+    """
+    gaps = []
+    for error in state.get("errors", []) or []:
+        text = str(error)
+        if text.startswith(OUT_OF_SCOPE_PREFIX):
+            note = text[len(OUT_OF_SCOPE_PREFIX) :].strip()
+            gaps.append(note or "part of the question names a sector CeyNex does not cover")
     return gaps
 
 

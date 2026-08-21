@@ -21,6 +21,8 @@ data/raw/*/*
 !data/raw/*/PROFILE.md
 data/staging/
 data/parquet/
+# Saved model artifacts, at the repo root only. `ceynex/models/` is the package
+# that writes them and must stay tracked — a bare `models/` matches both.
 /models/
 !ceynex/data/reference/
 !tests/**/fixtures/
