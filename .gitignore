@@ -49,3 +49,6 @@ docs/*
 # `make docs` output. Regenerate with `make docs`; the binaries it reads are not
 # in this repo.
 docs/_text/
+
+# Notebooks are exploratory/local-only — we don't put them on GitHub.
+notebooks/
