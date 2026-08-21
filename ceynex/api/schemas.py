@@ -54,3 +54,19 @@ class HealthResponse(BaseModel):
     postgres: bool
     llm: bool
     detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class LoginResponse(BaseModel):
+    token: str
+    email: str
+    role: str
+
+
+class UserResponse(BaseModel):
+    email: str
+    role: str

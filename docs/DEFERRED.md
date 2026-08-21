@@ -13,17 +13,26 @@ things not built at all.
 ## Owned by M3, deliberately not pre-empted
 
 `ceynex/api/` was seeded by M2 so the orchestrator is reachable for the
-mid-evaluation demo, and is M3's from then on. Two routes exist — `GET /health`
-and `POST /api/query` — and nothing else. Specifically **not** built, because
-building them would mean guessing at M3's design and then arguing about it:
+mid-evaluation demo, and is M3's from then on. Three routes exist — `GET
+/health`, `POST /api/query`, and now `POST /api/auth/login` / `GET
+/api/auth/me` (`ceynex/api/routes/auth.py`) — and nothing else beyond that.
+Specifically **not** built, because building them would mean guessing at M3's
+design and then arguing about it:
 
 | Deferred | Spec | Consequence today |
 |---|---|---|
-| Authentication and authorization | SRS 3.1.11 | **`POST /api/query` is unauthenticated.** Acceptable only because the backend is VPC-internal with no public route to port 8000; it must not stay true if the API is ever exposed |
 | Admin routes (retrain, ingest triggers, DQ review) | SRS 3.5.4 | Retraining is CLI-only (`make backtest`, the registry's `retrain()` hook). The hook exists so M3's endpoint is a thin wrapper, not a rewrite |
 | Query history and saved queries | SRS 3.5.2 | Each request is independent; nothing is persisted per user |
 | Help and guidance content | SRS 3.5.5 | — |
 | `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
+
+**Login exists now; `POST /api/query` itself still does not require a token.**
+`require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs
+one, but wiring it onto `/api/query` was a deliberate choice left for later:
+the frontend's four demo roles don't currently gate *what* a query can see,
+only which UI pages render, so requiring a token there today would add a login
+wall without changing any behaviour behind it. Revisit once a route actually
+needs to tell users apart (the admin routes above are the first candidate).
 
 ## WITS tariff ingestion — cut
 

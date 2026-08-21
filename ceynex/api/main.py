@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ceynex.api.deps import Runtime, set_runtime
-from ceynex.api.routes import health, query
+from ceynex.api.routes import auth, health, query
 
 log = logging.getLogger(__name__)
 
@@ -66,3 +66,4 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(query.router)
+app.include_router(auth.router)
