@@ -61,22 +61,18 @@ def test_the_compiled_graph_contains_every_agent_node():
     assert {"route", "merge"} <= nodes
 
 
-def test_teammates_agents_are_stubbed_rather_than_missing():
-    """M1's and M3's nodes land later; the graph must be complete before they do."""
+def test_teammates_agents_resolve_or_degrade_rather_than_being_missing():
+    """Each external node is either real or a contract-conformant fallback."""
     registry = agent_registry()
     assert registry["agriculture_commodity"] is not None
     assert registry["apparel_manufacturing"] is not None
 
 
-async def test_a_stubbed_agent_returns_a_contract_conformant_failure():
+async def test_the_real_agriculture_agent_is_resolved_not_the_placeholder():
     registry = agent_registry()
-    patch = await registry["agriculture_commodity"](new_state("tea prices", "u"), deps())
+    from ceynex.agents.agriculture_commodity import agriculture_commodity_node
 
-    output = patch["agent_outputs"]["agriculture_commodity"]
-    assert output["confidence"] == 0.0
-    assert output["degraded"] is True
-    assert "not implemented" in output["error"]
-    assert patch["errors"]
+    assert registry["agriculture_commodity"] is agriculture_commodity_node
 
 
 # --- end to end ----------------------------------------------------------
