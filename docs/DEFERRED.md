@@ -13,16 +13,17 @@ things not built at all.
 ## Owned by M3, deliberately not pre-empted
 
 `ceynex/api/` was seeded by M2 so the orchestrator is reachable for the
-mid-evaluation demo, and is M3's from then on. Three routes exist — `GET
-/health`, `POST /api/query`, and now `POST /api/auth/login` / `GET
-/api/auth/me` (`ceynex/api/routes/auth.py`) — and nothing else beyond that.
-Specifically **not** built, because building them would mean guessing at M3's
-design and then arguing about it:
+mid-evaluation demo, and is M3's from then on. Five routes exist — `GET
+/health`, `POST /api/query`, `POST /api/auth/login`, `GET /api/auth/me`
+(`ceynex/api/routes/auth.py`), and `GET /api/history`
+(`ceynex/api/routes/history.py`) — and nothing else beyond that. Specifically
+**not** built, because building them would mean guessing at M3's design and
+then arguing about it:
 
 | Deferred | Spec | Consequence today |
 |---|---|---|
 | Admin routes (retrain, ingest triggers, DQ review) | SRS 3.5.4 | Retraining is CLI-only (`make backtest`, the registry's `retrain()` hook). The hook exists so M3's endpoint is a thin wrapper, not a rewrite |
-| Query history and saved queries | SRS 3.5.2 | Each request is independent; nothing is persisted per user |
+| Saved / bookmarked queries | SRS 3.5.2 (second half) | Automatic history exists (below); explicitly starring one for later does not — no route, no UI, and nothing in the SRS distinguishes it from history beyond the name |
 | Help and guidance content | SRS 3.5.5 | — |
 | `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
 
@@ -31,8 +32,19 @@ design and then arguing about it:
 one, but wiring it onto `/api/query` was a deliberate choice left for later:
 the frontend's four demo roles don't currently gate *what* a query can see,
 only which UI pages render, so requiring a token there today would add a login
-wall without changing any behaviour behind it. Revisit once a route actually
-needs to tell users apart (the admin routes above are the first candidate).
+wall without changing any behaviour behind it. `POST /api/query` instead takes
+an *optional* token (`get_optional_user`) — signed in or not, a query still
+answers; being signed in only additionally attributes it to that user for
+history. Revisit the hard requirement once a route actually needs to tell
+users apart to change *what* it returns (the admin routes above are the first
+candidate).
+
+**Query history (SRS 3.5.2, first half) is built**: `ceynex/api/history.py`
+records every authenticated query into a `query_history` table (additive to
+the frozen contracts schema, not part of it — see that module's docstring for
+why), and `GET /api/history` lists a signed-in user's own past queries. An
+anonymous query, or one with an invalid/expired token, still answers
+normally — it simply is not recorded, silently, by design.
 
 ## WITS tariff ingestion — cut
 

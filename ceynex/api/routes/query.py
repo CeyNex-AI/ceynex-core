@@ -4,11 +4,12 @@ One endpoint, one graph invocation, one merged answer with its confidence and
 evidence. Async throughout, because SRS 3.4.2's 50 concurrent users rests
 entirely on the server not blocking while an agent waits on Neo4j or the LLM.
 
-**Scope note.** This is M2's seed of `ceynex/api/`. Authentication (SRS 3.1.11),
-the admin routes (SRS 3.5.4), query history and the help content are M3's, and
-this router does not pre-empt them: there is no auth dependency here yet, so the
-endpoint is open. That is fine behind a VPC-only backend and is recorded in
-docs/DEFERRED.md.
+**Scope note.** This was M2's seed of `ceynex/api/`; the admin routes (SRS 3.5.4)
+and the help content are still M3's and still not pre-empted here. Auth (SRS
+3.1.11) and query history (SRS 3.5.2) are now wired in, but deliberately as an
+*optional* dependency — a request with no (or an invalid) token still answers
+normally, it just isn't attributed to anyone. The endpoint stays open rather
+than gated, recorded in docs/DEFERRED.md.
 """
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ceynex.api import history
 from ceynex.api.deps import Runtime, get_runtime
+from ceynex.api.routes.auth import TokenPayload, get_optional_user
 from ceynex.api.schemas import QueryRequest, QueryResponse
 from ceynex.contracts import new_state
 from ceynex.orchestrator.confidence import confidence_band
@@ -37,6 +40,7 @@ REQUEST_TIMEOUT_S = 25.0
 async def submit_query(
     request: QueryRequest,
     runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
+    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
 ) -> QueryResponse:
     started = time.perf_counter()
     query = request.query.strip()
@@ -54,7 +58,7 @@ async def submit_query(
     failed = sorted(name for name, out in outputs.items() if out.get("error"))
     confidence = float(final.get("final_confidence", 0.0))
 
-    return QueryResponse(
+    response = QueryResponse(
         answer=final.get("final_answer", ""),
         confidence=confidence,
         confidence_band=confidence_band(confidence),
@@ -67,6 +71,17 @@ async def submit_query(
         sectors=list(final.get("sectors", [])),
         unanswered=failed,
     )
+
+    if user is not None:
+        history.record(
+            user_email=user.email,
+            query=query,
+            answer=response.answer,
+            confidence=response.confidence,
+            degraded=response.degraded,
+        )
+
+    return response
 
 
 def _forecast_of(outputs: dict) -> list:

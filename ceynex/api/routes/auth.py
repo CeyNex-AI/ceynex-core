@@ -39,6 +39,17 @@ def require_user(
     return payload
 
 
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),  # noqa: B008
+) -> TokenPayload | None:
+    """Like `require_user`, but never 401s — None instead of raising when
+    there's no (valid) token. For routes where being signed in unlocks
+    something extra (query history) without gating the route itself."""
+    if credentials is None:
+        return None
+    return verify_token(credentials.credentials)
+
+
 @router.get("/api/auth/me", response_model=UserResponse)
 async def me(user: TokenPayload = Depends(require_user)) -> UserResponse:  # noqa: B008
     return UserResponse(email=user.email, role=user.role)
