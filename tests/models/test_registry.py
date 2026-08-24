@@ -85,6 +85,22 @@ def test_metrics_can_be_attached_after_the_model_is_saved():
     assert registry.list_models()[0].metrics["mape"] == 0.1
 
 
+def test_save_preserves_reproducibility_metadata():
+    registry.save(
+        fitted(),
+        training_rows=len(SERIES),
+        training_window={"period_start": 2015, "period_end": 2024},
+        source="FAOSTAT annual producer price",
+        metrics={"mape": 0.1, "rmse": 5.0, "coverage": 0.8, "folds": 3.0},
+        git_sha="a" * 40,
+    )
+
+    restored = registry.list_models()[0]
+    assert restored.training_window == {"period_start": 2015, "period_end": 2024}
+    assert restored.source == "FAOSTAT annual producer price"
+    assert restored.git_sha == "a" * 40
+
+
 def test_model_id_names_the_version():
     """Evidence saying 'a model produced this' without saying which is not a trail."""
     saved = registry.save(fitted(), version="v7")
