@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ceynex.api.deps import Runtime, set_runtime
 from ceynex.api.history import ensure_table as ensure_history_table
-from ceynex.api.routes import auth, health, history, query
+from ceynex.api.routes import admin, auth, health, history, query
 
 log = logging.getLogger(__name__)
 
@@ -70,3 +70,4 @@ app.include_router(health.router)
 app.include_router(query.router)
 app.include_router(auth.router)
 app.include_router(history.router)
+app.include_router(admin.router)
