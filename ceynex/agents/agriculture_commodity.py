@@ -30,10 +30,10 @@ from ceynex.agents.common import (
     parse_intent,
 )
 from ceynex.contracts import AgentOutput, AgentState, Evidence, ForecastPoint, failed_output
-from ceynex.data.reader import DatasetUnavailableError, annual_series
+from ceynex.data.reader import DatasetUnavailableError, annual_series, relevant_dq_flags
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
-from ceynex.orchestrator.confidence import clamp, staleness_penalty
+from ceynex.orchestrator.confidence import clamp, dq_penalty, staleness_penalty
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +177,18 @@ async def _trend_answer(state: AgentState, deps: AgentDeps, kind: str) -> dict[s
             period=period,
         ),
     ]
+    evidence, assumptions, confidence = _with_dq_flags(
+        relevant_dq_flags(
+            str(info["item"]),
+            str(info["target"]),
+            period_start=int(first.period),
+            period_end=int(latest.period),
+            dsn=deps.dsn,
+        ),
+        evidence,
+        ["Trend compares the first and latest available annual source observations; no missing years are interpolated."],
+        _series_confidence(len(frame), int(latest.period)),
+    )
     return await _respond(
         state,
         deps,
@@ -187,8 +199,8 @@ async def _trend_answer(state: AgentState, deps: AgentDeps, kind: str) -> dict[s
         ),
         figures=figures,
         evidence=evidence,
-        assumptions=["Trend compares the first and latest available annual source observations; no missing years are interpolated."],
-        confidence=_series_confidence(len(frame), int(latest.period)),
+        assumptions=assumptions,
+        confidence=confidence,
     )
 
 
@@ -312,6 +324,20 @@ async def _model_forecast(
             ),
         ),
     ]
+    window = metadata.training_window or {}
+    metric = "export_volume" if target == "export_volume" else "price"
+    evidence, assumptions, confidence = _with_dq_flags(
+        relevant_dq_flags(
+            item,
+            metric,
+            period_start=window.get("period_start"),
+            period_end=window.get("period_end"),
+            dsn=deps.dsn,
+        ),
+        evidence,
+        assumptions,
+        _model_confidence(metadata),
+    )
     prefix = f"forecast_next_{target}"
     return await _respond(
         state,
@@ -328,7 +354,7 @@ async def _model_forecast(
         },
         evidence=evidence,
         assumptions=assumptions,
-        confidence=_model_confidence(metadata),
+        confidence=confidence,
         forecast=points,
     )
 
@@ -443,6 +469,45 @@ def _series_detail(info: dict[str, object]) -> str:
         "unified fact_trade annual series: "
         f"source={info['source_id']}; item={info['item']}; target={info['target']}; unit={info['unit']}"
     )
+
+
+def _with_dq_flags(
+    flags: list[dict[str, Any]],
+    evidence: list[Evidence],
+    assumptions: list[str],
+    confidence: float,
+) -> tuple[list[Evidence], list[str], float]:
+    """Surface material/severe discrepancies without changing measured values."""
+    relevant = [flag for flag in flags if flag.get("severity") in {"material", "severe"}]
+    if not relevant:
+        return evidence, assumptions, confidence
+
+    severities = [str(flag["severity"]) for flag in relevant]
+    counts = ", ".join(f"{severity}={severities.count(severity)}" for severity in sorted(set(severities)))
+    assumptions = [
+        *assumptions,
+        f"This answer includes cross-source discrepancy flags ({counts}); measured values were retained, not reconciled.",
+    ]
+    for flag in relevant:
+        period = flag.get("period_start")
+        period_text = period.isoformat() if hasattr(period, "isoformat") else str(period)
+        pct_diff = float(flag["pct_diff"])
+        evidence.append(
+            evidence_from_dataset(
+                claim=(
+                    f"{str(flag['severity']).title()} data-quality flag for {flag['metric']} in {period_text}: "
+                    f"{flag['source_a']} reports {float(flag['value_a']):,.2f}, while {flag['source_b']} "
+                    f"reports {float(flag['value_b']):,.2f}; difference {pct_diff:.1f}%."
+                ),
+                detail=(
+                    f"dq_flag: source_a={flag['source_a']}; source_b={flag['source_b']}; "
+                    f"metric={flag['metric']}; pct_diff={pct_diff:.6g}; severity={flag['severity']}"
+                ),
+                source_id="DQ_FLAG",
+                period=period_text,
+            )
+        )
+    return evidence, assumptions, clamp(confidence - dq_penalty(severities))
 
 
 def _direction(change: float) -> str:
