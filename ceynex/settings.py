@@ -100,6 +100,18 @@ def openai_api_key() -> str | None:
     return _env("OPENAI_API_KEY") or None
 
 
+def jwt_secret() -> str:
+    """Signing key for auth tokens (SRS 3.1.11).
+
+    The fallback keeps `make up`/tests working without a `.env` entry, same
+    spirit as `postgres_dsn()`'s dev defaults. Unlike a DB password, this one
+    is not optional in a real deployment: anyone who knows it can forge a
+    token for any of the four demo accounts. Set CEYNEX_JWT_SECRET wherever
+    the API is reachable outside a developer's own machine.
+    """
+    return _env("CEYNEX_JWT_SECRET") or "ceynex-dev-insecure-jwt-secret-change-me"
+
+
 def comtrade_api_key() -> str | None:
     """None falls the connector back to its committed bulk extract (R2)."""
     return _env("COMTRADE_API_KEY") or None

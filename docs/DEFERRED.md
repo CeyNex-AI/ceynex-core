@@ -13,17 +13,48 @@ things not built at all.
 ## Owned by M3, deliberately not pre-empted
 
 `ceynex/api/` was seeded by M2 so the orchestrator is reachable for the
-mid-evaluation demo, and is M3's from then on. Two routes exist — `GET /health`
-and `POST /api/query` — and nothing else. Specifically **not** built, because
-building them would mean guessing at M3's design and then arguing about it:
+mid-evaluation demo, and is M3's from then on. Five routes exist — `GET
+/health`, `POST /api/query`, `POST /api/auth/login`, `GET /api/auth/me`
+(`ceynex/api/routes/auth.py`), and `GET /api/history`
+(`ceynex/api/routes/history.py`) — and nothing else beyond that. Specifically
+**not** built, because building them would mean guessing at M3's design and
+then arguing about it:
 
 | Deferred | Spec | Consequence today |
 |---|---|---|
-| Authentication and authorization | SRS 3.1.11 | **`POST /api/query` is unauthenticated.** Acceptable only because the backend is VPC-internal with no public route to port 8000; it must not stay true if the API is ever exposed |
 | Admin routes (retrain, ingest triggers, DQ review) | SRS 3.5.4 | Retraining is CLI-only (`make backtest`, the registry's `retrain()` hook). The hook exists so M3's endpoint is a thin wrapper, not a rewrite |
-| Query history and saved queries | SRS 3.5.2 | Each request is independent; nothing is persisted per user |
 | Help and guidance content | SRS 3.5.5 | — |
 | `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
+
+**Saved / bookmarked queries (SRS 3.5.2, second half) are built**: `saved` is
+a column on `query_history` (`ceynex/api/history.py`), not a second table — a
+saved query is a history entry, just flagged, and every query that could ever
+be saved already has a row there from the moment it was asked. `POST
+/api/history/{id}/save` and `.../unsave` toggle it, scoped to the caller's own
+`user_email` in the same `UPDATE` (never a separate ownership check, same
+reasoning as `auth.authenticate` never distinguishing "no such user" from
+"wrong password") — a 404 covers both "no such entry" and "not yours", not
+just the first. `GET /api/history?saved=true` filters the existing list route
+rather than adding a second one.
+
+**Login exists now; `POST /api/query` itself still does not require a token.**
+`require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs
+one, but wiring it onto `/api/query` was a deliberate choice left for later:
+the frontend's four demo roles don't currently gate *what* a query can see,
+only which UI pages render, so requiring a token there today would add a login
+wall without changing any behaviour behind it. `POST /api/query` instead takes
+an *optional* token (`get_optional_user`) — signed in or not, a query still
+answers; being signed in only additionally attributes it to that user for
+history. Revisit the hard requirement once a route actually needs to tell
+users apart to change *what* it returns (the admin routes above are the first
+candidate).
+
+**Query history (SRS 3.5.2, first half) is built**: `ceynex/api/history.py`
+records every authenticated query into a `query_history` table (additive to
+the frozen contracts schema, not part of it — see that module's docstring for
+why), and `GET /api/history` lists a signed-in user's own past queries. An
+anonymous query, or one with an invalid/expired token, still answers
+normally — it simply is not recorded, silently, by design.
 
 ## WITS tariff ingestion — cut
 

@@ -20,7 +20,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ceynex.api.deps import Runtime, set_runtime
-from ceynex.api.routes import health, query
+from ceynex.api.history import ensure_table as ensure_history_table
+from ceynex.api.routes import auth, health, history, query
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     runtime = Runtime.build()
     set_runtime(runtime)
+    ensure_history_table()
     try:
         yield
     finally:
@@ -66,3 +68,5 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(query.router)
+app.include_router(auth.router)
+app.include_router(history.router)
