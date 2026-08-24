@@ -211,6 +211,66 @@ anyone reverts it.
 
 ---
 
+## 3A. M1 agriculture source-series evaluation
+
+Measured on 2026-08-21 from the M1 dated raw snapshots, rather than the
+partner-level UN Comtrade series in §3. These are different targets and should
+not be compared as if they were the same experiment.
+
+### Sufficiency decision
+
+| Target | Source | Frequency | Observations | Window | Decision |
+|---|---|---:|---:|---|---|
+| Tea export volume | Tea Board total exports | annual | 15 | 2011–2025 | Short annual series: baselines first |
+| Cinnamon producer price | FAOSTAT USD producer price | annual | 34 | 1991–2024 | Short annual series: baselines first |
+
+Both series are below the plan's 40-observation threshold. Backtests use an
+expanding window with three one-year-ahead folds, not a random split. Coverage
+has only three held-out observations, so values of 0.33, 0.67, and 1.00 are
+coarse diagnostics rather than calibrated probability estimates.
+
+### Results
+
+| Target | Model | MAPE | RMSE | 80% interval coverage | Selected |
+|---|---|---:|---:|---:|---|
+| Tea export volume (kg) | annual naive | **3.18%** | 8,550,826 kg | 1.00 | yes |
+| Tea export volume (kg) | annual drift | 3.95% | 11,907,238 kg | 1.00 | no |
+| Tea export volume (kg) | SARIMA/ETS | 6.30% | 20,160,918 kg | 0.67 | no |
+| Cinnamon producer price (USD/kg) | annual naive | **12.05%** | 1.172 USD/kg | 0.33 | yes |
+| Cinnamon producer price (USD/kg) | annual drift | 13.33% | 1.316 USD/kg | 0.33 | no |
+| Cinnamon producer price (USD/kg) | SARIMA/ETS | 12.32% | 1.191 USD/kg | 0.33 | no |
+| Cinnamon producer price (USD/kg) | GBM | 15.91% | 1.605 USD/kg | 0.33 | no |
+
+GBM is retained only when it improves MAPE by at least 5% relative to the best
+simple candidate. It does not meet that threshold, so the annual naïve baseline
+is selected for both targets.
+
+### Cinnamon benchmark limitation
+
+The Liyanage/Silva/Marasinghe purchasing-price panel is unavailable. Therefore
+the cinnamon result above uses FAOSTAT's annual USD producer-price fallback and
+is **not a reproduction of the published benchmark**. Any comparison in the
+report must quote the paper's reported MAPE with this target, frequency, and
+source difference stated beside it; it must not imply the same train/test split
+or data were used.
+
+### Registry release procedure
+
+The selected models are registered only from a clean, committed checkout:
+
+```bash
+python -m ceynex.models.agriculture.evaluation --register
+```
+
+This writes one local (git-ignored) versioned artifact for each of
+`agriculture/tea/export_volume` and `agriculture/cinnamon/producer_price`.
+Its `metadata.json` records the annual training window and row count, source,
+`AnnualNaiveModel` class, all three-fold rolling-origin metrics, 80% interval
+level, and the exact Git SHA. Registration fails if either target does not
+select the annual-naïve model, its forecast interval excludes the point, or the
+checkout is dirty; recording a SHA that cannot reproduce the artifact would be
+misleading.
+
 ## 4. Merge coherence — not yet measured
 
 SRS 3.1.2 forbids answers that concatenate per-agent responses, and no automated
