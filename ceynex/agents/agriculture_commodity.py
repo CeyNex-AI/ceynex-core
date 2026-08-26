@@ -107,7 +107,7 @@ async def _answer(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         )
     if kind == "production":
         return await _unsupported_production(state, deps, intent.item or "tea")
-    return await _trend_answer(state, deps, "price" if kind == "price" else "volume")
+    return await _trend_answer(state, deps, "price" if kind == "price" else "volume", intent.item)
 
 
 def _question_kind(query: str, intent: Any) -> str:
@@ -127,8 +127,25 @@ def _question_kind(query: str, intent: Any) -> str:
     return "volume"
 
 
-async def _trend_answer(state: AgentState, deps: AgentDeps, kind: str) -> dict[str, Any]:
+async def _trend_answer(
+    state: AgentState, deps: AgentDeps, kind: str, requested_item: str | None
+) -> dict[str, Any]:
     info = SERIES[kind]
+    # Guard rail: SERIES has exactly one hardcoded item per kind (tea for
+    # volume, cinnamon for price) -- that's the only combination this file
+    # actually has a sourced series for. A query naming a *different* item
+    # (rubber, coconut, or the other kind's item) must not silently answer
+    # with that hardcoded item's data instead -- this is exactly the bug
+    # found live 2026-08-26 (a cinnamon forecast question answered with tea
+    # export-volume evidence). requested_item is None for a genuine no-item
+    # question ("how are export volumes trending"), where defaulting to the
+    # one sourced item for this kind is the existing, intended behaviour.
+    if requested_item is not None and requested_item != info["item"]:
+        reason = (
+            f"No sourced {info['target'].replace('_', ' ')} series is available for {requested_item} -- "
+            f"only {info['item']} is covered for this question shape."
+        )
+        return await _unsupported_target(state, deps, reason)
     frame = annual_series(
         str(info["item"]),
         sector="agriculture",
