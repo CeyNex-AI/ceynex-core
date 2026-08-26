@@ -15,9 +15,12 @@ from pathlib import Path
 import pytest
 
 from ceynex.data.connectors.comtrade import (
+    DEFAULT_HS_CODES,
     FACT_TRADE_COLUMNS,
+    ITEM_BY_HS,
     SOURCE_ID,
     ComtradeConnector,
+    _item_of,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "comtrade_0902_2023.json"
@@ -32,6 +35,23 @@ def connector(tmp_path):
     return ComtradeConnector(
         hs_codes=("0902",), years=(2023,), cache_root=cache, offline=True, api_key=None
     )
+
+
+def test_coconut_hs_codes_are_requested_and_mapped():
+    """Regression: coconut is one of the four SRS 2.4 agriculture commodities
+    (already fully wired in reference/hs_codes.csv, kg/loaders/agriculture.py,
+    trade_flows.ITEM_NODES) but DEFAULT_HS_CODES never actually requested its
+    HS codes from Comtrade, so it had zero rows anywhere downstream. Found
+    live 2026-08-26 via a real forecast query correctly declining for lack of
+    any coconut data at all.
+    """
+    assert "0801" in DEFAULT_HS_CODES
+    assert "1513" in DEFAULT_HS_CODES
+    assert _item_of("0801") == "coconut"
+    assert _item_of("1513") == "coconut"
+    assert _item_of("080111") == "coconut"  # 6-digit sub-code resolves via prefix
+    assert ITEM_BY_HS["0801"] == "coconut"
+    assert ITEM_BY_HS["1513"] == "coconut"
 
 
 def test_it_reads_the_cache_rather_than_the_network(connector):
