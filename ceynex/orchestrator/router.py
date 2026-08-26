@@ -71,6 +71,13 @@ class RouteDecision:
     relevance: dict[AgentName, float]
     method: str  # "keyword" | "llm" | "llm->keyword"
     out_of_scope: bool = False
+    # Distinguishes two shapes `out_of_scope` used to conflate: a *mixed*
+    # question naming both an in-scope sector and an excluded one ("tea vs
+    # fisheries" -- still worth answering about tea) from one naming nothing
+    # CeyNex covers at all ("who is Euler" -- worth answering nothing about).
+    # merger.py uses this to decide whether a routed agent's output is a real
+    # finding or noise that happens to have run.
+    no_topic_recognized: bool = False
     reason: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -97,8 +104,22 @@ def keyword_route(query: str) -> RouteDecision:
     # with no mention of fisheries — the mixed question is the one that most
     # needs the limit stated, because half of it looks answered.
     named_out_of_scope = [word.strip() for word in OUT_OF_SCOPE_WORDS if word in lowered]
-    out_of_scope = bool(named_out_of_scope)
-    partly_in_scope = out_of_scope and (hits_agriculture or hits_apparel)
+    partly_in_scope = bool(named_out_of_scope) and (hits_agriculture or hits_apparel)
+
+    # Found live 2026-08-27: "who is Euler" names no excluded sector either --
+    # it names nothing at all, in scope or out. The keyword lists above are
+    # the only signal this router has, so if every one of them came back
+    # empty, the question is not about Sri Lankan trade in any sense this
+    # router can recognise, not merely "the wrong sector".
+    no_topic_recognized = not (
+        hits_agriculture
+        or hits_apparel
+        or wants_simulation
+        or wants_forecast
+        or wants_analytics
+        or named_out_of_scope
+    )
+    out_of_scope = bool(named_out_of_scope) or no_topic_recognized
 
     sectors: list[Sector] = []
     if hits_agriculture:
@@ -164,9 +185,10 @@ def keyword_route(query: str) -> RouteDecision:
         relevance=relevance,
         method="keyword",
         out_of_scope=out_of_scope,
+        no_topic_recognized=no_topic_recognized,
         reason=reason,
     )
-    if out_of_scope:
+    if named_out_of_scope:
         named = ", ".join(sorted(set(named_out_of_scope)))
         lead = (
             f"the question also asks about {named}, which CeyNex does not cover"
@@ -176,6 +198,11 @@ def keyword_route(query: str) -> RouteDecision:
         decision.notes.append(
             f"{lead}. Scope is agriculture (tea, cinnamon, rubber, coconut) and "
             "apparel (HS 61/62) — SRS 2.4"
+        )
+    elif no_topic_recognized:
+        decision.notes.append(
+            "the question does not name anything CeyNex covers. Scope is agriculture "
+            "(tea, cinnamon, rubber, coconut) and apparel (HS 61/62) exports — SRS 2.4"
         )
     return decision
 
@@ -218,7 +245,14 @@ Rules:
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
 - A trend, growth rate, ranking ("fastest", "largest", "top", "which country"), market share, or concentration question gets export_analytics, IN ADDITION TO the sector agent(s) it names -- not instead of them. "Which country is the fastest growing market for cinnamon?" is both agriculture_commodity (names cinnamon) and export_analytics (asks for a growth ranking) at once.
 - relevance is 0.0-1.0 per agent: how central it is to the question.
-- CeyNex covers only agriculture (tea, cinnamon, rubber, coconut) and apparel. Set out_of_scope true if the question is about some other sector entirely.
+- CeyNex covers only agriculture (tea, cinnamon, rubber, coconut) and apparel. Set out_of_scope true if
+  the question is about some other sector entirely (gems, tourism, fisheries, ...), OR if it is not about
+  Sri Lankan trade/exports at all (a general-knowledge question, small talk, anything unrelated). In the
+  second case, sectors must not include "agriculture" or "apparel" -- naming one of those, even in a
+  route picked only because a route can never be empty, would say the question is partly about a real
+  sector when it is not about one at all.
+- Still return at least one agent even when out_of_scope is true (a route can never be empty) --
+  export_analytics with a low relevance is the reasonable default when nothing else fits.
 
 Reply with JSON only:
 {"route": ["..."], "sectors": ["agriculture"|"apparel"|"cross_sector"|"macro"], "relevance": {"agent": 0.0-1.0}, "out_of_scope": false, "reason": "one short sentence"}"""
@@ -262,13 +296,20 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         relevance.setdefault(agent, 1.0)
 
     sectors = [s for s in parsed.get("sectors", []) if s in ("agriculture", "apparel", "cross_sector", "macro")]
+    out_of_scope = bool(parsed.get("out_of_scope", False))
+    # ROUTER_SYSTEM tells the model to omit "agriculture"/"apparel" from
+    # sectors when the question isn't about a real sector at all, only about
+    # some excluded one -- so out_of_scope plus neither of those present is
+    # the "no topic recognised" case, same distinction keyword_route makes.
+    no_topic_recognized = out_of_scope and not any(s in ("agriculture", "apparel") for s in sectors)
 
     return RouteDecision(
         route=[agent for agent in ALL_AGENTS if agent in route],
         sectors=sectors or fallback.sectors,
         relevance=relevance,
         method="llm",
-        out_of_scope=bool(parsed.get("out_of_scope", False)),
+        out_of_scope=out_of_scope,
+        no_topic_recognized=no_topic_recognized,
         reason=str(parsed.get("reason", ""))[:200],
     )
 

@@ -121,8 +121,23 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     outputs = state.get("agent_outputs", {})
     route = list(state.get("route", []) or outputs.keys())
     relevance = state.get("relevance", {})
+    no_topic = _no_topic_recognized(state)
 
-    succeeded = {name: out for name, out in outputs.items() if not out.get("error")}
+    # A routed agent still runs and can still answer confidently even when the
+    # question named nothing CeyNex covers -- export_analytics.py:62's own
+    # `item = intent.item or "tea"` default is exactly this: no item named, so
+    # it substitutes one and reports on it as if asked. That is real, valid
+    # output for a question that *was* about tea; it is noise for one that
+    # was never about trade at all ("who is Euler", found live 2026-08-27).
+    # Treating the whole route as if nothing succeeded is what the "mixed
+    # question" case (an excluded sector named *alongside* tea or apparel)
+    # must not get -- that one still deserves the real in-scope answer, which
+    # is why this only fires on `no_topic`, not on `out_of_scope` generally.
+    succeeded = (
+        {}
+        if no_topic
+        else {name: out for name, out in outputs.items() if not out.get("error")}
+    )
     failed = {name: out for name, out in outputs.items() if out.get("error")}
     never_reported = [name for name in route if name not in outputs]
 
@@ -147,12 +162,21 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     evidence = dedupe_evidence(succeeded)
     forecast = _first_forecast(succeeded)
 
-    confidence = aggregate_confidence(
-        outputs,
-        route=route,
-        relevance=relevance,
-        months_since_latest_observation=_staleness_months(state),
-        dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
+    # aggregate_confidence(outputs=...) reads the *unfiltered* agent outputs,
+    # so it would otherwise score this on export_analytics's real (and often
+    # high) confidence in its own irrelevant-to-this-question answer -- a 90%
+    # -confidence "who is Euler" reply is worse than a wrong number, since it
+    # tells the reader to trust it.
+    confidence = (
+        NO_TOPIC_CONFIDENCE
+        if no_topic
+        else aggregate_confidence(
+            outputs,
+            route=route,
+            relevance=relevance,
+            months_since_latest_observation=_staleness_months(state),
+            dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
+        )
     )
 
     if not succeeded:
@@ -364,6 +388,16 @@ def _describe_declines(declined: dict[AgentName, AgentOutput]) -> list[str]:
 
 
 OUT_OF_SCOPE_PREFIX = "out_of_scope: "
+NO_TOPIC_MARKER = "out_of_scope_no_topic: true"
+
+# Not merely "no data for this item" (DECLINE_CONFIDENCE_CEILING) -- the
+# question named nothing CeyNex covers at all, so there's no evidence quality
+# to score in the first place.
+NO_TOPIC_CONFIDENCE = 0.15
+
+
+def _no_topic_recognized(state: AgentState) -> bool:
+    return NO_TOPIC_MARKER in (state.get("errors", []) or [])
 
 
 def _out_of_scope_gaps(state: AgentState) -> list[str]:
@@ -549,11 +583,12 @@ def _humanize(figure: str) -> str:
 
 def _nothing_succeeded(unanswered: list[str]) -> str:
     if unanswered:
-        return (
-            "This question could not be answered from the data currently loaded. "
-            + "; ".join(unanswered).capitalize()
-            + "."
-        )
+        joined = "; ".join(unanswered)
+        # Not `.capitalize()` -- it lowercases everything after the first
+        # character, which mangles "CeyNex"/"SRS" the moment a gap sentence
+        # (e.g. the out-of-scope note below) contains one.
+        sentence = joined[:1].upper() + joined[1:] if joined else joined
+        return f"This question could not be answered from the data currently loaded. {sentence}."
     return "This question could not be answered from the data currently loaded."
 
 

@@ -116,8 +116,39 @@ def test_a_partly_covered_question_is_answered_and_its_gap_is_still_flagged():
 
     assert "agriculture_commodity" in decision.route, "the tea half must still be answered"
     assert decision.out_of_scope, "the gems half must not be dropped silently"
+    assert not decision.no_topic_recognized, "tea is named -- this is a mixed question, not a topic-less one"
     assert "gem" in decision.notes[0].lower()
     assert "also asks" in decision.notes[0], "a partial gap must read differently from a total one"
+
+
+def test_a_question_naming_nothing_ceynex_covers_is_flagged_no_topic():
+    """Regression, found live 2026-08-27: "who is Euler" names no excluded
+    sector either -- it names nothing at all -- so it fell through every
+    keyword list with no "out of scope" flag raised, and export_analytics'
+    own `item = intent.item or "tea"` default answered with a confident,
+    unrelated tea report. This is a different shape from "gems or tea": there
+    is no in-scope half here to still answer.
+    """
+    decision = keyword_route("who is Euler")
+
+    assert decision.out_of_scope
+    assert decision.no_topic_recognized
+    assert decision.notes
+
+
+@pytest.mark.parametrize("query", [
+    "What is the outlook for Sri Lankan gem exports?",
+    "How is tourism revenue trending?",
+])
+def test_a_wholly_excluded_sector_is_out_of_scope_but_not_topic_less(query):
+    """Distinct from the "who is Euler" case above: an excluded sector was
+    still named, so this is "the wrong sector", not "no sector at all" --
+    keeps `_out_of_scope_gaps`'s existing note text (naming what was asked
+    about) rather than the generic no-topic one.
+    """
+    decision = keyword_route(query)
+    assert decision.out_of_scope
+    assert not decision.no_topic_recognized
 
 
 # --- invariant 3: relevance is a weight ---------------------------------
@@ -193,3 +224,29 @@ async def test_partially_valid_routes_keep_only_the_real_agents():
     decision = await llm_route("will tea rise?", llm)
     assert decision.route == ["forecast"]
     assert "made_up_agent" not in decision.relevance
+
+
+async def test_llm_route_flags_no_topic_when_out_of_scope_names_no_sector():
+    """ROUTER_SYSTEM tells the model to omit agriculture/apparel from sectors
+    when the question isn't about a real sector at all -- llm_route must read
+    that the same way keyword_route derives it from its own keyword hits.
+    """
+    llm = FakeLLMClient(
+        response='{"route": ["export_analytics"], "sectors": [], '
+        '"relevance": {"export_analytics": 0.3}, '
+        '"out_of_scope": true, "reason": "not about Sri Lankan trade"}'
+    )
+    decision = await llm_route("who is Euler?", llm)
+    assert decision.out_of_scope
+    assert decision.no_topic_recognized
+
+
+async def test_llm_route_does_not_flag_no_topic_for_a_mixed_question():
+    llm = FakeLLMClient(
+        response='{"route": ["agriculture_commodity"], "sectors": ["agriculture"], '
+        '"relevance": {"agriculture_commodity": 0.7}, '
+        '"out_of_scope": true, "reason": "also asks about fisheries"}'
+    )
+    decision = await llm_route("how does tea compare with fisheries?", llm)
+    assert decision.out_of_scope
+    assert not decision.no_topic_recognized
