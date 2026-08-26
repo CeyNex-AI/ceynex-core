@@ -15,6 +15,7 @@ as a measurement.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -146,7 +147,16 @@ async def _trend_answer(
             f"only {info['item']} is covered for this question shape."
         )
         return await _unsupported_target(state, deps, reason)
-    frame = annual_series(
+    # annual_series is a synchronous psycopg call -- off the event loop via
+    # asyncio.to_thread, same pattern as api/routes/admin.py's _do_retrain.
+    # An inline call here would block the whole process on every concurrent
+    # request, not just this one, for as long as Postgres takes to answer
+    # (and, if it's unreachable, LangGraph's own per-node timeout in
+    # graph.py can't preempt a call that never yields -- confirmed live via
+    # a stack-dump timer 2026-08-26: the connect() attempt hangs well past
+    # NODE_TIMEOUT_S with nothing able to cancel it).
+    frame = await asyncio.to_thread(
+        annual_series,
         str(info["item"]),
         sector="agriculture",
         target=str(info["target"]),
@@ -208,14 +218,16 @@ async def _trend_answer(
             period=period,
         ),
     ]
+    dq_flags = await asyncio.to_thread(
+        relevant_dq_flags,
+        str(info["item"]),
+        str(info["target"]),
+        period_start=int(first.period),
+        period_end=int(latest.period),
+        dsn=deps.dsn,
+    )
     evidence, assumptions, confidence = _with_dq_flags(
-        relevant_dq_flags(
-            str(info["item"]),
-            str(info["target"]),
-            period_start=int(first.period),
-            period_end=int(latest.period),
-            dsn=deps.dsn,
-        ),
+        dq_flags,
         evidence,
         ["Trend compares the first and latest available annual source observations; no missing years are interpolated."],
         _series_confidence(len(frame), int(latest.period)),
@@ -357,14 +369,16 @@ async def _model_forecast(
     ]
     window = metadata.training_window or {}
     metric = "export_volume" if target == "export_volume" else "price"
+    dq_flags = await asyncio.to_thread(
+        relevant_dq_flags,
+        item,
+        metric,
+        period_start=window.get("period_start"),
+        period_end=window.get("period_end"),
+        dsn=deps.dsn,
+    )
     evidence, assumptions, confidence = _with_dq_flags(
-        relevant_dq_flags(
-            item,
-            metric,
-            period_start=window.get("period_start"),
-            period_end=window.get("period_end"),
-            dsn=deps.dsn,
-        ),
+        dq_flags,
         evidence,
         assumptions,
         _model_confidence(metadata),

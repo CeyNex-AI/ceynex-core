@@ -79,7 +79,7 @@ def annual_series(
     """
 
     try:
-        with psycopg.connect(dsn or postgres_dsn()) as conn, conn.cursor() as cur:
+        with psycopg.connect(dsn or postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
     except psycopg.Error as exc:
@@ -93,7 +93,7 @@ def annual_series(
 def items(dsn: str | None = None) -> list[tuple[str, str]]:
     """Every `(sector, item)` pair present in the fact table."""
     try:
-        with psycopg.connect(dsn or postgres_dsn()) as conn, conn.cursor() as cur:
+        with psycopg.connect(dsn or postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
             cur.execute("SELECT DISTINCT sector, item FROM fact_trade ORDER BY 1, 2")
             return [(str(s), str(i)) for s, i in cur.fetchall()]
     except psycopg.Error as exc:
@@ -136,7 +136,7 @@ def relevant_dq_flags(
         ORDER BY period_start, severity, source_a, source_b
     """
     try:
-        with psycopg.connect(dsn or postgres_dsn()) as conn, conn.cursor(row_factory=dict_row) as cur:
+        with psycopg.connect(dsn or postgres_dsn(), connect_timeout=3) as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 statement,
                 {"item": item, "metric": metric, "period_start": start, "period_end": end},
