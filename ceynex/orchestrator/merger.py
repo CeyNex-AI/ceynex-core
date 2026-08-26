@@ -121,7 +121,7 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     outputs = state.get("agent_outputs", {})
     route = list(state.get("route", []) or outputs.keys())
     relevance = state.get("relevance", {})
-    no_topic = _no_topic_recognized(state)
+    no_topic = no_topic_recognized(state)
 
     # A routed agent still runs and can still answer confidently even when the
     # question named nothing CeyNex covers -- export_analytics.py:62's own
@@ -367,9 +367,26 @@ def unanswered_from_outputs(state: AgentState) -> list[str]:
     route = list(state.get("route", []) or outputs.keys())
     failed = {name: out for name, out in outputs.items() if out.get("error")}
     never_reported = [name for name in route if name not in outputs]
+    # Mirrors merge()'s own no_topic suppression -- see no_topic_recognized()'s
+    # docstring. A routed agent's real output is noise, not a gap, when the
+    # question named nothing CeyNex covers; only the out-of-scope note itself
+    # belongs in "could not be answered".
+    if no_topic_recognized(state):
+        return _out_of_scope_gaps(state)
     succeeded = {name: out for name, out in outputs.items() if not out.get("error")}
     _, declined = _split_succeeded(succeeded)
     return _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
+
+
+def agents_used_from_outputs(state: AgentState) -> list[str]:
+    """Same suppression `merge()` applies internally, public -- the API route
+    needs this rather than recomputing "succeeded" itself, same reasoning as
+    `unanswered_from_outputs()` above (see `no_topic_recognized()`'s docstring
+    for the bug this closes)."""
+    if no_topic_recognized(state):
+        return []
+    outputs = state.get("agent_outputs", {})
+    return sorted(name for name, out in outputs.items() if not out.get("error"))
 
 
 def _describe_declines(declined: dict[AgentName, AgentOutput]) -> list[str]:
@@ -396,7 +413,20 @@ NO_TOPIC_MARKER = "out_of_scope_no_topic: true"
 NO_TOPIC_CONFIDENCE = 0.15
 
 
-def _no_topic_recognized(state: AgentState) -> bool:
+def no_topic_recognized(state: AgentState) -> bool:
+    """Public: `merge()` uses this internally, and so must every caller that
+    independently recomputes something from raw `state` instead of from a
+    `MergeResult` -- `agents_used_from_outputs()` and `unanswered_from_outputs()`
+    below, and the API route's own forecast lookup. Found live 2026-08-27:
+    `merge()`'s own no-topic suppression (added in the PR that introduced this
+    flag) landed correctly in `final_answer`/`final_confidence`/`merged_evidence`
+    (the fields `MergeResult.as_state_patch()` writes back), but the API
+    route's separately-computed `agents_used` and `unanswered` fields still
+    came from the raw, unsuppressed `agent_outputs` -- so a "whats 4+4"
+    response correctly said "could not be answered" with 0 evidence, while
+    still listing `agents_used: ["export_analytics"]` and an `unanswered`
+    entry containing a full, irrelevant tea report.
+    """
     return NO_TOPIC_MARKER in (state.get("errors", []) or [])
 
 
@@ -633,9 +663,11 @@ def _staleness_months(state: AgentState) -> float | None:
 __all__ = [
     "Conflict",
     "MergeResult",
+    "agents_used_from_outputs",
     "compose_deterministic",
     "detect_conflicts",
     "dedupe_evidence",
     "merge",
+    "no_topic_recognized",
     "unanswered_from_outputs",
 ]

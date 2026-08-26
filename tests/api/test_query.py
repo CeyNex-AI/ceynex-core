@@ -159,6 +159,46 @@ def test_a_failed_agent_is_reported_not_hidden(client):
     assert body["answer"], "a partial result is still an answer"
 
 
+NO_TOPIC = {
+    "final_answer": "This question could not be answered from the data currently loaded. "
+    "The question does not name anything CeyNex covers.",
+    "final_confidence": 0.15,
+    "merged_evidence": [],
+    "degraded": True,
+    "route": ["export_analytics"],
+    "sectors": ["cross_sector"],
+    "errors": ["out_of_scope: the question does not name anything CeyNex covers.", "out_of_scope_no_topic: true"],
+    "agent_outputs": {
+        "export_analytics": {
+            "agent": "export_analytics", "summary": "Sri Lanka exported tea worth USD 1.4bn.",
+            "figures": {"total_export_value_usd": 1_431_567_471.0}, "assumptions": [], "evidence": [],
+            "confidence": 0.9, "degraded": False,
+            "forecast": [{"period": "2025", "point": 10.0, "lower": 8.0, "upper": 12.0, "unit": "USD"}],
+        },
+    },
+}
+
+
+@pytest.mark.parametrize("client", [NO_TOPIC], indirect=True)
+def test_a_no_topic_question_does_not_leak_the_routed_agents_real_answer(client):
+    """Regression, found live 2026-08-27 from "whats 4+4": merge()'s own
+    no-topic suppression correctly emptied `final_answer`/`merged_evidence`,
+    but this endpoint separately recomputes `agents_used` and `unanswered`
+    from the raw, unsuppressed `agent_outputs` -- so the response still said
+    `agents_used: ["export_analytics"]` and listed a full, irrelevant tea
+    report under `unanswered`, contradicting its own "could not be answered"
+    answer. A forecast attached to that same irrelevant agent output must not
+    leak through either.
+    """
+    body = post(client, query="whats 4+4").json()
+
+    assert body["agents_used"] == []
+    assert body["forecast"] is None
+    assert body["unanswered"] == ["the question does not name anything CeyNex covers."]
+    assert "1.4" not in " ".join(body["unanswered"])
+    assert "tea" not in " ".join(body["unanswered"]).lower()
+
+
 NO_FORECAST = {**ANSWERED, "agent_outputs": {
     "export_analytics": {"agent": "export_analytics", "summary": "s", "figures": {},
                          "assumptions": [], "evidence": [], "confidence": 0.8, "degraded": False},
