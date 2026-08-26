@@ -175,6 +175,24 @@ def test_tea_export_volume_trend_uses_tea_board_series(monkeypatch):
     assert all(evidence["source_id"] == "TEA_BOARD" for evidence in out["evidence"])
 
 
+def test_bare_forecast_question_defers_instead_of_answering_the_wrong_commodity(monkeypatch):
+    """Regression: a real "cinnamon exports outlook" query returned TEA_BOARD
+    evidence (this node's "volume" trend branch is hardcoded to tea) because
+    wants_forecast=True with no M1-specific forecast_target fell through past
+    the "forecast" kind into the default "volume" kind instead of deferring
+    to the separate export-value forecast agent, per parse_intent's own
+    documented intent. Found live 2026-08-26 via a real query against the
+    deployed backend, before this fix.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    out = run("What's the outlook for cinnamon exports next year?")
+
+    assert all(evidence["source_id"] != "TEA_BOARD" for evidence in out["evidence"])
+    assert "forecast" not in out
+    assert out["confidence"] == pytest.approx(0.20)
+
+
 def test_substitution_question_is_an_honest_insufficient_data_response():
     out = run("If tea prices rise, what happens to demand for rubber?")
 
