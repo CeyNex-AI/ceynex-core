@@ -25,6 +25,8 @@ from ceynex.data.crosswalk import (
     known_aliases,
     market_to_iso3,
     normalize_hs,
+    region_names,
+    region_of,
     to_iso3,
     to_m49,
 )
@@ -37,6 +39,56 @@ def test_sri_lanka_is_lka_144():
     assert to_m49("LKA") == 144
     assert to_iso3(144) == "LKA"
     assert country_name("LKA") == "Sri Lanka"
+
+
+# --- regions ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("iso3", "region"),
+    [
+        ("LKA", "Asia"),
+        ("JPN", "Asia"),
+        ("IND", "Asia"),
+        ("KOR", "Asia"),
+        ("USA", "Americas"),
+        ("GBR", "Europe"),
+        ("DEU", "Europe"),
+        ("ZAF", "Africa"),
+        ("AUS", "Oceania"),
+    ],
+)
+def test_region_of_known_trade_partners(iso3, region):
+    assert region_of(iso3) == region
+
+
+def test_region_of_an_unknown_or_defunct_entity_is_none_not_an_error():
+    """A country absent from regions.csv (a defunct/uninhabited entry in
+    countries.csv, e.g. the former USSR) means "doesn't match a region
+    filter", never a raised error -- unlike `to_iso3`, this is a filtering
+    aid, not a data-integrity check."""
+    assert region_of("SUN") is None
+    assert region_of("XYZ") is None
+
+
+def test_every_current_country_has_a_region():
+    """Every non-historical entry in countries.csv should resolve -- a silent
+    gap here would make a region-filtered query drop a real trade partner
+    without anyone noticing (same failure class as the market-share bugs
+    this module exists to prevent). Antarctica (ATA) is the one deliberate
+    exception: `status: current` in countries.csv, but not part of any of
+    the five real trade regions `region_names()` covers, and never a real
+    export destination."""
+    missing = [
+        c.iso3
+        for c in _countries()
+        if c.status == "current" and c.iso3 != "ATA" and region_of(c.iso3) is None
+    ]
+    assert missing == []
+
+
+def test_region_names_are_the_five_continents_region_of_can_return():
+    assert set(region_names()) == {"Africa", "Americas", "Asia", "Europe", "Oceania"}
 
 
 @pytest.mark.parametrize("country", _countries(), ids=lambda c: c.iso3)

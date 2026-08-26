@@ -51,6 +51,20 @@ _OVERVIEW_ROWS = [
     {"partner": "USA", "value": 1782720000.0, "year": 2023},
     {"partner": "GBR", "value": 614620000.0, "year": 2023},
 ]
+# Real-shaped: the global top 5 by value are all non-Asian, but real Asian
+# buyers (JPN, IND, KOR) exist further down -- exactly the live 2026-08-27
+# "top apparel export markets in Asia" case (global top 5: USA, GBR, ITA,
+# DEU, NLD, none Asian, even though Asian partners are in the data).
+_OVERVIEW_ROWS_GLOBAL = [
+    {"partner": "USA", "value": 1_149_365_364.0, "year": 2025},
+    {"partner": "GBR", "value": 400_000_000.0, "year": 2025},
+    {"partner": "ITA", "value": 300_000_000.0, "year": 2025},
+    {"partner": "DEU", "value": 250_000_000.0, "year": 2025},
+    {"partner": "NLD", "value": 200_000_000.0, "year": 2025},
+    {"partner": "JPN", "value": 150_000_000.0, "year": 2025},
+    {"partner": "IND", "value": 100_000_000.0, "year": 2025},
+    {"partner": "KOR", "value": 50_000_000.0, "year": 2025},
+]
 
 
 async def test_happy_path_partner_query_validates_against_agent_output():
@@ -105,6 +119,50 @@ async def test_overview_query_when_no_partner_named():
     assert output["figures"] == {"USA": 1782720000.0, "GBR": 614620000.0}
     assert len(output["evidence"]) >= 1
     assert output["degraded"] is False
+
+
+async def test_a_region_named_reports_only_that_regions_top_markets():
+    """Regression, found live 2026-08-27: "top apparel export markets in
+    Asia" answered with the global top 5 (none of them Asian) and declared
+    the question unanswerable, even though real Asian partners (JPN, IND,
+    KOR) are right there in the data, just not in the unfiltered top 5.
+    """
+    deps = _deps(kg=FakeKGClient(overview_rows=_OVERVIEW_ROWS_GLOBAL))
+
+    state = new_state(query="What are Sri Lanka's top apparel export markets in Asia?", user_id="u1")
+    result = await apparel_manufacturing_node(state, deps)
+    output = result["agent_outputs"]["apparel_manufacturing"]
+
+    assert "error" not in output
+    assert output["figures"] == {"JPN": 150_000_000.0, "IND": 100_000_000.0, "KOR": 50_000_000.0}
+    assert "USA" not in output["figures"]
+    assert "asia" in output["evidence"][0]["claim"].lower()
+
+
+async def test_a_region_with_no_matching_partners_is_an_honest_decline():
+    deps = _deps(kg=FakeKGClient(overview_rows=_OVERVIEW_ROWS))  # USA, GBR only
+
+    state = new_state(query="What are the top apparel markets in Oceania?", user_id="u1")
+    result = await apparel_manufacturing_node(state, deps)
+    output = result["agent_outputs"]["apparel_manufacturing"]
+
+    assert output.get("error")
+    assert "Oceania" in output["error"]
+
+
+async def test_no_region_named_still_returns_the_global_top_five():
+    """Removing Cypher's LIMIT 5 (needed so a region filter has every partner
+    to filter from) must not change the unfiltered case -- still exactly 5,
+    still the largest 5 by value, sliced in Python instead of Cypher now.
+    """
+    deps = _deps(kg=FakeKGClient(overview_rows=_OVERVIEW_ROWS_GLOBAL))  # 8 rows
+
+    state = new_state(query="How are apparel exports doing overall?", user_id="u1")
+    result = await apparel_manufacturing_node(state, deps)
+    output = result["agent_outputs"]["apparel_manufacturing"]
+
+    assert len(output["figures"]) == 5
+    assert set(output["figures"]) == {"USA", "GBR", "ITA", "DEU", "NLD"}
 
 
 async def test_llm_failure_degrades_but_node_still_returns():
