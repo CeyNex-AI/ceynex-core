@@ -189,6 +189,25 @@ async def test_gaps_are_stated_even_if_the_llm_omits_them():
     assert "not covered" in result.answer.lower()
 
 
+async def test_a_gap_already_phrased_as_cannot_or_not_available_is_not_duplicated():
+    """Regression: the LLM's own phrasing for a decline ("cannot be
+    provided", "is not available") matched none of the original marker
+    words, so the deterministic append fired anyway and visibly duplicated
+    the same reason a second time. Found live 2026-08-26.
+    """
+    outputs = {
+        "export_analytics": output("export_analytics", summary="Exports grew 4%."),
+        "forecast": failed_output("forecast", "no model"),
+    }
+    llm = FakeLLMClient(
+        response="Exports grew four percent. A forecast cannot be provided for this item."
+    )
+    result = await merge(
+        state(outputs=outputs, route=["export_analytics", "forecast"]), llm
+    )
+    assert result.answer.lower().count("cannot be provided") == 1
+
+
 async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     """Regression: a real "cinnamon exports outlook" question was narrated as
     "uncertain due to conflicting findings" -- one analysis gave a real

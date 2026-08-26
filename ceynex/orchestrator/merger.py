@@ -452,11 +452,22 @@ def _ensure_conflicts_stated(answer: str, conflicts: list[Conflict]) -> str:
 
 
 def _ensure_gaps_stated(answer: str, unanswered: list[str]) -> str:
-    """SAD §4.1 requires the user to be told what could not be answered."""
+    """SAD §4.1 requires the user to be told what could not be answered.
+
+    Found live 2026-08-26: the marker list was narrower than the LLM's
+    actual phrasing for a decline -- "cannot be provided" and "is not
+    available" matched none of the original four markers, so this appended
+    the same reason a second time even though the prose already stated it
+    in its own words, producing a visibly duplicated sentence.
+    """
     if not unanswered:
         return answer
     lowered = answer.lower()
-    if any(marker in lowered for marker in ("could not", "unable", "not covered", "no data")):
+    markers = (
+        "could not", "cannot", "can't", "unable", "not covered",
+        "no data", "not available", "no specific",
+    )
+    if any(marker in lowered for marker in markers):
         return answer
     return answer.rstrip() + " Not covered: " + "; ".join(unanswered) + "."
 
