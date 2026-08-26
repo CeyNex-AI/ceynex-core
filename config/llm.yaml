@@ -72,7 +72,14 @@ cache:
 fallback:
   enabled: true
   base_url: https://openrouter.ai/api/v1
-  timeout_s: 6.0
+  # Verified live 2026-08-27: a warm connection answers in 2-4s, but a cold
+  # process (fresh TLS handshake) burned the full 6s just on setup and timed
+  # out before the free model even started generating. 10s gives that cold
+  # first call room without meaningfully changing the accepted worst case —
+  # this only runs after the primary's own budget (up to request_timeout_s *
+  # (max_retries + 1)) is already spent, so it was never inside SRS 3.4.1's
+  # 10s single-sector budget to begin with.
+  timeout_s: 10.0
   models:
     router: openrouter/free
     merge: openrouter/free
