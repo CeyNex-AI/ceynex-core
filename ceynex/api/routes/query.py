@@ -25,7 +25,11 @@ from ceynex.api.routes.auth import TokenPayload, get_optional_user
 from ceynex.api.schemas import QueryRequest, QueryResponse
 from ceynex.contracts import new_state
 from ceynex.orchestrator.confidence import confidence_band
-from ceynex.orchestrator.merger import unanswered_from_outputs
+from ceynex.orchestrator.merger import (
+    agents_used_from_outputs,
+    no_topic_recognized,
+    unanswered_from_outputs,
+)
 
 log = logging.getLogger(__name__)
 
@@ -55,16 +59,18 @@ async def submit_query(
         raise HTTPException(status_code=500, detail=f"orchestration failed: {exc}") from exc
 
     outputs = final.get("agent_outputs", {})
-    succeeded = sorted(name for name, out in outputs.items() if not out.get("error"))
     confidence = float(final.get("final_confidence", 0.0))
 
     response = QueryResponse(
         answer=final.get("final_answer", ""),
         confidence=confidence,
         confidence_band=confidence_band(confidence),
-        agents_used=succeeded,
+        agents_used=agents_used_from_outputs(final),
         evidence=final.get("merged_evidence", []),
-        forecast=_forecast_of(outputs) or None,
+        # A routed agent's forecast is noise, not an answer, for a question
+        # that named nothing CeyNex covers -- same suppression as agents_used
+        # and unanswered below (see merger.no_topic_recognized's docstring).
+        forecast=(_forecast_of(outputs) if not no_topic_recognized(final) else []) or None,
         degraded=bool(final.get("degraded", False)),
         elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         route=list(final.get("route", [])),
