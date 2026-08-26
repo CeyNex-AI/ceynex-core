@@ -6,12 +6,13 @@ knowledge — this node's only figures come from `KnowledgeGraphClientProtocol.r
 docstring); an LLM, when available, is used only to phrase already-retrieved
 figures in prose, never to originate them.
 
-Query scoping: every query is pinned to EDB's "APPAREL" sub-category
-(`Product.key in ('apparel:apprel', 'apparel:apparel')` — the two editions'
-own wording) rather than the "APPAREL & TEXTILES ... TOTAL" aggregate table,
-because that total table already includes the sub-category tables as
-components (`ceynex/kg/schema.py`/`data/raw/edb/PROFILE.md`) — summing across
-every `Product` node for a partner would double-count against itself. When
+Query scoping: every query is pinned to the `apparel_edb` graph item — EDB's
+"Apparel" sub-category, normalized in `ceynex/kg/loaders/apparel.py` from the
+two spellings ('APPAREL'/'APPREL') the source PDFs actually use — rather than
+the "Apparel & Textiles ... Total" aggregate table, because that total table
+already includes the sub-category tables as components
+(`data/raw/edb/PROFILE.md`) — summing across every `ApparelCategory` node for
+a partner would double-count against itself. When
 the query names the US or UK (the two markets JAAF confidently labels — see
 `ceynex/data/connectors/jaaf.py`), a second, independently-sourced JAAF
 figure is added as corroborating evidence; JAAF's own scope is the broader
@@ -36,7 +37,7 @@ in its place.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -52,42 +53,32 @@ from ceynex.orchestrator.confidence import clamp, staleness_penalty
 
 _FORECAST_HORIZON = 2
 
-_EDB_APPAREL_KEYS = ["apparel:apprel", "apparel:apparel"]
+# Graph item names — see ceynex/kg/loaders/apparel.py's module docstring for
+# why EDB's two source spellings ('APPAREL'/'APPREL') both normalize to one.
+_EDB_ITEM = "apparel_edb"
+_JAAF_ITEM = "apparel_textiles"
 _JAAF_COVERED_ISO3 = {"USA": "us", "GBR": "uk"}  # iso3 -> JAAF's own market label
 
 _PARTNER_QUERY = """
-MATCH (:Country {iso3: 'LKA'})-[:REPORTED]->(r:ExportRecord {source_id: 'EDB'})
-      -[:TO]->(:Country {iso3: $iso3}),
-      (r)-[:OF]->(p:Product)
-WHERE p.key IN $product_keys AND r.frequency = 'A'
-RETURN r.period_start AS period, r.export_value_usd AS value, p.name AS product_name
-ORDER BY period DESC
+MATCH (i:ApparelCategory {name: $item})-[e:EXPORTS_TO]->(c:Country {iso3: $iso3})
+RETURN e.year AS year, e.value AS value
+ORDER BY year DESC
 LIMIT 5
 """
 
 _OVERVIEW_QUERY = """
-MATCH (:Country {iso3: 'LKA'})-[:REPORTED]->(r:ExportRecord {source_id: 'EDB'})
-      -[:TO]->(partner:Country),
-      (r)-[:OF]->(p:Product)
-WHERE p.key IN $product_keys AND r.frequency = 'A' AND partner.iso3 <> 'WLD'
-WITH max(r.period_start) AS latest_period
-MATCH (:Country {iso3: 'LKA'})-[:REPORTED]->(r2:ExportRecord {source_id: 'EDB'})
-      -[:TO]->(partner2:Country),
-      (r2)-[:OF]->(p2:Product)
-WHERE p2.key IN $product_keys AND r2.frequency = 'A' AND partner2.iso3 <> 'WLD'
-      AND r2.period_start = latest_period
-RETURN partner2.iso3 AS partner, r2.export_value_usd AS value, latest_period AS period
+MATCH (i:ApparelCategory {name: $item})-[e:EXPORTS_TO]->(:Country)
+WITH max(e.year) AS latest_year
+MATCH (i2:ApparelCategory {name: $item})-[e2:EXPORTS_TO]->(c2:Country)
+WHERE e2.year = latest_year
+RETURN c2.iso3 AS partner, e2.value AS value, latest_year AS year
 ORDER BY value DESC
 LIMIT 5
 """
 
 _JAAF_ANNUAL_QUERY = """
-MATCH (:Country {iso3: 'LKA'})-[:REPORTED]->(r:ExportRecord {source_id: 'JAAF'})
-      -[:TO]->(:Country {iso3: $iso3})
-WHERE r.frequency = 'M'
-WITH date.truncate('year', r.period_start) AS year, sum(r.export_value_usd) AS total,
-     max(r.period_start) AS latest_month
-RETURN year, total, latest_month
+MATCH (i:ApparelCategory {name: $item})-[e:EXPORTS_TO]->(c:Country {iso3: $iso3})
+RETURN e.year AS year, e.value AS total
 ORDER BY year DESC
 LIMIT 3
 """
@@ -112,24 +103,14 @@ def _detect_partner(query: str) -> tuple[str, int] | None:
     return None
 
 
-def _to_date(value) -> date | None:
-    if value is None:
-        return None
-    s = str(value)[:10]
-    try:
-        return datetime.strptime(s, "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
-def _derive_confidence(observation_count: int, latest_period: date | None) -> float:
+def _derive_confidence(observation_count: int, latest_year: int | None) -> float:
     if observation_count == 0:
         return 0.0
     base = min(0.90, 0.55 + 0.05 * min(observation_count, 7))
     months_stale = None
-    if latest_period is not None:
+    if latest_year is not None:
         today = datetime.now(UTC).date()
-        months_stale = (today.year - latest_period.year) * 12 + (today.month - latest_period.month)
+        months_stale = (today.year - latest_year) * 12 + (today.month - 1)
     return clamp(base - staleness_penalty(months_stale))
 
 
@@ -145,11 +126,7 @@ def _maybe_forecast(
         return None, None
 
     series = pd.DataFrame(
-        [
-            {"period": period.year, "value": float(row["value"])}
-            for row in edb_rows
-            if (period := _to_date(row["period"])) is not None
-        ]
+        [{"period": int(row["year"]), "value": float(row["value"])} for row in edb_rows]
     )
     if len(series) < MIN_OBSERVATIONS_FOR_FORECAST:
         return None, None
@@ -159,12 +136,10 @@ def _maybe_forecast(
 
 
 async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) -> AgentOutput:
-    edb_rows, edb_cypher = await kg.run(
-        _PARTNER_QUERY, {"iso3": iso3, "product_keys": _EDB_APPAREL_KEYS}
-    )
+    edb_rows, edb_cypher = await kg.run(_PARTNER_QUERY, {"iso3": iso3, "item": _EDB_ITEM})
     evidence: list[Evidence] = []
     figures: dict[str, float] = {}
-    periods: list[date] = []
+    years: list[int] = []
 
     if edb_rows:
         evidence.append(
@@ -175,21 +150,19 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
                     f"{iso3}, most recent {len(edb_rows)} years."
                 ),
                 detail=edb_cypher,
-                period=str(edb_rows[0]["period"])[:10],
+                period=f"{edb_rows[0]['year']}-01-01",
             )
         )
         for row in edb_rows:
-            period = _to_date(row["period"])
-            if period is None:
-                continue
-            periods.append(period)
-            figures[f"EDB_{period.year}"] = float(row["value"])
+            year = int(row["year"])
+            years.append(year)
+            figures[f"EDB_{year}"] = float(row["value"])
 
     forecast_points, forecast_metrics = _maybe_forecast(iso3, edb_rows)
 
     jaaf_label = _JAAF_COVERED_ISO3.get(iso3)
     if jaaf_label is not None:
-        jaaf_rows, jaaf_cypher = await kg.run(_JAAF_ANNUAL_QUERY, {"iso3": iso3})
+        jaaf_rows, jaaf_cypher = await kg.run(_JAAF_ANNUAL_QUERY, {"iso3": iso3, "item": _JAAF_ITEM})
         if jaaf_rows:
             evidence.append(
                 Evidence(
@@ -199,21 +172,20 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
                         f"(broader category than EDB's Apparel sub-category above)."
                     ),
                     detail=jaaf_cypher,
-                    period=str(jaaf_rows[0]["latest_month"])[:10],
+                    period=f"{jaaf_rows[0]['year']}-01-01",
                 )
             )
             for row in jaaf_rows:
-                period = _to_date(row["latest_month"])
-                if period is not None:
-                    periods.append(period)
-                figures[f"JAAF_{period.year if period else 'latest'}"] = float(row["total"])
+                year = int(row["year"])
+                years.append(year)
+                figures[f"JAAF_{year}"] = float(row["total"])
 
     if not evidence:
         return failed_output(
             "apparel_manufacturing", f"No EDB Apparel sub-category data found for partner {iso3}."
         )
 
-    confidence = _derive_confidence(len(edb_rows), max(periods) if periods else None)
+    confidence = _derive_confidence(len(edb_rows), max(years) if years else None)
     assumptions = [
         "Figures are Sri Lanka's Apparel sub-category exports only (EDB table "
         "APPREL/APPAREL), not the broader Apparel & Textiles total, to avoid "
@@ -258,7 +230,7 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
                     "residuals. No published Sri Lankan apparel-export forecasting "
                     "benchmark exists to compare against (.claude/commands/backtest.md)."
                 ),
-                period=str(edb_rows[0]["period"])[:10],
+                period=f"{edb_rows[0]['year']}-01-01",
             )
         )
         assumptions.append(
@@ -274,13 +246,13 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
 
 
 async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:
-    rows, cypher = await kg.run(_OVERVIEW_QUERY, {"product_keys": _EDB_APPAREL_KEYS})
+    rows, cypher = await kg.run(_OVERVIEW_QUERY, {"item": _EDB_ITEM})
     if not rows:
         return failed_output(
             "apparel_manufacturing", "No EDB Apparel sub-category data found in the graph."
         )
 
-    period = _to_date(rows[0]["period"])
+    year = int(rows[0]["year"])
     evidence = [
         Evidence(
             source_id="EDB",
@@ -289,16 +261,16 @@ async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:
                 f"(Apparel sub-category), latest available year."
             ),
             detail=cypher,
-            period=str(rows[0]["period"])[:10] if rows else None,
+            period=f"{year}-01-01",
         )
     ]
     figures = {row["partner"]: float(row["value"]) for row in rows}
-    confidence = _derive_confidence(len(rows), period)
+    confidence = _derive_confidence(len(rows), year)
 
     return AgentOutput(
         agent="apparel_manufacturing",
         summary=(
-            f"Sri Lanka's top apparel export markets ({period.year if period else 'latest year'}): "
+            f"Sri Lanka's top apparel export markets ({year}): "
             + ", ".join(f"{row['partner']}" for row in rows)
             + "."
         ),

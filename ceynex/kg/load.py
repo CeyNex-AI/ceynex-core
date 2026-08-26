@@ -21,6 +21,7 @@ from importlib.resources import files
 
 from ceynex.kg.client import KnowledgeGraphClient, KnowledgeGraphUnavailableError
 from ceynex.kg.loaders import agriculture as agriculture_loader
+from ceynex.kg.loaders import apparel as apparel_loader
 from ceynex.kg.loaders import trade_agreements, trade_flows
 from ceynex.kg.queries import graph_summary
 from ceynex.settings import neo4j_config
@@ -45,7 +46,9 @@ async def summarize(kg: KnowledgeGraphClient) -> list[dict[str, object]]:
     return rows
 
 
-async def run(*, schema: bool, agreements: bool, agriculture: bool, flows: bool, verify: bool) -> int:
+async def run(
+    *, schema: bool, agreements: bool, agriculture: bool, apparel: bool, flows: bool, verify: bool
+) -> int:
     async with KnowledgeGraphClient() as kg:
         if not await kg.verify_connectivity():
             uri = neo4j_config()[0]
@@ -67,6 +70,13 @@ async def run(*, schema: bool, agreements: bool, agriculture: bool, flows: bool,
                 f"\n  agri districts    {counts['districts']:>4}"
                 f"\n  agri coverage     {counts['coverage_edges']:>4}"
             )
+        if apparel:
+            counts = await apparel_loader.load(kg)
+            print(
+                f"  apparel countries {counts['countries']:>6}"
+                f"\n  apparel items     {counts['items']:>6}"
+                f"\n  apparel flows     {counts['flows']:>6}"
+            )
         if flows:
             counts = await trade_flows.load(kg)
             print(
@@ -74,7 +84,7 @@ async def run(*, schema: bool, agreements: bool, agriculture: bool, flows: bool,
                 f"\n  items             {counts['items']:>6}"
                 f"\n  export flows      {counts['flows']:>6}"
             )
-        if verify or schema or agreements or flows:
+        if verify or schema or agreements or apparel or flows:
             rows = await summarize(kg)
             if not rows:
                 print("  graph is empty")
@@ -88,13 +98,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--schema", action="store_true", help="apply constraints and indexes")
     parser.add_argument("--agreements", action="store_true", help="merge TradeAgreement nodes and coverage")
     parser.add_argument("--agriculture", action="store_true", help="merge agriculture commodities and districts")
+    parser.add_argument("--apparel", action="store_true", help="project EDB/JAAF into EXPORTS_TO edges")
     parser.add_argument("--flows", action="store_true", help="project fact_trade into EXPORTS_TO edges")
     parser.add_argument("--verify", action="store_true", help="report node counts and exit")
     args = parser.parse_args(argv)
 
     # Bare `python -m ceynex.kg.load` should do the useful thing, not nothing.
-    if not (args.schema or args.agreements or args.agriculture or args.flows or args.verify):
-        args.schema = args.agreements = args.agriculture = args.flows = True
+    if not (args.schema or args.agreements or args.agriculture or args.apparel or args.flows or args.verify):
+        args.schema = args.agreements = args.agriculture = args.apparel = args.flows = True
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -104,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 schema=args.schema,
                 agreements=args.agreements,
                 agriculture=args.agriculture,
+                apparel=args.apparel,
                 flows=args.flows,
                 verify=args.verify,
             )
