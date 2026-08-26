@@ -66,6 +66,27 @@ def test_annual_tables_to_records_skips_the_literal_nan_placeholder():
     assert len(uk_records) == 5  # 2025: Jan, Mar (Feb dropped); 2024: Jan, Feb, Mar
 
 
+def test_annual_tables_to_records_skips_zero_value_future_month_placeholders():
+    """Regression: a real saved page had the in-progress year's not-yet-
+    reported months rendered as a literal "0" (not "NaN"/blank), which the
+    connector ingested as real $0 rows. Found live 2026-08-26 -- this pushed
+    JAAF's latest observed year into the future, which in turn corrupted
+    every cross-item "latest year" graph query (export_analytics,
+    trade_economics both assumed the global max year was real data).
+    """
+    tables = [
+        {
+            "market": "us",
+            "header": ["", "Jan", "Feb"],
+            "rows": [["2026", "165110000", "0"]],
+        }
+    ]
+    records = _annual_tables_to_records(tables)
+    assert len(records) == 1
+    assert records[0]["month"] == 1
+    assert records[0]["value_usd_mn"] == 165110000
+
+
 def test_market_wise_fixture_parses_labels_and_values():
     result = extract_market_wise_html(MARKET_WISE_FIXTURE.read_text())
     assert result == [("USA", 38.5), ("UK", 15.2), ("EU", 22.1), ("Other", 24.2)]
