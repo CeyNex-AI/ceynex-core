@@ -100,6 +100,12 @@ def openai_api_key() -> str | None:
     return _env("OPENAI_API_KEY") or None
 
 
+def openrouter_api_key() -> str | None:
+    """R5 failsafe provider key. None just means the failsafe is unusable, same
+    degrade-don't-fail posture as `openai_api_key()`."""
+    return _env("OPENROUTER_API_KEY") or None
+
+
 def jwt_secret() -> str:
     """Signing key for auth tokens (SRS 3.1.11).
 

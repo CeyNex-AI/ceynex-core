@@ -41,10 +41,23 @@ CONFIG = {
 }
 
 
-def client(tmp_path, *, api_key=None, cache=False):
-    config = json.loads(json.dumps(CONFIG))
+FALLBACK_CONFIG = json.loads(json.dumps(CONFIG))
+FALLBACK_CONFIG["fallback"] = {
+    "enabled": True,
+    "base_url": "https://openrouter.ai/api/v1",
+    "timeout_s": 5.0,
+    "models": {
+        "router": "meta-llama/llama-3.3-70b-instruct:free",
+        "merge": "deepseek/deepseek-chat:free",
+        "explanation": "meta-llama/llama-3.3-70b-instruct:free",
+    },
+}
+
+
+def client(tmp_path, *, api_key=None, cache=False, fallback_api_key=None, config=None):
+    config = json.loads(json.dumps(config if config is not None else CONFIG))
     config["cache"] = {"enabled": cache, "path": str(tmp_path / "cache"), "ttl_hours": 1}
-    return LLMReasoningClient(config=config, api_key=api_key)
+    return LLMReasoningClient(config=config, api_key=api_key, fallback_api_key=fallback_api_key)
 
 
 # --- degrading -----------------------------------------------------------
@@ -101,6 +114,90 @@ async def test_it_retries_once_then_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_call", failing)
     await llm.generate("explanation", "sys", "user")
     assert len(attempts) == 2, "max_retries: 1 means two attempts total"
+
+
+# --- failsafe provider (R5) -----------------------------------------------
+
+
+async def test_failsafe_is_tried_after_the_primary_is_exhausted(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+
+    async def primary_or_fallback(*args, base_url=None, **kwargs):
+        if base_url is None:
+            raise RuntimeError("openai is down")
+        return "failsafe prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", primary_or_fallback)
+    assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+    assert llm.usage.calls == 1
+    assert llm.usage.fallback_calls == 1
+
+
+async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypatch):
+    """No OPENAI_API_KEY must not skip straight to degrading if the free
+    failsafe can answer instead."""
+    llm = client(tmp_path, api_key=None, fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    assert llm.available is True
+
+    calls = []
+
+    async def fallback_only(*args, base_url=None, **kwargs):
+        calls.append(base_url)
+        return "failsafe prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", fallback_only)
+    assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+    assert calls == ["https://openrouter.ai/api/v1"], "primary must never be called without a key"
+
+
+async def test_failsafe_is_tried_when_the_spend_cap_is_reached(tmp_path, monkeypatch):
+    """R5: the cap stops paid calls, not the free failsafe."""
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd
+
+    async def fallback_only(*args, base_url=None, **kwargs):
+        assert base_url is not None, "primary must not be called once the cap is reached"
+        return "failsafe prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", fallback_only)
+    assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+
+
+async def test_it_degrades_when_both_primary_and_failsafe_fail(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+
+    async def always_fails(*args, **kwargs):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(llm, "_call", always_fails)
+    assert await llm.generate("explanation", "sys", "user") is None
+    assert llm.usage.failures == 1
+    assert llm.usage.fallback_calls == 0
+
+
+async def test_no_failsafe_key_means_no_failsafe(tmp_path, monkeypatch):
+    """`fallback.enabled: true` alone isn't enough — no OPENROUTER_API_KEY,
+    no failsafe attempt."""
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key=None, config=FALLBACK_CONFIG)
+    assert llm._fallback_model("explanation") is None
+
+    calls = []
+
+    async def primary_only(*args, base_url=None, **kwargs):
+        calls.append(1)
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(llm, "_call", primary_only)
+    await llm.generate("explanation", "sys", "user")
+    assert len(calls) == 2, "just the two primary retries, no failsafe attempt"
+
+
+async def test_a_role_missing_from_fallback_models_has_no_failsafe(tmp_path):
+    config = json.loads(json.dumps(FALLBACK_CONFIG))
+    del config["fallback"]["models"]["explanation"]
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=config)
+    assert llm._fallback_model("explanation") is None
+    assert llm._fallback_model("router") is not None
 
 
 # --- cost and the daily spend cap (R5) ------------------------------------

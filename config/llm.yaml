@@ -54,3 +54,19 @@ cache:
   enabled: true
   path: .cache/llm
   ttl_hours: 168
+
+# Failsafe provider (R5): tried once, after the primary provider's retries are
+# exhausted (or skipped — no OPENAI_API_KEY, or daily_spend_cap_usd already
+# hit), and before generate() gives up and degrades. OpenRouter speaks the
+# OpenAI API, so the same client code drives both providers; only base_url and
+# the API key differ. Costs nothing against daily_spend_cap_usd because these
+# are OpenRouter's free-tier models — verify the exact ids are still live at
+# https://openrouter.ai/models before the demo, they rotate.
+fallback:
+  enabled: true
+  base_url: https://openrouter.ai/api/v1
+  timeout_s: 5.0    # short — this only runs after the primary budget is already spent
+  models:
+    router: meta-llama/llama-3.3-70b-instruct:free
+    merge: deepseek/deepseek-chat:free
+    explanation: meta-llama/llama-3.3-70b-instruct:free
