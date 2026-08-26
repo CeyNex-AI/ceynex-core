@@ -42,7 +42,7 @@ from typing import Any
 
 import pandas as pd
 
-from ceynex.agents.common import AgentDeps
+from ceynex.agents.common import AgentDeps, find_region
 from ceynex.contracts.evidence import Evidence
 from ceynex.contracts.forecast import ForecastPoint
 from ceynex.contracts.protocols import KnowledgeGraphClientProtocol
@@ -110,35 +110,6 @@ def _detect_partner(query: str) -> tuple[str, int] | None:
     return None
 
 
-# "American"/"americas" deliberately excluded: a query naming a country
-# (already handled by _detect_partner above) is far more likely to mean
-# "American" as in "the US market" than the whole Americas continent, and a
-# wrong region filter here is a wrong answer, not a missing one.
-_REGION_ALIASES: dict[str, str] = {
-    "asia": "Asia",
-    "asian": "Asia",
-    "europe": "Europe",
-    "european": "Europe",
-    "africa": "Africa",
-    "african": "Africa",
-    "oceania": "Oceania",
-}
-
-
-def _detect_region(query: str) -> str | None:
-    """Same word-boundary approach as `_detect_partner`, for a continent name
-    instead of a country one. Only checked when `_detect_partner` finds
-    nothing — a query naming both (e.g. "Japan's share of Asian imports") is
-    rare enough, and specific-country evidence more valuable, that
-    country wins outright rather than the two being combined.
-    """
-    import re
-
-    q = query.lower()
-    for alias, region in _REGION_ALIASES.items():
-        if re.search(rf"\b{alias}\b", q):
-            return region
-    return None
 
 
 def _derive_confidence(observation_count: int, latest_year: int | None) -> float:
@@ -340,7 +311,7 @@ async def apparel_manufacturing_node(state: AgentState, deps: AgentDeps) -> dict
         if partner is not None:
             output = await _query_partner(deps.kg, partner[0], partner[1])
         else:
-            output = await _query_overview(deps.kg, region=_detect_region(state["query"]))
+            output = await _query_overview(deps.kg, region=find_region(state["query"]))
     except Exception as exc:  # noqa: BLE001 — contract requires never raising
         return {
             "agent_outputs": {
