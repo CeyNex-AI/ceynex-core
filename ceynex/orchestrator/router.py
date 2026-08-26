@@ -216,6 +216,7 @@ Rules:
 - Return at least one agent. Never an empty list.
 - A question spanning both sectors gets both sector agents.
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
+- A trend, growth rate, ranking ("fastest", "largest", "top", "which country"), market share, or concentration question gets export_analytics, IN ADDITION TO the sector agent(s) it names -- not instead of them. "Which country is the fastest growing market for cinnamon?" is both agriculture_commodity (names cinnamon) and export_analytics (asks for a growth ranking) at once.
 - relevance is 0.0-1.0 per agent: how central it is to the question.
 - CeyNex covers only agriculture (tea, cinnamon, rubber, coconut) and apparel. Set out_of_scope true if the question is about some other sector entirely.
 
