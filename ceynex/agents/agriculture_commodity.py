@@ -125,6 +125,15 @@ def _question_kind(query: str, intent: Any) -> str:
         return "production"
     if "price" in lowered:
         return "price"
+    if intent.item == SERIES["price"]["item"]:
+        # No specific-kind signal in the query (e.g. a bare "do we have
+        # cinnamon data?"), but the named item only has a sourced series for
+        # price. Defaulting to "volume" here -- the *other* branch's item,
+        # tea, not cinnamon -- would answer a genuine data question with a
+        # decline, even though real cinnamon data exists and is one line
+        # away. Found live 2026-08-27: exactly this query, for exactly this
+        # reason, reported no cinnamon data at all.
+        return "price"
     return "volume"
 
 

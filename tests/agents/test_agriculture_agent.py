@@ -199,6 +199,22 @@ def test_rubber_volume_question_declines_instead_of_answering_about_tea(monkeypa
     assert out["confidence"] == pytest.approx(0.20)
 
 
+def test_a_bare_cinnamon_data_question_answers_with_the_real_price_series(monkeypatch):
+    """Regression, found live 2026-08-27: "do we have cinnamon data?" has no
+    "price"/"production"/forecast signal for _question_kind to key off, so it
+    fell through to the hardcoded "volume" default -- tea's series, not
+    cinnamon's -- and declined, even though cinnamon's own sourced price
+    series was one line away and would have honestly answered the question.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    out = run("do we have cinnamon data?")
+
+    assert out["figures"]["latest_price"] == 147.0
+    assert all(evidence["source_id"] == "FAOSTAT" for evidence in out["evidence"])
+    assert out["confidence"] > 0.20, "must not read as the generic data-gap decline"
+
+
 def test_unsupported_target_evidence_says_no_compatible_series_was_found(monkeypatch):
     """The generic second evidence entry attached to every _unsupported_target
     decline claimed "no incompatible ... series was substituted" -- backwards,
