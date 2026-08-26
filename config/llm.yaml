@@ -59,32 +59,21 @@ cache:
 # exhausted (or skipped — no OPENAI_API_KEY, or daily_spend_cap_usd already
 # hit), and before generate() gives up and degrades. OpenRouter speaks the
 # OpenAI API, so the same client code drives both providers; only base_url and
-# the API key differ. Costs nothing against daily_spend_cap_usd because these
-# are OpenRouter's free-tier models — verify the exact ids are still live at
-# https://openrouter.ai/models before the demo, they rotate.
+# the API key differ. Costs nothing against daily_spend_cap_usd — free tier.
 #
-# Each role lists models most-preferred first. OpenRouter's free tier is
-# rate-limited (~20 req/min per model) and the exact free-tier catalog
-# changes often, so a single model here is a single point of failure — the
-# list is sent as OpenRouter's own model-routing array (`extra_body.models`
-# in client.py), and OpenRouter itself falls through to the next entry on a
-# rate limit or outage without us needing a second local retry loop. Spread
-# entries across different vendors (not just Llama variants) so one vendor's
-# rate limit doesn't take out the whole list.
+# The model id is OpenRouter's own Free Models Router (openrouter/free, see
+# https://openrouter.ai/docs/guides/routing/routers/free-router), not one
+# specific free model: it picks at random from OpenRouter's live free-tier
+# catalog and filters for whatever the request needs (structured outputs,
+# for the router role's json_mode). That catalog "changes frequently" per
+# OpenRouter's own docs, which is exactly why pinning a specific free model
+# id here would go stale — openrouter/free is OpenRouter's answer to that,
+# so there is nothing to verify or rotate on our side before the demo.
 fallback:
   enabled: true
   base_url: https://openrouter.ai/api/v1
-  timeout_s: 6.0    # short, but a bit more than the single-model case — OpenRouter may cascade through several entries within this one call
+  timeout_s: 6.0
   models:
-    router:
-      - meta-llama/llama-3.3-70b-instruct:free
-      - google/gemma-2-9b-it:free
-      - mistralai/mistral-7b-instruct:free
-    merge:
-      - deepseek/deepseek-chat:free
-      - qwen/qwen-2.5-72b-instruct:free
-      - meta-llama/llama-3.3-70b-instruct:free
-    explanation:
-      - meta-llama/llama-3.3-70b-instruct:free
-      - google/gemma-2-9b-it:free
-      - mistralai/mistral-7b-instruct:free
+    router: openrouter/free
+    merge: openrouter/free
+    explanation: openrouter/free

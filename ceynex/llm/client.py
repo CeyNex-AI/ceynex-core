@@ -158,10 +158,6 @@ class LLMReasoningClient:
 
         `models` is intentionally per-role and optional — a role with no entry
         here just has no failsafe and degrades normally once the primary fails.
-        A single string is normalized to a one-item list; a list is sent to
-        OpenRouter as its own model-routing array (see `_call`), so it can
-        cascade past a rate limit or outage on the first entry without a
-        second local retry loop.
         """
         if not self._fallback_enabled:
             return None
@@ -169,9 +165,8 @@ class LLMReasoningClient:
         models = fb.get("models", {})
         if role not in models:
             return None
-        entry = models[role]
         return {
-            "models": [entry] if isinstance(entry, str) else list(entry),
+            "model": models[role],
             "base_url": fb.get("base_url"),
             "timeout_s": float(fb.get("timeout_s", 5.0)),
         }
@@ -248,11 +243,11 @@ class LLMReasoningClient:
                     return text
 
         if fallback is not None:
-            fallback_cfg = {"model": fallback["models"][0]}  # no cost fields — free tier, costs 0
+            fallback_cfg = {"model": fallback["model"]}  # no cost fields — free tier, costs 0
             try:
                 text, cost = await asyncio.wait_for(
                     self._call(
-                        fallback["models"],
+                        fallback["model"],
                         system,
                         user,
                         temperature,
@@ -298,7 +293,7 @@ class LLMReasoningClient:
 
     async def _call(
         self,
-        model: str | list[str],
+        model: str,
         system: str,
         user: str,
         temperature: float,
@@ -315,16 +310,11 @@ class LLMReasoningClient:
         `daily_spend_cap_usd` (R5) without knowing anything provider-specific.
         `base_url`/`api_key` select the failsafe provider (R5); omitted, this
         calls the primary provider.
-
-        `model` as a list is the failsafe path: `extra_body.models` is
-        OpenRouter's own ordered fallback array — it cascades to the next
-        entry itself on a rate limit or outage, so a rate-limited free model
-        doesn't need a second local retry loop.
         """
         client = self._client_for(base_url, api_key)
 
         kwargs: dict[str, Any] = {
-            "model": model[0] if isinstance(model, list) else model,
+            "model": model,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "messages": [
@@ -332,8 +322,6 @@ class LLMReasoningClient:
                 {"role": "user", "content": user},
             ],
         }
-        if isinstance(model, list):
-            kwargs["extra_body"] = {"models": model}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
