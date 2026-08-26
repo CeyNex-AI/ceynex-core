@@ -87,6 +87,9 @@ class Intent:
     horizon: int = 2
     #: What the user asked for. May not be what we hold — see `frequency_note`.
     requested_frequency: str | None = None
+    #: Explicit forecast measurement requested by the user, if M1 has one.
+    #: `None` intentionally means the established export-value default.
+    forecast_target: str | None = None
     wants_districts: bool = False
     wants_forecast: bool = False
     pct_change: float | None = None
@@ -107,6 +110,7 @@ def parse_intent(query: str) -> Intent:
                 break
 
     intent.partner = _find_partner(query)
+    _parse_forecast_target(lowered, intent)
 
     # Non-capturing inner group: re.findall returns the group it captures, so a
     # bare (19|20) would yield centuries rather than years.
@@ -126,6 +130,27 @@ def parse_intent(query: str) -> Intent:
 
     _parse_horizon(lowered, intent)
     return intent
+
+
+def _parse_forecast_target(lowered: str, intent: Intent) -> None:
+    """Detect the two M1 agriculture targets without changing export-value defaults.
+
+    A bare request such as "forecast cinnamon exports" deliberately has no
+    target here: the forecast agent then uses its existing USD export-value
+    path.  That prevents a producer-price model being silently substituted for
+    an export forecast merely because both refer to cinnamon.
+    """
+    if intent.item == "tea" and (
+        "export volume" in lowered
+        or "tea tonnes" in lowered
+        or "tea tons" in lowered
+        or re.search(r"\btea\s+(?:export\s+)?kg\b", lowered) is not None
+    ):
+        intent.forecast_target = "export_volume"
+    elif intent.item == "cinnamon" and re.search(
+        r"\b(?:cinnamon\s+)?producer\s+prices?\b|\bcinnamon\s+prices?\b", lowered
+    ):
+        intent.forecast_target = "producer_price"
 
 
 def _parse_horizon(lowered: str, intent: Intent) -> None:

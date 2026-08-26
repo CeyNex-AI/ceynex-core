@@ -30,7 +30,7 @@ from ceynex.agents.common import (
     finish,
     parse_intent,
 )
-from ceynex.contracts import AgentState, Evidence, ForecastPoint, failed_output
+from ceynex.contracts import AgentState, Evidence, ForecastModel, ForecastPoint, failed_output
 from ceynex.kg.client import KnowledgeGraphUnavailableError
 
 log = logging.getLogger(__name__)
@@ -42,6 +42,13 @@ AGENT = "forecast"
 Z_80 = 1.2816
 DEFAULT_HORIZON = 2
 MIN_OBSERVATIONS = 4
+EXPORT_VALUE_TARGET = "export_value_usd"
+
+TARGET_LABELS = {
+    EXPORT_VALUE_TARGET: "export value",
+    "export_volume": "export volume",
+    "producer_price": "producer price",
+}
 
 
 async def forecast_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
@@ -67,6 +74,17 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     item = intent.item or "tea"
     horizon = max(1, min(intent.horizon, 5))
+
+    # Target must be part of the registry lookup.  A cinnamon price and a
+    # cinnamon export-value model have the same item but answer different
+    # questions in incompatible units.
+    target = intent.forecast_target or EXPORT_VALUE_TARGET
+    registered = _load_registered_model(item, target) if intent.partner is None else None
+    if registered is not None:
+        return await _registered_forecast(state, deps, registered, horizon)
+
+    if intent.forecast_target is not None:
+        return await _missing_target_model(state, deps, item, intent.forecast_target, intent.partner)
 
     history, cypher = await _history(deps, item, intent.partner)
     figures: dict[str, float] = {}
@@ -101,65 +119,35 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             assumptions=assumptions,
         )
 
-    registered = _load_registered_model(item)
-    if registered is not None:
-        points = registered.predict(horizon)
-        # The version is part of the identity. "A registered model produced this"
-        # is not a traceable claim if two versions of that model disagree.
-        version = getattr(registered, "version", None)
-        model_id = f"{registered.sector}/{registered.item}/{registered.target}"
-        if version:
-            model_id = f"{model_id}@{version}"
-        assumptions.append(f"Served from the model registry: {model_id}.")
-        # The claim restates the figures, not just the model's name. An evidence
-        # entry that says "a model produced this" without saying what it produced
-        # leaves every number in the answer traceable to nothing.
-        head = points[0] if points else None
-        figures_text = (
-            f" First period {head['period']}: {head['point']:,.0f} {head['unit']} "
-            f"({head['lower']:,.0f}–{head['upper']:,.0f} at 80%)."
-            if head
-            else ""
+    points, diagnostics = _drift_forecast(history, horizon)
+    model_id = "baseline/drift+residual-bootstrap"
+    figures.update(diagnostics)
+    assumptions += [
+        "No registered export-value model for this item yet, so the figures come from a drift "
+        "baseline: the average year-on-year change carried forward.",
+        "The interval is an 80% band from the standard deviation of historical "
+        "year-on-year changes, widening with the square root of the horizon.",
+        "A naive baseline. It is a floor for a real model to beat, not a substitute "
+        "for one.",
+    ]
+    evidence.append(
+        evidence_from_model(
+            claim=(
+                f"Drift baseline fitted to {len(history)} annual observations "
+                f"({history[0][0]}-{history[-1][0]}), mean annual change "
+                f"USD {diagnostics['mean_annual_change_usd']:,.0f}."
+                + (
+                    f" First period {points[0]['period']}: "
+                    f"{points[0]['point']:,.0f} {points[0]['unit']} "
+                    f"({points[0]['lower']:,.0f}–{points[0]['upper']:,.0f} at 80%)."
+                    if points
+                    else ""
+                )
+            ),
+            model_id=model_id,
+            period=f"{history[0][0]}-{history[-1][0]}",
         )
-        evidence.append(
-            evidence_from_model(
-                claim=(
-                    f"Forecast produced by the registered model {model_id} over a "
-                    f"{horizon}-period horizon.{figures_text}"
-                ),
-                model_id=model_id,
-            )
-        )
-    else:
-        points, diagnostics = _drift_forecast(history, horizon)
-        model_id = "baseline/drift+residual-bootstrap"
-        figures.update(diagnostics)
-        assumptions += [
-            "No registered model for this item yet, so the figures come from a drift "
-            "baseline: the average year-on-year change carried forward.",
-            "The interval is an 80% band from the standard deviation of historical "
-            "year-on-year changes, widening with the square root of the horizon.",
-            "A naive baseline. It is a floor for a real model to beat, not a substitute "
-            "for one.",
-        ]
-        evidence.append(
-            evidence_from_model(
-                claim=(
-                    f"Drift baseline fitted to {len(history)} annual observations "
-                    f"({history[0][0]}-{history[-1][0]}), mean annual change "
-                    f"USD {diagnostics['mean_annual_change_usd']:,.0f}."
-                    + (
-                        f" First period {points[0]['period']}: "
-                        f"{points[0]['point']:,.0f} {points[0]['unit']} "
-                        f"({points[0]['lower']:,.0f}–{points[0]['upper']:,.0f} at 80%)."
-                        if points
-                        else ""
-                    )
-                ),
-                model_id=model_id,
-                period=f"{history[0][0]}-{history[-1][0]}",
-            )
-        )
+    )
 
     evidence.append(
         evidence_from_query(
@@ -271,8 +259,109 @@ def _drift_forecast(
     return points, diagnostics
 
 
-def _load_registered_model(item: str) -> Any | None:
-    """Look for a model M1 or M3 has registered for this item.
+async def _registered_forecast(
+    state: AgentState, deps: AgentDeps, model: ForecastModel, horizon: int
+) -> dict[str, Any]:
+    """Serve a target-compatible registry model using its own fitted series.
+
+    The model owns its training data.  Querying the KG's export-value history
+    first would be irrelevant for a Tea Board volume or FAOSTAT price model and
+    could block an otherwise valid forecast when that separate graph series is
+    short or absent.
+    """
+    points = model.predict(horizon)
+    if not points or any(point["lower"] > point["point"] or point["point"] > point["upper"] for point in points):
+        raise ValueError("registered model returned an invalid 80% forecast interval")
+    if any(point["unit"] != model.unit for point in points):
+        raise ValueError("registered model forecast unit does not match its declared unit")
+
+    version = getattr(model, "version", None)
+    model_id = f"{model.sector}/{model.item}/{model.target}"
+    if version:
+        model_id = f"{model_id}@{version}"
+    label = TARGET_LABELS.get(model.target, model.target.replace("_", " "))
+    head = points[0]
+    prefix = f"forecast_next_{model.target}"
+    figures = {
+        prefix: round(head["point"], 2),
+        f"{prefix}_lower": round(head["lower"], 2),
+        f"{prefix}_upper": round(head["upper"], 2),
+    }
+    assumptions = [
+        f"Served from the model registry: {model_id}.",
+        "The registered model's own annual source series was used; no KG export-value history was substituted.",
+        "Intervals are 80% prediction intervals.",
+    ]
+    evidence = [
+        evidence_from_model(
+            claim=(
+                f"{label.title()} forecast produced by registered model {model_id}. "
+                f"First period {head['period']}: {head['point']:,.2f} {head['unit']} "
+                f"({head['lower']:,.2f}–{head['upper']:,.2f} at 80%)."
+            ),
+            model_id=model_id,
+            period=str(head["period"]),
+        ),
+        evidence_from_model(
+            claim=(
+                f"The registered model targets {label} and declares unit {model.unit}; "
+                "target and unit were kept unchanged in this response."
+            ),
+            model_id=model_id,
+        ),
+    ]
+    return await finish(
+        agent=AGENT,
+        state=state,
+        deps=deps,
+        summary=(
+            f"{model.item.replace('_', ' ').title()} {label} is projected at "
+            f"{head['point']:,.2f} {head['unit']} for {head['period']}, within an 80% interval "
+            f"of {head['lower']:,.2f} to {head['upper']:,.2f} {head['unit']}."
+        ),
+        figures=figures,
+        evidence=evidence,
+        assumptions=assumptions,
+        forecast=points,
+    )
+
+
+async def _missing_target_model(
+    state: AgentState,
+    deps: AgentDeps,
+    item: str,
+    target: str,
+    partner: str | None,
+) -> dict[str, Any]:
+    """Refuse a unit-changing fallback when an explicit target cannot be served."""
+    label = TARGET_LABELS.get(target, target.replace("_", " "))
+    scope = f" for partner {partner}" if partner else ""
+    reason = (
+        f"No registered national {label} model is available for {item.replace('_', ' ')}{scope}. "
+        "The USD export-value fallback was not used because it would answer a different question."
+    )
+    return await finish(
+        agent=AGENT,
+        state=state,
+        deps=deps,
+        summary=reason,
+        figures={},
+        evidence=[
+            evidence_from_model(claim=reason, model_id=f"registry/{item}/{target}"),
+            evidence_from_model(
+                claim=(
+                    "The USD export-value fallback was intentionally withheld because its target "
+                    f"does not match requested {label}."
+                ),
+                model_id=f"registry/{item}/{target}",
+            ),
+        ],
+        assumptions=[reason],
+    )
+
+
+def _load_registered_model(item: str, target: str) -> Any | None:
+    """Look for the best agriculture model matching both item and target.
 
     Imported lazily and failure-tolerantly: the registry lands later in the
     sprint, and this node has to work before it does.
@@ -285,7 +374,9 @@ def _load_registered_model(item: str) -> Any | None:
         # Best-scoring first. Newest is only the right answer when nothing has
         # been backtested yet, and serving a model with twice the error because
         # it was registered second is a loss nobody would see.
-        return load_best(item=item) or load_latest(item=item)
+        return load_best(item=item, sector="agriculture", target=target) or load_latest(
+            item=item, sector="agriculture", target=target
+        )
     except Exception as exc:  # noqa: BLE001 - no registered model is the normal case
         log.debug("no registered model for %s: %s", item, exc)
         return None
