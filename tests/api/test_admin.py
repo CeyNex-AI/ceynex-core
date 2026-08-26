@@ -17,14 +17,56 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import admin as admin_module
+from ceynex.api import deps as deps_module
 from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.deps import Runtime
 from ceynex.api.main import app
+from ceynex.llm import ProviderStatus
 from ceynex.models.registry import ModelMetadata
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+class FakeKGForRuntime:
+    async def verify_connectivity(self):
+        return True
+
+    async def close(self) -> None:
+        return None
+
+
+class FakeLLMForStatus:
+    """Just enough of LLMReasoningClient's surface for /api/admin/llm/status:
+    the route only ever calls `.provider_status()`."""
+
+    def __init__(self, status: dict[str, ProviderStatus]):
+        self._status = status
+
+    def provider_status(self) -> dict[str, ProviderStatus]:
+        return self._status
+
+
+@pytest.fixture
+def llm_status_client(request):
+    """A client whose runtime's LLM reports a specific provider_status()."""
+    status = getattr(
+        request,
+        "param",
+        {
+            "openai": ProviderStatus(configured=True, status="ok", last_checked_at=1_700_000_000.0),
+            "openrouter": ProviderStatus(configured=True, status="unknown"),
+        },
+    )
+    deps_module.set_runtime(
+        Runtime(kg=FakeKGForRuntime(), llm=FakeLLMForStatus(status), deps=None, graph=None)
+    )
+    try:
+        yield TestClient(app)
+    finally:
+        deps_module.set_runtime(None)
 
 
 def token_for(email: str, role: str) -> str:
@@ -46,6 +88,7 @@ ADMIN_ROUTES = [
     ("GET", "/api/admin/pipeline/status", None),
     ("GET", "/api/admin/dq-flags", None),
     ("POST", "/api/admin/dq-flags/1/resolve", None),
+    ("GET", "/api/admin/llm/status", None),
 ]
 
 
@@ -300,3 +343,56 @@ def test_resolving_a_flag_that_does_not_exist_is_a_404(client, monkeypatch):
 
     response = client.post("/api/admin/dq-flags/999/resolve", headers=admin_headers())
     assert response.status_code == 404
+
+
+# --- LLM provider status (SRS 3.5.4) --------------------------------------
+
+
+def test_llm_status_reports_both_providers(llm_status_client):
+    response = llm_status_client.get("/api/admin/llm/status", headers=admin_headers())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["openai"]["status"] == "ok"
+    assert body["openai"]["configured"] is True
+    assert body["openrouter"]["status"] == "unknown"
+
+
+def test_llm_status_converts_epoch_seconds_to_iso8601(llm_status_client):
+    response = llm_status_client.get("/api/admin/llm/status", headers=admin_headers())
+
+    # 1_700_000_000 is 2023-11-14T22:13:20+00:00 -- exact instant matters less
+    # than proving it's a real ISO timestamp, not the raw epoch float.
+    assert response.json()["openai"]["last_checked_at"] == "2023-11-14T22:13:20+00:00"
+
+
+@pytest.mark.parametrize(
+    "llm_status_client",
+    [{"openai": ProviderStatus(configured=False, status="not_configured"),
+      "openrouter": ProviderStatus(configured=False, status="not_configured")}],
+    indirect=True,
+)
+def test_llm_status_reports_not_configured_with_no_timestamp(llm_status_client):
+    response = llm_status_client.get("/api/admin/llm/status", headers=admin_headers())
+
+    body = response.json()
+    assert body["openai"] == {
+        "configured": False, "status": "not_configured", "last_error": None, "last_checked_at": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "llm_status_client",
+    [{"openai": ProviderStatus(configured=True, status="down", last_error="rate limited", last_checked_at=1_700_000_000.0),
+      "openrouter": ProviderStatus(configured=True, status="ok", last_checked_at=1_700_000_001.0)}],
+    indirect=True,
+)
+def test_llm_status_distinguishes_a_down_openai_from_an_ok_openrouter(llm_status_client):
+    """The dashboard's whole point: an admin sees GPT-4o needs attention
+    while the free failsafe is covering it in the meantime."""
+    response = llm_status_client.get("/api/admin/llm/status", headers=admin_headers())
+
+    body = response.json()
+    assert body["openai"]["status"] == "down"
+    assert body["openai"]["last_error"] == "rate limited"
+    assert body["openrouter"]["status"] == "ok"

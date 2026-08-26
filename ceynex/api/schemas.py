@@ -174,3 +174,15 @@ class DQFlagsResponse(BaseModel):
 class ResolveDQFlagResponse(BaseModel):
     flag_id: int
     resolved: bool
+
+
+class ProviderStatusItem(BaseModel):
+    configured: bool
+    status: str  # "not_configured" | "cap_reached" | "unknown" | "ok" | "down"
+    last_error: str | None
+    last_checked_at: str | None  # ISO 8601, converted from the client's epoch seconds
+
+
+class LLMStatusResponse(BaseModel):
+    openai: ProviderStatusItem
+    openrouter: ProviderStatusItem
