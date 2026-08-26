@@ -2,13 +2,12 @@
 
 This is the one place that knows which EDB/JAAF files exist and how each is
 configured (path, edition/layout, latest year). `ceynex/data/pipeline.py`
-imports `APPAREL_SOURCES` rather than knowing about individual connectors —
-when a member other than M3 builds the real multi-sector pipeline harness,
-this module is what plugs into it; nothing else here should need to change.
+imports `EDB_SOURCE`/`JAAF_SOURCE` and registers them by source id alongside
+every other member's connectors — this module owns their configuration so
+that registration never needs to know their internals.
 
-Paths are relative to the repo root (matching `ceynex/data/pipeline.py`'s
-`STAGING_DIR` convention) and point under `data/raw/<source>/manual/` — a
-directory that exists but is gitignored (`data/raw/*/*` in `.gitignore`), so
+Paths are relative to the repo root and point under `data/raw/<source>/manual/`
+— a directory that exists but is gitignored (`data/raw/*/*` in `.gitignore`), so
 the *paths* are portable and committed, but the files themselves are not.
 Each teammate drops their own copy in place before running the pipeline:
 
