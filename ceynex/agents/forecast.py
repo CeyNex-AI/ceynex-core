@@ -19,6 +19,7 @@ to compare to, so "did it beat drift" is the comparison that remains.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from typing import Any
@@ -79,7 +80,15 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     # cinnamon export-value model have the same item but answer different
     # questions in incompatible units.
     target = intent.forecast_target or EXPORT_VALUE_TARGET
-    registered = _load_registered_model(item, target) if intent.partner is None else None
+    # _load_registered_model does a synchronous disk read + unpickle. Off the
+    # event loop via asyncio.to_thread for consistency with the same pattern
+    # elsewhere (api/routes/admin.py's list_models) -- lower risk than the
+    # blocking-psycopg bug fixed in agriculture_commodity.py (local disk fails
+    # fast rather than hanging), but no reason for this to be the one place
+    # that doesn't follow the convention either.
+    registered = (
+        await asyncio.to_thread(_load_registered_model, item, target) if intent.partner is None else None
+    )
     if registered is not None:
         return await _registered_forecast(state, deps, registered, horizon)
 
