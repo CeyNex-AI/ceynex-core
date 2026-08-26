@@ -102,6 +102,22 @@ def _hs_codes() -> dict[str, tuple[str, str]]:
         return {row["hs_code"]: (row["description"], row["sector"]) for row in csv.DictReader(fh)}
 
 
+@functools.lru_cache(maxsize=1)
+def _regions() -> dict[str, str]:
+    """iso3 -> continent (ISO 3166-1's UN-geoscheme grouping: Africa, Americas,
+    Asia, Europe, Oceania). Sourced from a public ISO-3166-with-regions
+    reference table, not hand-typed — a wrong claim here about which
+    continent a country is in is the same class of error as a wrong export
+    figure. Deliberately not exhaustive: the handful of defunct/uninhabited
+    entries in countries.csv (USSR, Czechoslovakia, Antarctica, ...) have no
+    row here, since they will never be a real trade partner and a country
+    absent from this table just means "does not match a region filter" —
+    see `region_of()` — never a raised error.
+    """
+    with (REFERENCE_DIR / "regions.csv").open(encoding="utf-8") as fh:
+        return {row["iso3"]: row["region"] for row in csv.DictReader(fh)}
+
+
 # --- countries -----------------------------------------------------------
 
 
@@ -159,6 +175,22 @@ def is_known_country(value: str | int) -> bool:
     except (CrosswalkError, KeyError):
         return False
     return True
+
+
+def region_of(iso3: str) -> str | None:
+    """This country's continent (Africa/Americas/Asia/Europe/Oceania), or None.
+
+    None, not `CrosswalkError`, for an iso3 with no region row — unlike
+    `to_iso3()`, a caller filtering by region treats "don't know" as "doesn't
+    match", not as a data-integrity problem worth raising over.
+    """
+    return _regions().get(iso3)
+
+
+def region_names() -> tuple[str, ...]:
+    """The five continent labels `region_of()` can return, for a caller that
+    needs to recognise one named in a query (e.g. "top markets in Asia")."""
+    return ("Africa", "Americas", "Asia", "Europe", "Oceania")
 
 
 # --- Comtrade partner aggregates -----------------------------------------
