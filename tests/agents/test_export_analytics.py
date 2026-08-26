@@ -167,3 +167,43 @@ def test_the_agent_degrades_without_prose_when_the_llm_is_down():
     assert out["degraded"] is True
     assert out["figures"]
     assert out["evidence"]
+
+
+# --- listing every partner by name ----------------------------------------
+
+
+def test_a_which_countries_question_names_every_partner():
+    """Regression, found live 2026-08-27: "what are the 126 apparel data
+    countries" got the usual leader/concentration report plus an honest
+    -sounding but wrong "the data does not specify the names" line, even
+    though `market_share`'s own query already returns every partner's name
+    -- the agent just never read past rows[0].
+    """
+    out, _ = run(query="what are the tea export countries?")
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    for partner in ("United States", "United Kingdom", "Germany"):
+        assert partner in claims
+    assert "3 destination countries" in out["summary"]
+
+
+def test_a_market_share_question_does_not_carry_the_full_list():
+    """126 names is not something every market-share question should carry --
+    only when actually asked for."""
+    out, _ = run()  # default query: "which market takes the largest share..."
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "United Kingdom" not in claims, "the full partner list must not be attached unasked"
+
+
+def test_a_which_country_singular_question_is_unaffected():
+    """"which country" (ranking -- fastest-growing, largest market) must keep
+    working exactly as before; only the plural "countries" asks for a list.
+    Germany legitimately appears as the fixture's fastest-grower regardless --
+    United Kingdom (neither the leader nor the fastest-grower here) only ever
+    shows up via the full-list claim, so its absence is the real signal.
+    """
+    out, _ = run(query="which country is the fastest-growing market for tea?")
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "United Kingdom" not in claims

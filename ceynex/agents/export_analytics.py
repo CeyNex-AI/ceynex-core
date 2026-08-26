@@ -61,10 +61,12 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     item = intent.item or "tea"
     year = intent.year or await _latest_year(deps, item)
+    wants_list = _wants_partner_list(state["query"])
 
     figures: dict[str, float] = {}
     evidence: list[Evidence] = []
     assumptions: list[str] = []
+    partner_names: list[str] = []
 
     # --- market share and the leading destination ---
     rows, cypher = await deps.kg.run(*q.market_share(item, year))
@@ -103,6 +105,27 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                 period=str(year),
             )
         )
+
+        # `rows` already carries every partner's name (`market_share`'s own
+        # Cypher, ORDER BY share DESC) -- the two claims above only ever read
+        # rows[0]. Found live 2026-08-27: "what are the 126 apparel data
+        # countries" got the usual leader/concentration report and an honest
+        # -sounding but wrong "the data does not specify the names" line, even
+        # though every one of the 126 names was sitting in `rows` unread. Only
+        # attached when actually asked for -- 126 names is not something every
+        # market-share question should carry.
+        if wants_list:
+            partner_names = [str(row["partner"]) for row in rows]
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"All {len(partner_names)} destination countries for {item.replace('_', ' ')} "
+                        f"in {year}, ranked by export value: {', '.join(partner_names)}."
+                    ),
+                    cypher=cypher,
+                    period=str(year),
+                )
+            )
     else:
         assumptions.append(f"No {item} export records for {year} in the knowledge graph.")
 
@@ -170,7 +193,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence.append(figures_evidence(f"No knowledge-graph records matched {item} for {year}."))
         assumptions.append("Answer is limited by missing data, not by the question.")
 
-    summary = _summarize(item, year, figures, bool(district_rows))
+    summary = _summarize(item, year, figures, bool(district_rows), partner_names)
     return await finish(
         agent=AGENT,
         state=state,
@@ -253,7 +276,21 @@ def _herfindahl(rows: list[dict[str, Any]]) -> float:
     return round(sum(float(row["share"]) ** 2 for row in rows), 4)
 
 
-def _summarize(item: str, year: int, figures: dict[str, float], has_districts: bool) -> str:
+def _wants_partner_list(query: str) -> bool:
+    """"Which countries"/"what countries" wants every name; "which country" (no
+    "s") is the existing singular ranking phrasing ("which country is
+    fastest-growing") and must keep working exactly as before -- this only
+    fires on the plural.
+    """
+    lowered = query.lower()
+    return "countries" in lowered and any(
+        marker in lowered for marker in ("list", "which", "what", "name")
+    )
+
+
+def _summarize(
+    item: str, year: int, figures: dict[str, float], has_districts: bool, partner_names: list[str]
+) -> str:
     label = item.replace("_", " ")
     if not figures:
         return f"The knowledge graph holds no export records for {label} in {year}."
@@ -283,6 +320,11 @@ def _summarize(item: str, year: int, figures: dict[str, float], has_districts: b
         parts.append(
             f"Production is concentrated in one district at "
             f"{figures['top_district_share'] * 100:.1f}% of output."
+        )
+    if partner_names:
+        parts.append(
+            f"All {len(partner_names)} destination countries, ranked by export value, are "
+            "listed in the evidence below."
         )
     return " ".join(parts)
 
