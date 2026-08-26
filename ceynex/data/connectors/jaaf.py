@@ -132,6 +132,20 @@ def _annual_tables_to_records(tables: list[dict]) -> list[dict]:
                 value = _num(row[idx])
                 if value is None:
                     continue
+                if value == 0:
+                    # The live page pre-renders the current year's remaining
+                    # months as a literal "0" placeholder before they're
+                    # reported, not a real observation -- confirmed live
+                    # 2026-08-26: a saved page's June-December cells for the
+                    # in-progress year were all exactly 0, while every real
+                    # month (this connector's monthly totals run in the
+                    # hundreds of millions of USD) is never actually zero.
+                    # Left unfiltered, these got ingested as real rows and
+                    # pushed this item's latest observed year into the
+                    # future, which corrupted every cross-item "latest year"
+                    # query (export_analytics, trade_economics) that assumed
+                    # the graph's global max year was real data.
+                    continue
                 records.append(
                     {
                         "market": table["market"],
