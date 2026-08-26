@@ -14,11 +14,29 @@ from ceynex.llm import FakeLLMClient, LLMReasoningClient, PromptCache
 CONFIG = {
     "provider": "openai",
     "models": {
-        "router": {"model": "gpt-4o-mini", "temperature": 0.0, "max_tokens": 300},
-        "merge": {"model": "gpt-4o", "temperature": 0.2, "max_tokens": 1200},
-        "explanation": {"model": "gpt-4o-mini", "temperature": 0.2, "max_tokens": 600},
+        "router": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.0,
+            "max_tokens": 300,
+            "cost_per_1k_input_tokens": 0.00015,
+            "cost_per_1k_output_tokens": 0.0006,
+        },
+        "merge": {
+            "model": "gpt-4o",
+            "temperature": 0.2,
+            "max_tokens": 1200,
+            "cost_per_1k_input_tokens": 0.0025,
+            "cost_per_1k_output_tokens": 0.01,
+        },
+        "explanation": {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+            "max_tokens": 600,
+            "cost_per_1k_input_tokens": 0.00015,
+            "cost_per_1k_output_tokens": 0.0006,
+        },
     },
-    "limits": {"request_timeout_s": 8.0, "max_retries": 1},
+    "limits": {"request_timeout_s": 8.0, "max_retries": 1, "daily_spend_cap_usd": 5.0},
     "cache": {"enabled": False, "path": ".cache/llm-test", "ttl_hours": 1},
 }
 
@@ -85,6 +103,83 @@ async def test_it_retries_once_then_stops(tmp_path, monkeypatch):
     assert len(attempts) == 2, "max_retries: 1 means two attempts total"
 
 
+# --- cost and the daily spend cap (R5) ------------------------------------
+
+
+class _Usage:
+    def __init__(self, prompt_tokens, completion_tokens):
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+
+
+def test_cost_is_computed_from_configured_rates_and_token_counts():
+    model_cfg = CONFIG["models"]["merge"]
+    cost = LLMReasoningClient._cost(model_cfg, _Usage(prompt_tokens=1000, completion_tokens=1000))
+    assert cost == pytest.approx(0.0025 + 0.01)
+
+
+def test_cost_is_zero_when_the_provider_gives_no_usage():
+    assert LLMReasoningClient._cost(CONFIG["models"]["merge"], None) == 0.0
+
+
+async def test_a_successful_call_accumulates_cost_onto_usage(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+
+    async def costed(*args, **kwargs):
+        return "prose", 1.23
+
+    monkeypatch.setattr(llm, "_call", costed)
+    await llm.generate("explanation", "sys", "user")
+    assert llm.usage.cost_usd == pytest.approx(1.23)
+
+
+async def test_the_spend_cap_degrades_further_calls_without_invoking_the_provider(tmp_path, monkeypatch):
+    """R5: once the configured daily_spend_cap_usd is spent, generate() must
+    degrade (SRS 3.4.3) rather than place another paid call.
+    """
+    llm = client(tmp_path, api_key="sk-test")
+    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd in CONFIG
+
+    calls = []
+
+    async def spy(*args, **kwargs):
+        calls.append(1)
+        return "prose", 0.01
+
+    monkeypatch.setattr(llm, "_call", spy)
+    result = await llm.generate("explanation", "sys", "user")
+
+    assert result is None
+    assert calls == [], "cap must be checked before the provider is ever called"
+    assert llm.usage.failures == 1
+
+
+async def test_a_cache_hit_is_served_even_over_the_spend_cap(tmp_path, monkeypatch):
+    """Cache hits cost nothing, so the cap must not block them."""
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+
+    async def once(*args, **kwargs):
+        return "the explanation", 0.0
+
+    monkeypatch.setattr(llm, "_call", once)
+    assert await llm.generate("explanation", "sys", "user") == "the explanation"
+
+    llm.usage.cost_usd = 5.0
+    assert await llm.generate("explanation", "sys", "user") == "the explanation"
+
+
+async def test_a_zero_or_missing_cap_never_degrades(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+    llm.config["limits"] = {"request_timeout_s": 8.0, "max_retries": 1}  # no daily_spend_cap_usd
+    llm.usage.cost_usd = 999.0
+
+    async def costed(*args, **kwargs):
+        return "prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", costed)
+    assert await llm.generate("explanation", "sys", "user") == "prose"
+
+
 # --- cache ---------------------------------------------------------------
 
 
@@ -104,7 +199,7 @@ async def test_a_cache_hit_costs_no_call(tmp_path, monkeypatch):
 
     async def once(*args, **kwargs):
         calls.append(1)
-        return "the explanation"
+        return "the explanation", 0.0
 
     monkeypatch.setattr(llm, "_call", once)
 
@@ -119,7 +214,7 @@ async def test_the_cache_answers_even_with_no_api_key(tmp_path, monkeypatch):
     warm = client(tmp_path, api_key="sk-test", cache=True)
 
     async def canned(*args, **kwargs):
-        return "cached prose"
+        return "cached prose", 0.0
 
     monkeypatch.setattr(warm, "_call", canned)
     await warm.generate("explanation", "sys", "user")
