@@ -46,12 +46,14 @@ class LLMUsage:
     cache_hits: int = 0
     failures: int = 0
     elapsed_s: float = 0.0
+    cost_usd: float = 0.0
 
     def merge(self, other: LLMUsage) -> None:
         self.calls += other.calls
         self.cache_hits += other.cache_hits
         self.failures += other.failures
         self.elapsed_s += other.elapsed_s
+        self.cost_usd += other.cost_usd
 
 
 class PromptCache:
@@ -175,12 +177,21 @@ class LLMReasoningClient:
         limits = self._limits()
         timeout_s = float(limits.get("request_timeout_s", 8.0))
         attempts = int(limits.get("max_retries", 1)) + 1
+        cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
+        if cap and self.usage.cost_usd >= cap:
+            log.warning(
+                "daily spend cap ($%.2f, spent $%.2f) reached — degrading (SRS 3.4.3, R5)",
+                cap,
+                self.usage.cost_usd,
+            )
+            self.usage.failures += 1
+            return None
 
         started = time.perf_counter()
         for attempt in range(1, attempts + 1):
             try:
-                text = await asyncio.wait_for(
-                    self._call(model, system, user, temperature, max_tokens, json_mode),
+                text, cost = await asyncio.wait_for(
+                    self._call(model, system, user, temperature, max_tokens, json_mode, model_cfg),
                     timeout=timeout_s,
                 )
             except TimeoutError:
@@ -190,6 +201,7 @@ class LLMReasoningClient:
             else:
                 self.usage.calls += 1
                 self.usage.elapsed_s += time.perf_counter() - started
+                self.usage.cost_usd += cost
                 if text:
                     self._cache.put(cache_key, text)
                 return text
@@ -207,8 +219,13 @@ class LLMReasoningClient:
         temperature: float,
         max_tokens: int,
         json_mode: bool,
-    ) -> str | None:
-        """The provider-specific part. Swapping vendors means changing this method."""
+        model_cfg: dict[str, Any],
+    ) -> tuple[str | None, float]:
+        """The provider-specific part. Swapping vendors means changing this method.
+
+        Returns the text and what it cost, so `generate()` can charge it against
+        `daily_spend_cap_usd` (R5) without knowing anything provider-specific.
+        """
         if self._client is None:
             from openai import AsyncOpenAI
 
@@ -227,7 +244,25 @@ class LLMReasoningClient:
             kwargs["response_format"] = {"type": "json_object"}
 
         response = await self._client.chat.completions.create(**kwargs)
-        return response.choices[0].message.content
+        text = response.choices[0].message.content
+        cost = self._cost(model_cfg, response.usage)
+        return text, cost
+
+    @staticmethod
+    def _cost(model_cfg: dict[str, Any], usage: Any) -> float:
+        """Dollar cost of one call, from config rates and the provider's token count.
+
+        `usage` can be None (some providers omit it, or a mock in tests) — a call
+        we can't cost is treated as free rather than raising, same "degrade, don't
+        break" posture as the rest of this client.
+        """
+        if usage is None:
+            return 0.0
+        input_rate = float(model_cfg.get("cost_per_1k_input_tokens", 0.0))
+        output_rate = float(model_cfg.get("cost_per_1k_output_tokens", 0.0))
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        return (prompt_tokens / 1000) * input_rate + (completion_tokens / 1000) * output_rate
 
     # --- protocol surface ------------------------------------------------
 

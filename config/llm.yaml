@@ -10,10 +10,16 @@ provider: openai
 models:
   # Routing is a short classification with a fixed output schema. It runs on
   # every single query, so it takes the cheapest model that can hold the schema.
+  #
+  # cost_per_1k_*_tokens feed the daily_spend_cap_usd check below. Verify
+  # them against the provider's current price list before the demo, same as
+  # the model ids.
   router:
     model: gpt-4o-mini
     temperature: 0.0
     max_tokens: 300
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
 
   # Merging several agents' findings into one coherent answer is the hardest
   # generation in the system (SRS 3.1.2 forbids concatenation), so it gets the
@@ -22,16 +28,24 @@ models:
     model: gpt-4o
     temperature: 0.2
     max_tokens: 1200
+    cost_per_1k_input_tokens: 0.0025
+    cost_per_1k_output_tokens: 0.01
 
   # Per-agent explanation of its own figures.
   explanation:
     model: gpt-4o-mini
     temperature: 0.2
     max_tokens: 600
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
 
 limits:
   request_timeout_s: 8.0     # below the 10s single-sector budget in SRS 3.4.1
   max_retries: 1             # one retry, then degrade — retries eat the budget
+  # R5 (LLM quota/cost exhaustion): once LLMReasoningClient.usage.cost_usd
+  # crosses this for the process's lifetime, every further generate() call
+  # degrades (SRS 3.4.3) instead of spending more. Resets on process restart,
+  # same as the rest of `usage` — see LLMReasoningClient docstring.
   daily_spend_cap_usd: 5.0
 
 cache:
