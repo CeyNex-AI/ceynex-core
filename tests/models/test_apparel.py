@@ -96,6 +96,39 @@ def test_backtest_on_single_observation_is_not_evaluable():
     assert math.isnan(metrics["coverage"])
 
 
+def _ind_df():
+    """Real EDB Apparel sub-category exports to India, 2020-2024 -- three of the
+    four year-on-year residuals are positive, which is what pushes the h=2
+    bootstrap sum's 10th percentile above the (flat, undrifted) point estimate.
+    Live production produced exactly this: h=1's lower (62.04M) stayed below
+    the 67.94M point, but h=2's lower came out at 72.37M -- above it.
+    """
+    return pd.DataFrame(
+        {
+            "period": [2020, 2021, 2022, 2023, 2024],
+            "value": [
+                36_460_000.0,
+                46_790_000.0,
+                60_580_000.0,
+                54_680_000.0,
+                67_940_000.0,
+            ],
+        }
+    )
+
+
+def test_a_one_directional_residual_sample_cannot_push_the_interval_past_the_point():
+    """Regression: a trending residual sample must not produce lower > point at
+    a longer horizon just because the bootstrap sum's percentile drifts past
+    the flat point estimate -- the point deliberately carries no trend, so
+    nothing derived from it may imply one either."""
+    model = NaiveApparelForecastModel("IND").fit(_ind_df())
+    points = model.predict(2)
+
+    for p in points:
+        assert p["lower"] <= p["point"] <= p["upper"]
+
+
 def test_wide_fallback_interval_when_fewer_than_two_residuals():
     # A single one-step residual (2 points): not enough to bootstrap from, so
     # predict() must still return a valid, required interval (contracts/
