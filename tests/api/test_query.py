@@ -142,10 +142,19 @@ PARTIAL = {
 
 @pytest.mark.parametrize("client", [PARTIAL], indirect=True)
 def test_a_failed_agent_is_reported_not_hidden(client):
-    """SAD §4.1 — the user is told which part could not be answered."""
+    """SAD §4.1 — the user is told which part could not be answered.
+
+    `unanswered` is a human-readable reason, not the bare agent name (the
+    same list merger.unanswered_from_outputs computes internally for the
+    prose) -- the field is additive to §4.5, not frozen there, and no real
+    consumer (ceynex-web) parses its contents; only its presence as
+    list[str] matters for the wire contract.
+    """
     body = post(client).json()
     assert body["agents_used"] == ["export_analytics"]
-    assert body["unanswered"] == ["forecast"]
+    assert len(body["unanswered"]) == 1
+    assert "could not be covered" in body["unanswered"][0]
+    assert "no model" in body["unanswered"][0]
     assert body["degraded"] is True
     assert body["answer"], "a partial result is still an answer"
 

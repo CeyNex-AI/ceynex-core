@@ -25,6 +25,7 @@ from ceynex.api.routes.auth import TokenPayload, get_optional_user
 from ceynex.api.schemas import QueryRequest, QueryResponse
 from ceynex.contracts import new_state
 from ceynex.orchestrator.confidence import confidence_band
+from ceynex.orchestrator.merger import unanswered_from_outputs
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +56,6 @@ async def submit_query(
 
     outputs = final.get("agent_outputs", {})
     succeeded = sorted(name for name, out in outputs.items() if not out.get("error"))
-    failed = sorted(name for name, out in outputs.items() if out.get("error"))
     confidence = float(final.get("final_confidence", 0.0))
 
     response = QueryResponse(
@@ -69,7 +69,12 @@ async def submit_query(
         elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         route=list(final.get("route", [])),
         sectors=list(final.get("sectors", [])),
-        unanswered=failed,
+        # Same "could not be answered" list merge() itself uses -- hard
+        # failures, honest low-confidence declines, and out-of-scope gaps.
+        # Previously just hard failures (`out.get("error")`), which silently
+        # dropped declines and out-of-scope notes from the public response
+        # even though the prose answer already mentioned them correctly.
+        unanswered=unanswered_from_outputs(final),
     )
 
     if user is not None:
