@@ -254,3 +254,37 @@ def test_knowledge_graph_failure_returns_a_contract_conformant_error():
 
     assert out["error"]
     assert out["degraded"] is True
+
+
+def test_annual_series_and_dq_flags_run_off_the_event_loop_thread(monkeypatch):
+    """Regression: annual_series/relevant_dq_flags are synchronous psycopg calls
+    (ceynex/data/reader.py). Calling them inline from this async node blocks the
+    whole event loop -- not just this request -- for as long as Postgres takes
+    to answer, and (found live 2026-08-26 via a stack-dump timer) an unreachable
+    Postgres hangs well past graph.py's NODE_TIMEOUT_S with nothing able to
+    cancel it, since a blocking call has no await point to receive the
+    cancellation. Both call sites must go through asyncio.to_thread.
+    """
+    import threading
+
+    main_thread = threading.current_thread()
+    seen_threads: list[threading.Thread] = []
+
+    def recording_series(*_args, **_kwargs):
+        seen_threads.append(threading.current_thread())
+        return _series(*_args, target="price")
+
+    def recording_dq_flags(*_args, **_kwargs):
+        seen_threads.append(threading.current_thread())
+        return []
+
+    monkeypatch.setattr(agriculture, "annual_series", recording_series)
+    monkeypatch.setattr(agriculture, "relevant_dq_flags", recording_dq_flags)
+
+    run("What is the current price trend for cinnamon?")
+
+    assert seen_threads, "annual_series/relevant_dq_flags were never called"
+    assert all(t is not main_thread for t in seen_threads), (
+        "a mocked reader call ran on the event loop thread -- the real "
+        "psycopg call would have blocked it"
+    )
