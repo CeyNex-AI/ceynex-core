@@ -17,9 +17,14 @@ class FakeKGClient:
     async def run(self, cypher, params=None):
         if self.raise_exc:
             raise self.raise_exc
-        if "date.truncate" in cypher:
+        params = params or {}
+        # Routed on params, not Cypher text, so this fixture doesn't have to
+        # track the query strings verbatim -- apparel_manufacturing.py always
+        # passes {"item": _JAAF_ITEM} for the JAAF query, and omits "iso3"
+        # only for the no-partner-named overview query.
+        if params.get("item") == "apparel_textiles":
             return self.jaaf_rows, cypher
-        if "latest_period" in cypher:
+        if "iso3" not in params:
             return self.overview_rows, cypher
         return self.edb_rows, cypher
 
@@ -29,22 +34,22 @@ def _deps(kg=None, llm=None):
 
 
 _EDB_ROWS = [
-    {"period": "2023-01-01", "value": 1782720000.0, "product_name": "APPREL"},
-    {"period": "2022-01-01", "value": 2300240000.0, "product_name": "APPREL"},
+    {"year": 2023, "value": 1782720000.0},
+    {"year": 2022, "value": 2300240000.0},
 ]
 # Real EDB Apparel sub-category exports to the USA -- enough years (>=
 # MIN_OBSERVATIONS_FOR_FORECAST) to exercise the naive forecast path.
 _EDB_ROWS_FORECASTABLE = [
-    {"period": "2024-01-01", "value": 1875850000.0, "product_name": "APPREL"},
-    {"period": "2023-01-01", "value": 1782720000.0, "product_name": "APPREL"},
-    {"period": "2022-01-01", "value": 2300240000.0, "product_name": "APPREL"},
-    {"period": "2021-01-01", "value": 2082600000.0, "product_name": "APPREL"},
-    {"period": "2020-01-01", "value": 1649270000.0, "product_name": "APPREL"},
+    {"year": 2024, "value": 1875850000.0},
+    {"year": 2023, "value": 1782720000.0},
+    {"year": 2022, "value": 2300240000.0},
+    {"year": 2021, "value": 2082600000.0},
+    {"year": 2020, "value": 1649270000.0},
 ]
-_JAAF_ROWS = [{"year": "2025-01-01", "total": 1947370000.0, "latest_month": "2025-05-01"}]
+_JAAF_ROWS = [{"year": 2025, "total": 1947370000.0}]
 _OVERVIEW_ROWS = [
-    {"partner": "USA", "value": 1782720000.0, "period": "2023-01-01"},
-    {"partner": "GBR", "value": 614620000.0, "period": "2023-01-01"},
+    {"partner": "USA", "value": 1782720000.0, "year": 2023},
+    {"partner": "GBR", "value": 614620000.0, "year": 2023},
 ]
 
 
@@ -145,33 +150,18 @@ async def test_no_data_found_is_a_failed_output_not_a_crash():
 
 
 @pytest.mark.integration
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known gap, PR #1 comment "
-        "(github.com/CeyNex-AI/ceynex-core/pull/1#issuecomment-5345438470): "
-        "there is no ceynex/kg/loaders/apparel.py yet, so nothing populates the "
-        "frozen (:Commodity|:ApparelCategory)-[:EXPORTS_TO]->(:Country) shape "
-        "for EDB/JAAF. This node's own Cypher still targets the *retired* "
-        "(:Country)-[:REPORTED]->(:ExportRecord)-[:OF]->(:Product) shape, which "
-        "nothing in the current codebase writes either -- kg/schema.py and its "
-        "loader were deleted in the PR #1 merge-conflict resolution. Once the "
-        "apparel loader exists AND this node's queries are updated to match the "
-        "frozen schema, this test should start passing (and xfail(strict=True) "
-        "will fail the suite until the marker above is removed, so the fix "
-        "can't be missed)."
-    ),
-)
-async def test_partner_query_against_the_real_merged_graph_finds_nothing_yet():
-    """Turns the gap flagged on PR #1 into something the suite tracks automatically.
+async def test_partner_query_against_the_real_merged_graph_finds_data():
+    """Closes the gap flagged on PR #1 (github.com/CeyNex-AI/ceynex-core/pull/1#issuecomment-5345438470).
 
-    Run against the actual local stack (`make up`, real EDB/JAAF data ingested,
-    `make kg-load` applied) rather than FakeKGClient, so this reflects what the
-    live deployed backend was independently observed doing on 2026-08-20: a real
-    "apparel exports to the United States" query, live-verified via curl against
-    http://35.200.228.142/api/query, came back with the apparel_manufacturing
-    agent listed under `"unanswered"` even though PR #1 (EDB/JAAF connectors +
-    this agent) was already merged to main.
+    `ceynex/kg/loaders/apparel.py` now populates the frozen
+    (:ApparelCategory)-[:EXPORTS_TO]->(:Country) shape for EDB/JAAF, and this
+    node's Cypher targets that shape instead of the retired
+    (:Country)-[:REPORTED]->(:ExportRecord)-[:OF]->(:Product) one. Run against
+    the actual local stack (`make up`, real EDB/JAAF data ingested via
+    `make ingest`, `python -m ceynex.kg.load --apparel` applied) rather than
+    FakeKGClient -- this used to come back with the apparel_manufacturing
+    agent listed under `"unanswered"` even after PR #1 merged, since nothing
+    wrote the new schema for EDB/JAAF; this test now asserts that is fixed.
     """
     async with KnowledgeGraphClient() as kg:
         deps = AgentDeps(kg=kg, llm=FakeLLMClient())
@@ -180,4 +170,4 @@ async def test_partner_query_against_the_real_merged_graph_finds_nothing_yet():
         output = result["agent_outputs"]["apparel_manufacturing"]
 
         assert "error" not in output
-        assert output["evidence"], "expected real EDB/JAAF evidence once kg/loaders/apparel.py exists"
+        assert output["evidence"], "expected real EDB/JAAF evidence from kg/loaders/apparel.py"
