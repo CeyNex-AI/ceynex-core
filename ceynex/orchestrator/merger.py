@@ -38,6 +38,19 @@ log = logging.getLogger(__name__)
 # agreeing. Wider than measurement noise, narrower than a real disagreement.
 AGREEMENT_TOLERANCE = 0.10
 
+# An agent can "succeed" (no error key) while genuinely having nothing to
+# contribute -- an honest SAD Section 4.1 refusal (e.g.
+# agriculture_commodity._unsupported_target), not a competing finding.
+# Several agents' explicit refusal paths hardcode confidence=0.20; the
+# weakest genuinely-informative finding traced in this codebase
+# (agriculture_commodity._series_confidence under the maximum staleness
+# penalty) sits at roughly 0.32, and ceynex.agents.common._confidence's
+# generic empty-figures floor is 0.3. 0.25 sits cleanly between the two
+# without needing to inspect figures directly (empty figures alone is not
+# a safe signal -- plenty of genuine findings, especially in tests, never
+# populate a figures dict at all).
+DECLINE_CONFIDENCE_CEILING = 0.25
+
 # Figures whose *direction* is the claim. A sign disagreement on one of these is
 # a substantive conflict, not a rounding difference.
 DIRECTIONAL_SUFFIXES = ("_impact_pct", "_impact_usd", "cagr", "_change", "_growth")
@@ -112,8 +125,28 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     failed = {name: out for name, out in outputs.items() if out.get("error")}
     never_reported = [name for name in route if name not in outputs]
 
-    unanswered = _describe_gaps(failed, never_reported) + _out_of_scope_gaps(state)
-    conflicts = detect_conflicts(succeeded)
+    # Split out honest refusals (see DECLINE_CONFIDENCE_CEILING) so they read
+    # as a stated gap rather than a "finding" that appears to conflict with
+    # a genuinely successful agent. Found live 2026-08-26: a cinnamon
+    # forecast question was narrated as "uncertain due to conflicting
+    # findings" because agriculture_commodity's confidence=0.20 refusal
+    # ("no model target was requested") was presented as a peer FINDING
+    # alongside the forecast agent's real, correct answer -- even though
+    # detect_conflicts never found an actual numeric disagreement between
+    # them, since a refusal has no figures to disagree with in the first
+    # place. Evidence, agents_used and the forecast are still drawn from the
+    # full `succeeded` set below -- only the merge prose's FINDING list and
+    # conflict detection are narrowed.
+    contributing = {
+        name: out for name, out in succeeded.items()
+        if out.get("confidence", 0.0) >= DECLINE_CONFIDENCE_CEILING
+    }
+    declined = {name: out for name, out in succeeded.items() if name not in contributing}
+
+    unanswered = (
+        _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
+    )
+    conflicts = detect_conflicts(contributing)
     evidence = dedupe_evidence(succeeded)
     forecast = _first_forecast(succeeded)
 
@@ -138,12 +171,12 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
             unanswered=unanswered,
         )
 
-    deterministic = compose_deterministic(state["query"], succeeded, conflicts, unanswered)
+    deterministic = compose_deterministic(state["query"], contributing, conflicts, unanswered)
 
     prose = await llm.generate(
         "merge",
         MERGE_SYSTEM,
-        _merge_prompt(state["query"], succeeded, conflicts, unanswered),
+        _merge_prompt(state["query"], contributing, conflicts, unanswered),
     )
     degraded = not prose
 
@@ -243,6 +276,21 @@ def _describe_gaps(
         gaps.append(f"{_topic_of(agent)} could not be covered ({output.get('error', 'unknown error')})")
     for agent in sorted(never_reported):
         gaps.append(f"{_topic_of(agent)} did not return in time")
+    return gaps
+
+
+def _describe_declines(declined: dict[AgentName, AgentOutput]) -> list[str]:
+    """An honest SAD Section 4.1 refusal, phrased for a reader.
+
+    Reuses the agent's own summary (it already states the specific reason,
+    e.g. "No registered national tea export volume model is available")
+    rather than a generic topic label -- the same principle _describe_gaps
+    applies to a genuine failure's error text.
+    """
+    gaps: list[str] = []
+    for agent, output in sorted(declined.items()):
+        summary = (output.get("summary") or "").strip()
+        gaps.append(summary or f"{_topic_of(agent)} had nothing to add")
     return gaps
 
 
