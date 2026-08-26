@@ -47,7 +47,7 @@ from ceynex.contracts.evidence import Evidence
 from ceynex.contracts.forecast import ForecastPoint
 from ceynex.contracts.protocols import KnowledgeGraphClientProtocol
 from ceynex.contracts.state import AgentOutput, AgentState, failed_output
-from ceynex.data.crosswalk import known_aliases, market_to_iso3
+from ceynex.data.crosswalk import known_aliases, market_to_iso3, region_of
 from ceynex.models.apparel import MIN_OBSERVATIONS_FOR_FORECAST, NaiveApparelForecastModel
 from ceynex.orchestrator.confidence import clamp, staleness_penalty
 
@@ -73,8 +73,15 @@ MATCH (i2:ApparelCategory {name: $item})-[e2:EXPORTS_TO]->(c2:Country)
 WHERE e2.year = latest_year
 RETURN c2.iso3 AS partner, e2.value AS value, latest_year AS year
 ORDER BY value DESC
-LIMIT 5
 """
+# No LIMIT: a region-filtered question ("top markets in Asia") needs every
+# partner to filter from, not just whichever 5 happen to be global-largest --
+# found live 2026-08-27, "top apparel export markets in Asia" answered with
+# the global top 5 (USA, GBR, ITA, DEU, NLD, none of them Asian) and declared
+# the question unanswerable, even though real Asian buyers exist well outside
+# that unfiltered top 5. `_query_overview` slices to the top 5 in Python,
+# after any region filter, instead of Cypher slicing before one is possible.
+_OVERVIEW_TOP_N = 5
 
 _JAAF_ANNUAL_QUERY = """
 MATCH (i:ApparelCategory {name: $item})-[e:EXPORTS_TO]->(c:Country {iso3: $iso3})
@@ -100,6 +107,37 @@ def _detect_partner(query: str) -> tuple[str, int] | None:
             iso3, m49 = market_to_iso3(alias)
             if iso3:
                 return iso3, m49
+    return None
+
+
+# "American"/"americas" deliberately excluded: a query naming a country
+# (already handled by _detect_partner above) is far more likely to mean
+# "American" as in "the US market" than the whole Americas continent, and a
+# wrong region filter here is a wrong answer, not a missing one.
+_REGION_ALIASES: dict[str, str] = {
+    "asia": "Asia",
+    "asian": "Asia",
+    "europe": "Europe",
+    "european": "Europe",
+    "africa": "Africa",
+    "african": "Africa",
+    "oceania": "Oceania",
+}
+
+
+def _detect_region(query: str) -> str | None:
+    """Same word-boundary approach as `_detect_partner`, for a continent name
+    instead of a country one. Only checked when `_detect_partner` finds
+    nothing — a query naming both (e.g. "Japan's share of Asian imports") is
+    rare enough, and specific-country evidence more valuable, that
+    country wins outright rather than the two being combined.
+    """
+    import re
+
+    q = query.lower()
+    for alias, region in _REGION_ALIASES.items():
+        if re.search(rf"\b{alias}\b", q):
+            return region
     return None
 
 
@@ -245,21 +283,30 @@ async def _query_partner(kg: KnowledgeGraphClientProtocol, iso3: str, m49: int) 
     return output
 
 
-async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:
-    rows, cypher = await kg.run(_OVERVIEW_QUERY, {"item": _EDB_ITEM})
-    if not rows:
+async def _query_overview(kg: KnowledgeGraphClientProtocol, region: str | None = None) -> AgentOutput:
+    all_rows, cypher = await kg.run(_OVERVIEW_QUERY, {"item": _EDB_ITEM})
+    if not all_rows:
         return failed_output(
             "apparel_manufacturing", "No EDB Apparel sub-category data found in the graph."
         )
+
+    rows = all_rows
+    scope = "Apparel sub-category"
+    if region is not None:
+        rows = [row for row in all_rows if region_of(row["partner"]) == region]
+        scope = f"Apparel sub-category, {region} markets only"
+        if not rows:
+            return failed_output(
+                "apparel_manufacturing",
+                f"No {region} destination has recorded EDB Apparel sub-category exports.",
+            )
+    rows = rows[:_OVERVIEW_TOP_N]
 
     year = int(rows[0]["year"])
     evidence = [
         Evidence(
             source_id="EDB",
-            claim=(
-                f"Sri Lanka's top {len(rows)} apparel-export destination markets "
-                f"(Apparel sub-category), latest available year."
-            ),
+            claim=f"Sri Lanka's top {len(rows)} apparel-export destination markets ({scope}), latest available year.",
             detail=cypher,
             period=f"{year}-01-01",
         )
@@ -270,7 +317,7 @@ async def _query_overview(kg: KnowledgeGraphClientProtocol) -> AgentOutput:
     return AgentOutput(
         agent="apparel_manufacturing",
         summary=(
-            f"Sri Lanka's top apparel export markets ({year}): "
+            f"Sri Lanka's top apparel export markets{f' in {region}' if region else ''} ({year}): "
             + ", ".join(f"{row['partner']}" for row in rows)
             + "."
         ),
@@ -290,11 +337,10 @@ async def apparel_manufacturing_node(state: AgentState, deps: AgentDeps) -> dict
     """Answer an apparel-export question from the knowledge graph (SRS 3.1.6)."""
     try:
         partner = _detect_partner(state["query"])
-        output = (
-            await _query_partner(deps.kg, partner[0], partner[1])
-            if partner is not None
-            else await _query_overview(deps.kg)
-        )
+        if partner is not None:
+            output = await _query_partner(deps.kg, partner[0], partner[1])
+        else:
+            output = await _query_overview(deps.kg, region=_detect_region(state["query"]))
     except Exception as exc:  # noqa: BLE001 — contract requires never raising
         return {
             "agent_outputs": {
