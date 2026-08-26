@@ -207,6 +207,7 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
         # optional, so the deterministic sentence is appended if it did not.
         answer = _ensure_conflicts_stated(answer, conflicts)
         answer = _ensure_gaps_stated(answer, unanswered)
+        answer = _ensure_lists_referenced(answer, evidence)
 
     return MergeResult(
         answer=answer.strip(),
@@ -599,6 +600,39 @@ def _ensure_gaps_stated(answer: str, unanswered: list[str]) -> str:
     if not missing:
         return answer
     return answer.rstrip() + " Not covered: " + "; ".join(missing) + "."
+
+
+_LIST_SHAPED_MIN_ITEMS = 10
+
+
+def _is_list_shaped(claim: str) -> bool:
+    """A claim that itself enumerates many items (a full country list, say)
+    rather than stating one figure -- comma-separated segments with no
+    digits in them, so a claim dense with thousand-separated dollar figures
+    (also comma-heavy) doesn't false-positive: "USD 1,149,365,364" splits
+    into digit-only segments, a country list splits into name-only ones.
+    """
+    segments = [s.strip() for s in claim.split(",")]
+    name_like = sum(1 for s in segments if s and not any(ch.isdigit() for ch in s))
+    return name_like >= _LIST_SHAPED_MIN_ITEMS
+
+
+def _ensure_lists_referenced(answer: str, evidence: list[Evidence]) -> str:
+    """`_merge_prompt` never forwards evidence to the merge LLM, only each
+    finding's summary/figures/assumptions (kept lean and cheap) -- so when the
+    answer *is* a list (every partner's name, say), the merge LLM only ever
+    sees the count, not the names, and has no way to know the evidence panel
+    already carries them. Found live 2026-08-27: "give the names of all
+    countries..." answered "the specific names ... were not provided" --
+    false, they were sitting in the evidence panel the whole time, just
+    outside what this LLM call was ever shown.
+    """
+    if not any(_is_list_shaped(e["claim"]) for e in evidence):
+        return answer
+    lowered = answer.lower()
+    if "evidence" in lowered:
+        return answer
+    return answer.rstrip() + " The full list is in the evidence panel below."
 
 
 def _mentions(answer: str, figure: str) -> bool:

@@ -24,10 +24,12 @@ from ceynex.agents.common import (
     AgentDeps,
     evidence_from_query,
     figures_evidence,
+    find_region,
     finish,
     parse_intent,
 )
 from ceynex.contracts import AgentState, Evidence, failed_output
+from ceynex.data.crosswalk import region_of
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
 
@@ -62,6 +64,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     item = intent.item or "tea"
     year = intent.year or await _latest_year(deps, item)
     wants_list = _wants_partner_list(state["query"])
+    region = find_region(state["query"])
 
     figures: dict[str, float] = {}
     evidence: list[Evidence] = []
@@ -70,6 +73,30 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
 
     # --- market share and the leading destination ---
     rows, cypher = await deps.kg.run(*q.market_share(item, year))
+    # `market_share`'s own share/total are relative to the *global* total --
+    # found live 2026-08-27: "top apparel export markets in Asia" ran both
+    # this agent and apparel_manufacturing (region-aware since #43); this one
+    # still reported the global leader (USA) regardless of "in Asia", and the
+    # merge LLM correctly flagged the two as disagreeing, which they only did
+    # because this half ignored the region the question actually asked about.
+    # Recomputed relative to the region's own total, not the global one --
+    # "took 38% of Asian imports" would be wrong if it meant 38% of global.
+    if region:
+        rows = [row for row in rows if region_of(row["partner_iso3"]) == region]
+        region_total = sum(float(row["export_value_usd"]) for row in rows)
+        rows = sorted(
+            (
+                {
+                    **row,
+                    "total_export_value_usd": region_total,
+                    "share": (float(row["export_value_usd"]) / region_total) if region_total else 0.0,
+                }
+                for row in rows
+            ),
+            key=lambda r: r["share"],
+            reverse=True,
+        )
+    scope = f" among {region} markets" if region else ""
     if rows:
         leader = rows[0]
         figures["top_partner_share"] = round(float(leader["share"]), 4)
@@ -86,7 +113,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             evidence_from_query(
                 claim=(
                     f"{leader['partner']} took {leader['share'] * 100:.1f}% of Sri Lanka's "
-                    f"{item.replace('_', ' ')} export value in {year}, "
+                    f"{item.replace('_', ' ')} export value{scope} in {year}, "
                     f"USD {leader['export_value_usd']:,.0f} of USD "
                     f"{leader['total_export_value_usd']:,.0f}."
                 ),
@@ -97,8 +124,8 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence.append(
             evidence_from_query(
                 claim=(
-                    f"{item.replace('_', ' ').title()} reached {len(rows)} destination markets in "
-                    f"{year}, with a Herfindahl concentration index of {figures['hhi']:.2f} "
+                    f"{item.replace('_', ' ').title()} reached {len(rows)} destination markets"
+                    f"{scope} in {year}, with a Herfindahl concentration index of {figures['hhi']:.2f} "
                     f"({_concentration_word(figures['hhi'])})."
                 ),
                 cypher=cypher,
@@ -119,13 +146,15 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             evidence.append(
                 evidence_from_query(
                     claim=(
-                        f"All {len(partner_names)} destination countries for {item.replace('_', ' ')} "
-                        f"in {year}, ranked by export value: {', '.join(partner_names)}."
+                        f"All {len(partner_names)} destination countries for {item.replace('_', ' ')}"
+                        f"{scope} in {year}, ranked by export value: {', '.join(partner_names)}."
                     ),
                     cypher=cypher,
                     period=str(year),
                 )
             )
+    elif region:
+        assumptions.append(f"No {region} destination has recorded {item} exports for {year}.")
     else:
         assumptions.append(f"No {item} export records for {year} in the knowledge graph.")
 
@@ -193,7 +222,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence.append(figures_evidence(f"No knowledge-graph records matched {item} for {year}."))
         assumptions.append("Answer is limited by missing data, not by the question.")
 
-    summary = _summarize(item, year, figures, bool(district_rows), partner_names)
+    summary = _summarize(item, year, figures, bool(district_rows), partner_names, region)
     return await finish(
         agent=AGENT,
         state=state,
@@ -289,16 +318,23 @@ def _wants_partner_list(query: str) -> bool:
 
 
 def _summarize(
-    item: str, year: int, figures: dict[str, float], has_districts: bool, partner_names: list[str]
+    item: str,
+    year: int,
+    figures: dict[str, float],
+    has_districts: bool,
+    partner_names: list[str],
+    region: str | None = None,
 ) -> str:
     label = item.replace("_", " ")
     if not figures:
-        return f"The knowledge graph holds no export records for {label} in {year}."
+        no_records = f"The knowledge graph holds no export records for {label} in {year}"
+        return f"{no_records} to {region} destinations." if region else f"{no_records}."
 
     parts: list[str] = []
     if "total_export_value_usd" in figures:
+        scope = f" to {region} destinations" if region else ""
         parts.append(
-            f"Sri Lanka exported USD {figures['total_export_value_usd']:,.0f} of {label} "
+            f"Sri Lanka exported USD {figures['total_export_value_usd']:,.0f} of {label}{scope} "
             f"in {year} across {int(figures.get('partner_count', 0))} destination markets."
         )
     if "top_partner_share" in figures:

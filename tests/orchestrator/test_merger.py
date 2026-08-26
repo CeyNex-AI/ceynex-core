@@ -261,6 +261,86 @@ async def test_a_gap_using_entirely_different_words_is_still_appended():
     assert "Not covered:" in result.answer
 
 
+# --- list-shaped evidence the merge LLM never saw --------------------------
+
+
+def test_is_list_shaped_recognizes_a_name_list_not_a_number_heavy_claim():
+    from ceynex.orchestrator.merger import _is_list_shaped
+
+    names = ", ".join(
+        ["United States", "United Kingdom", "Italy", "Germany", "Netherlands",
+         "Canada", "France", "Belgium", "Australia", "China", "India"]
+    )
+    assert _is_list_shaped(f"All 11 destination countries, ranked by export value: {names}.")
+
+    numeric = (
+        "United States took 38.5% of Sri Lanka's apparel export value in 2025, "
+        "USD 1,149,365,364 of USD 2,984,685,707."
+    )
+    assert not _is_list_shaped(numeric)
+
+
+async def test_a_list_shaped_evidence_claim_is_referenced_when_the_prose_omits_it():
+    """Regression, found live 2026-08-27 from "give the names of all
+    countries...": _merge_prompt never forwards evidence to the merge LLM,
+    only each finding's summary/figures/assumptions, so it correctly reported
+    "15 countries" as a count but had no way to know the names existed --
+    and said so falsely ("were not provided") even though the full list was
+    already sitting in the evidence panel the whole time.
+    """
+    names = ", ".join(
+        ["United States", "United Kingdom", "Italy", "Germany", "Netherlands", "Canada",
+         "France", "Belgium", "Australia", "China", "India", "Ireland", "Mexico", "Spain", "Japan"]
+    )
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Sri Lanka exports apparel to 15 countries.",
+            figures={"partner_count": 15.0},
+            evidence=[ev("KG", f"All 15 destination countries, ranked by export value: {names}.")],
+            confidence=0.8,
+        ),
+    }
+    llm = FakeLLMClient(
+        response="Sri Lanka exports apparel to 15 countries. The specific names were not provided."
+    )
+    result = await merge(state(outputs=outputs, route=["export_analytics"]), llm)
+
+    assert "evidence panel" in result.answer.lower()
+
+
+async def test_a_list_already_referenced_is_not_duplicated():
+    names = ", ".join(
+        ["United States", "United Kingdom", "Italy", "Germany", "Netherlands", "Canada",
+         "France", "Belgium", "Australia", "China", "India", "Ireland", "Mexico", "Spain", "Japan"]
+    )
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="x",
+            figures={},
+            evidence=[ev("KG", f"All 15 destination countries, ranked by export value: {names}.")],
+            confidence=0.8,
+        ),
+    }
+    llm = FakeLLMClient(response="See the evidence panel for the full list of 15 countries.")
+    result = await merge(state(outputs=outputs, route=["export_analytics"]), llm)
+
+    assert result.answer.lower().count("evidence panel") == 1
+
+
+async def test_a_short_claim_never_triggers_the_list_note():
+    outputs = {
+        "export_analytics": output(
+            "export_analytics", summary="Exports grew 4%.", figures={"cagr": 0.04}, confidence=0.8,
+        ),
+    }
+    llm = FakeLLMClient(response="Exports grew 4% last year.")
+    result = await merge(state(outputs=outputs, route=["export_analytics"]), llm)
+
+    assert "evidence panel" not in result.answer.lower()
+
+
 # --- fully out-of-topic questions -----------------------------------------
 
 
