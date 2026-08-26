@@ -196,6 +196,39 @@ def _find_partner(query: str) -> str | None:
     return None
 
 
+# "American"/"americas" deliberately excluded: a query naming a country
+# (already handled by `find_region`'s caller falling back to `_find_partner`)
+# is far more likely to mean "American" as in "the US market" than the whole
+# Americas continent, and a wrong region filter is a wrong answer, not a
+# missing one. `DISTRICT_WORDS` above already uses the bare word "region" for
+# a different meaning (sub-national districts) -- these are continent names,
+# never that word itself, so the two never collide.
+REGION_ALIASES: dict[str, str] = {
+    "asia": "Asia",
+    "asian": "Asia",
+    "europe": "Europe",
+    "european": "Europe",
+    "africa": "Africa",
+    "african": "Africa",
+    "oceania": "Oceania",
+}
+
+
+def find_region(query: str) -> str | None:
+    """Resolve a continent named in the query (`crosswalk.region_names()`'s
+    five values), the same word-boundary approach `_find_partner` uses for a
+    country name. Shared by every agent that filters a market-share ranking
+    by geography, so "top markets in Asia" means the same thing everywhere
+    it's asked -- found live 2026-08-27 duplicated (and answered
+    inconsistently) across two agents before this was centralised here.
+    """
+    lowered = query.lower()
+    for alias, region in REGION_ALIASES.items():
+        if re.search(rf"\b{alias}\b", lowered):
+            return region
+    return None
+
+
 # --- building evidence ---------------------------------------------------
 
 
@@ -333,6 +366,7 @@ __all__ = [
     "evidence_from_model",
     "evidence_from_query",
     "figures_evidence",
+    "find_region",
     "finish",
     "parse_intent",
 ]

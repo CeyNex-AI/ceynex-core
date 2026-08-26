@@ -20,6 +20,15 @@ MARKET_SHARE = [
     {"partner": "Germany", "partner_iso3": "DEU", "export_value_usd": 100.0, "total_export_value_usd": 1000.0, "share": 0.1},
 ]
 
+# Global leader (USA) is not Asian -- real-shaped for the region-filter tests,
+# same pattern as the live 2026-08-27 "top apparel export markets in Asia" report.
+MARKET_SHARE_WITH_ASIA = [
+    {"partner": "United States", "partner_iso3": "USA", "export_value_usd": 600.0, "total_export_value_usd": 1000.0, "share": 0.6},
+    {"partner": "United Kingdom", "partner_iso3": "GBR", "export_value_usd": 300.0, "total_export_value_usd": 1000.0, "share": 0.3},
+    {"partner": "Japan", "partner_iso3": "JPN", "export_value_usd": 70.0, "total_export_value_usd": 1000.0, "share": 0.07},
+    {"partner": "India", "partner_iso3": "IND", "export_value_usd": 30.0, "total_export_value_usd": 1000.0, "share": 0.03},
+]
+
 CAGR_ROWS = [
     {"year": 2020, "export_value_usd": 800.0, "export_volume": 80.0},
     {"year": 2024, "export_value_usd": 1000.0, "export_volume": 95.0},
@@ -207,3 +216,46 @@ def test_a_which_country_singular_question_is_unaffected():
 
     claims = " ".join(e["claim"] for e in out["evidence"])
     assert "United Kingdom" not in claims
+
+
+# --- region-filtered market share ------------------------------------------
+
+
+def test_a_region_named_reports_the_leader_within_that_region_only():
+    """Regression, found live 2026-08-27: "top apparel export markets in
+    Asia" ran this agent unfiltered (global leader USA) alongside a
+    region-aware apparel_manufacturing.py (Asia leader), and the merge
+    correctly flagged them as disagreeing -- which they only did because
+    this agent ignored "in Asia". Share/total must be relative to the
+    region's own total (100 = 70 + 30), not the global one (1000) -- "took
+    70% of Asian imports" would be a wrong claim if it meant 70% of global.
+    """
+    out, _ = run(
+        query="which country has the largest share of tea exports in asia?",
+        kg=KG(share=MARKET_SHARE_WITH_ASIA),
+    )
+
+    assert out["figures"]["top_partner_share"] == pytest.approx(0.7)  # 70 / (70 + 30)
+    assert out["figures"]["total_export_value_usd"] == pytest.approx(100.0)
+    assert out["figures"]["partner_count"] == 2.0
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "Japan" in claims
+    assert "United States" not in claims
+
+
+def test_a_region_with_no_matching_partners_is_reported_honestly():
+    out, _ = run(
+        query="which market takes the largest share of tea exports in oceania?",
+        kg=KG(share=MARKET_SHARE_WITH_ASIA),  # no Oceania countries in this fixture
+    )
+
+    assert "top_partner_share" not in out["figures"]
+    assert any("Oceania" in a for a in out["assumptions"])
+
+
+def test_no_region_named_still_reports_the_global_leader():
+    """Removing region-filtering for the plain case must not change it."""
+    out, _ = run(kg=KG(share=MARKET_SHARE_WITH_ASIA))  # default query, no region
+
+    assert out["figures"]["top_partner_share"] == pytest.approx(0.6)  # USA, global share
+    assert out["figures"]["partner_count"] == 4.0
