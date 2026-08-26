@@ -89,3 +89,88 @@ class QueryHistoryResponse(BaseModel):
 class SaveQueryResponse(BaseModel):
     id: int
     saved: bool
+
+
+# --- admin (SRS 3.5.4) ------------------------------------------------------
+
+
+class ModelSummary(BaseModel):
+    sector: str
+    item: str
+    target: str
+    version: str
+    saved_at: str
+    model_class: str
+    training_rows: int | None = None
+    metrics: dict[str, float] | None = None
+    interval_level: float
+    notes: str | None = None
+
+
+class ModelsResponse(BaseModel):
+    models: list[ModelSummary]
+
+
+class RetrainRequest(BaseModel):
+    sector: str = Field(min_length=1, max_length=50)
+    item: str = Field(min_length=1, max_length=100)
+    target: str = "export_value_usd"
+
+
+class IngestRequest(BaseModel):
+    # None/omitted = every registered connector, matching `pipeline.py --sources all`.
+    sources: list[str] | None = None
+
+
+class IngestResultItem(BaseModel):
+    source_id: str
+    status: str
+    rows_in: int
+    rows_written: int
+    dq_flags: int
+    error: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class IngestResponse(BaseModel):
+    results: list[IngestResultItem]
+
+
+class PipelineRunItem(BaseModel):
+    run_id: int
+    source_id: str
+    started_at: str
+    finished_at: str | None
+    status: str
+    rows_written: int
+    error: str | None = None
+
+
+class PipelineStatusResponse(BaseModel):
+    runs: list[PipelineRunItem]
+
+
+class DQFlagItem(BaseModel):
+    flag_id: int
+    item: str | None
+    hs_code: str | None
+    partner_iso3: str | None
+    period_start: str | None
+    metric: str | None
+    source_a: str | None
+    value_a: float | None
+    source_b: str | None
+    value_b: float | None
+    pct_diff: float | None
+    severity: str | None
+    detected_at: str
+    resolved: bool
+
+
+class DQFlagsResponse(BaseModel):
+    flags: list[DQFlagItem]
+
+
+class ResolveDQFlagResponse(BaseModel):
+    flag_id: int
+    resolved: bool

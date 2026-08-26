@@ -13,16 +13,15 @@ things not built at all.
 ## Owned by M3, deliberately not pre-empted
 
 `ceynex/api/` was seeded by M2 so the orchestrator is reachable for the
-mid-evaluation demo, and is M3's from then on. Five routes exist — `GET
-/health`, `POST /api/query`, `POST /api/auth/login`, `GET /api/auth/me`
-(`ceynex/api/routes/auth.py`), and `GET /api/history`
-(`ceynex/api/routes/history.py`) — and nothing else beyond that. Specifically
+mid-evaluation demo, and is M3's from then on. Routes now exist for `GET
+/health`, `POST /api/query`, auth (`ceynex/api/routes/auth.py`), history
+(`ceynex/api/routes/history.py`), and admin
+(`ceynex/api/routes/admin.py`) — and nothing else beyond that. Specifically
 **not** built, because building them would mean guessing at M3's design and
 then arguing about it:
 
 | Deferred | Spec | Consequence today |
 |---|---|---|
-| Admin routes (retrain, ingest triggers, DQ review) | SRS 3.5.4 | Retraining is CLI-only (`make backtest`, the registry's `retrain()` hook). The hook exists so M3's endpoint is a thin wrapper, not a rewrite |
 | Help and guidance content | SRS 3.5.5 | — |
 | `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
 
@@ -36,6 +35,21 @@ reasoning as `auth.authenticate` never distinguishing "no such user" from
 "wrong password") — a 404 covers both "no such entry" and "not yours", not
 just the first. `GET /api/history?saved=true` filters the existing list route
 rather than adding a second one.
+
+**Admin routes (SRS 3.5.4) are built**: `GET /api/admin/models`, `POST
+/api/admin/retrain`, `POST /api/admin/pipeline/ingest`, `GET
+/api/admin/pipeline/status`, `GET /api/admin/dq-flags`, `POST
+/api/admin/dq-flags/{id}/resolve` (`ceynex/api/routes/admin.py`,
+`ceynex/api/admin.py`). All six require the `admin` role via `require_admin` —
+403 for any other signed-in role, 401 for none. Retrain and ingest wrap the
+real hooks (`ceynex.models.registry.retrain`,
+`ceynex.data.pipeline.run_source`) rather than reimplementing them, and both
+run via `asyncio.to_thread` with the HTTP response waiting on the real work —
+a deliberate simplification at this data scale, not a queue; see
+`ceynex/api/routes/admin.py`'s module docstring for when that stops being
+true. Retrain only works on an already-registered `sector/item/target` (404
+otherwise) — it refits the same model class on fresh data, it does not train
+something new from a bare request.
 
 **Login exists now; `POST /api/query` itself still does not require a token.**
 `require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs

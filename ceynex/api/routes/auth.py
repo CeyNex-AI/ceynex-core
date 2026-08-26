@@ -50,6 +50,18 @@ def get_optional_user(
     return verify_token(credentials.credentials)
 
 
+def require_admin(user: TokenPayload = Depends(require_user)) -> TokenPayload:  # noqa: B008
+    """For the admin routes (SRS 3.5.4) — a valid token is not enough, the role
+    on it has to be "admin". The frontend already hides the Admin nav link and
+    its own page content for other roles, but that is client-side convenience,
+    not enforcement: without this, any signed-in researcher/exporter/
+    policymaker could hit these routes directly and trigger a real retrain or
+    ingest run."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin role required")
+    return user
+
+
 @router.get("/api/auth/me", response_model=UserResponse)
 async def me(user: TokenPayload = Depends(require_user)) -> UserResponse:  # noqa: B008
     return UserResponse(email=user.email, role=user.role)
