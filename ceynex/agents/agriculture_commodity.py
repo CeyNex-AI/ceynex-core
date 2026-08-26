@@ -93,6 +93,18 @@ async def _answer(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         return await _district_answer(state, deps, intent.item or "cinnamon")
     if kind == "forecast":
         return await _model_forecast(state, deps, intent.item, intent.forecast_target, intent)
+    if kind == "deferred_forecast":
+        # wants_forecast=True but forecast_target is None -- by parse_intent's
+        # own docstring, that's the "bare 'forecast cinnamon exports'" case,
+        # deliberately left for the separate forecast agent's USD export-value
+        # path. Answering here too would mean duplicating (or worse,
+        # mismatching) that agent's output -- e.g. falling through to the
+        # "volume" trend below, which is hardcoded to tea regardless of the
+        # item actually asked about, previously surfaced as tea evidence
+        # under an unrelated cinnamon forecast question.
+        return await _unsupported_target(
+            state, deps, "This forecast is served by the export-value forecast agent; no M1 model target was requested."
+        )
     if kind == "production":
         return await _unsupported_production(state, deps, intent.item or "tea")
     return await _trend_answer(state, deps, "price" if kind == "price" else "volume")
@@ -104,8 +116,10 @@ def _question_kind(query: str, intent: Any) -> str:
         return "substitution"
     if intent.wants_districts:
         return "district"
-    if intent.wants_forecast and intent.forecast_target in {"export_volume", "producer_price"}:
-        return "forecast"
+    if intent.wants_forecast:
+        if intent.forecast_target in {"export_volume", "producer_price"}:
+            return "forecast"
+        return "deferred_forecast"
     if "production" in lowered:
         return "production"
     if "price" in lowered:
