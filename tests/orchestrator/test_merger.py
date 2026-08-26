@@ -189,6 +189,36 @@ async def test_gaps_are_stated_even_if_the_llm_omits_them():
     assert "not covered" in result.answer.lower()
 
 
+async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
+    """Regression: a real "cinnamon exports outlook" question was narrated as
+    "uncertain due to conflicting findings" -- one analysis gave a real
+    forecast, the other (a confidence=0.20 SAD Section 4.1 refusal, no
+    error key set, empty figures) was presented as a peer FINDING that
+    appeared to disagree with it, even though detect_conflicts never found
+    an actual numeric conflict (a refusal has no figures to conflict with).
+    Found live 2026-08-26.
+    """
+    outputs = {
+        "forecast": output(
+            "forecast", summary="Exports are projected at USD 224.7m.",
+            figures={"forecast_next_usd": 224_700_000.0}, confidence=0.68,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No registered national export-value model was requested for this item.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(outputs=outputs, route=["forecast", "agriculture_commodity"]), FakeLLMClient(available=False)
+    )
+
+    assert not result.conflicts
+    assert "Exports are projected at USD 224.7m." in result.answer
+    assert any("No registered national export-value model" in gap for gap in result.unanswered)
+    assert "Not covered: No registered national export-value model" in result.answer
+
+
 async def test_everything_failing_says_so_rather_than_returning_nothing():
     outputs = {
         "export_analytics": failed_output("export_analytics", "neo4j down"),
