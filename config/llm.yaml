@@ -62,11 +62,29 @@ cache:
 # the API key differ. Costs nothing against daily_spend_cap_usd because these
 # are OpenRouter's free-tier models — verify the exact ids are still live at
 # https://openrouter.ai/models before the demo, they rotate.
+#
+# Each role lists models most-preferred first. OpenRouter's free tier is
+# rate-limited (~20 req/min per model) and the exact free-tier catalog
+# changes often, so a single model here is a single point of failure — the
+# list is sent as OpenRouter's own model-routing array (`extra_body.models`
+# in client.py), and OpenRouter itself falls through to the next entry on a
+# rate limit or outage without us needing a second local retry loop. Spread
+# entries across different vendors (not just Llama variants) so one vendor's
+# rate limit doesn't take out the whole list.
 fallback:
   enabled: true
   base_url: https://openrouter.ai/api/v1
-  timeout_s: 5.0    # short — this only runs after the primary budget is already spent
+  timeout_s: 6.0    # short, but a bit more than the single-model case — OpenRouter may cascade through several entries within this one call
   models:
-    router: meta-llama/llama-3.3-70b-instruct:free
-    merge: deepseek/deepseek-chat:free
-    explanation: meta-llama/llama-3.3-70b-instruct:free
+    router:
+      - meta-llama/llama-3.3-70b-instruct:free
+      - google/gemma-2-9b-it:free
+      - mistralai/mistral-7b-instruct:free
+    merge:
+      - deepseek/deepseek-chat:free
+      - qwen/qwen-2.5-72b-instruct:free
+      - meta-llama/llama-3.3-70b-instruct:free
+    explanation:
+      - meta-llama/llama-3.3-70b-instruct:free
+      - google/gemma-2-9b-it:free
+      - mistralai/mistral-7b-instruct:free

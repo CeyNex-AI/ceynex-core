@@ -47,9 +47,9 @@ FALLBACK_CONFIG["fallback"] = {
     "base_url": "https://openrouter.ai/api/v1",
     "timeout_s": 5.0,
     "models": {
-        "router": "meta-llama/llama-3.3-70b-instruct:free",
-        "merge": "deepseek/deepseek-chat:free",
-        "explanation": "meta-llama/llama-3.3-70b-instruct:free",
+        "router": ["meta-llama/llama-3.3-70b-instruct:free", "google/gemma-2-9b-it:free"],
+        "merge": "deepseek/deepseek-chat:free",  # a bare string is also accepted, normalized to one entry
+        "explanation": ["meta-llama/llama-3.3-70b-instruct:free", "mistralai/mistral-7b-instruct:free"],
     },
 }
 
@@ -198,6 +198,48 @@ async def test_a_role_missing_from_fallback_models_has_no_failsafe(tmp_path):
     llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=config)
     assert llm._fallback_model("explanation") is None
     assert llm._fallback_model("router") is not None
+
+
+def test_a_bare_string_fallback_entry_is_normalized_to_one_item(tmp_path):
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    assert llm._fallback_model("merge")["models"] == ["deepseek/deepseek-chat:free"]
+
+
+class _FakeCompletions:
+    """Records exactly what `_call` sent, so the OpenRouter request shape is
+    asserted directly instead of trusting `_call`'s own kwargs-building."""
+
+    def __init__(self, text="failsafe prose"):
+        self.captured_kwargs: dict | None = None
+        self._text = text
+
+    async def create(self, **kwargs):
+        self.captured_kwargs = kwargs
+        message = type("Message", (), {"content": self._text})()
+        choice = type("Choice", (), {"message": message})()
+        return type("Response", (), {"choices": [choice], "usage": None})()
+
+
+class _FakeOpenAIClient:
+    def __init__(self, text="failsafe prose"):
+        self.completions = _FakeCompletions(text)
+        self.chat = type("Chat", (), {"completions": self.completions})()
+
+
+async def test_the_failsafe_sends_openrouters_ordered_model_array(tmp_path):
+    """`extra_body.models` is OpenRouter's own fallback routing — it, not a
+    local retry loop, is what cascades past a rate-limited free model."""
+    llm = client(tmp_path, api_key=None, fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    fake = _FakeOpenAIClient()
+    llm._fallback_client = fake  # bypass real AsyncOpenAI construction
+
+    assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+
+    kwargs = fake.completions.captured_kwargs
+    assert kwargs["model"] == "meta-llama/llama-3.3-70b-instruct:free", "first entry, required by the OpenAI SDK"
+    assert kwargs["extra_body"] == {
+        "models": ["meta-llama/llama-3.3-70b-instruct:free", "mistralai/mistral-7b-instruct:free"]
+    }
 
 
 # --- cost and the daily spend cap (R5) ------------------------------------
