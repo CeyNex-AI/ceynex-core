@@ -1,0 +1,213 @@
+"""Admin routes — SRS 3.5.4. Retrain, ingest triggers and DQ review are the
+three named items; all three exist elsewhere as real CLI hooks
+(`ceynex.models.registry.retrain`, `ceynex.data.pipeline.run_source`,
+`ceynex/api/admin.py`'s `dq_flag` reads) so these routes are thin wrappers,
+not new logic — see `docs/DEFERRED.md`'s note on why that was left for M3
+rather than guessed at by whoever seeded `ceynex/api/`.
+
+Every route requires `require_admin` (`ceynex/api/routes/auth.py`) — a
+signed-in researcher/exporter/policymaker gets 403, not just a hidden nav
+link, since a retrain or ingest run is a real, if reversible, side effect.
+
+Retraining and ingestion are both blocking (model fitting, network I/O) and
+have no place on `/api/query`'s SRS 3.4.1 latency budget — they run via
+`asyncio.to_thread` so the event loop keeps serving other requests, but the
+HTTP response itself still waits for the real work to finish rather than
+returning a job id to poll. That is a deliberate simplification for a demo
+scale of "a handful of sources, a handful of years of annual data" — a queue
+would be the right shape at a size where either operation takes minutes, not
+seconds.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import psycopg
+from fastapi import APIRouter, Depends, HTTPException
+
+from ceynex.api import admin
+from ceynex.api.routes.auth import TokenPayload, require_admin
+from ceynex.api.schemas import (
+    DQFlagItem,
+    DQFlagsResponse,
+    IngestRequest,
+    IngestResponse,
+    IngestResultItem,
+    ModelsResponse,
+    ModelSummary,
+    PipelineRunItem,
+    PipelineStatusResponse,
+    ResolveDQFlagResponse,
+    RetrainRequest,
+)
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+# --- models / retrain --------------------------------------------------
+
+
+def _model_summary(m: Any) -> ModelSummary:  # ceynex.models.registry.ModelMetadata
+    return ModelSummary(
+        sector=m.sector,
+        item=m.item,
+        target=m.target,
+        version=m.version,
+        saved_at=m.saved_at,
+        model_class=m.model_class,
+        training_rows=m.training_rows,
+        metrics=m.metrics,
+        interval_level=m.interval_level,
+        notes=m.notes,
+    )
+
+
+@router.get("/models", response_model=ModelsResponse)
+async def list_models(_admin: TokenPayload = Depends(require_admin)) -> ModelsResponse:  # noqa: B008
+    # Imported lazily -- pulls in the full statsmodels/lightgbm/scikit-learn
+    # stack, which has no business loading just to serve a login or a query.
+    from ceynex.models import registry
+
+    models = await asyncio.to_thread(registry.list_models)
+    return ModelsResponse(models=[_model_summary(m) for m in models])
+
+
+def _do_retrain(sector: str, item: str, target: str) -> Any:
+    from ceynex.data.reader import DatasetUnavailableError, annual_series
+    from ceynex.models import registry
+
+    try:
+        frame = annual_series(item, sector=sector, target=target)
+    except DatasetUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if frame.empty:
+        raise HTTPException(
+            status_code=422, detail=f"no annual {target} rows for {sector}/{item}"
+        )
+    try:
+        return registry.retrain(sector, item, target, frame)
+    except registry.RegistryError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/retrain", response_model=ModelSummary)
+async def retrain(
+    request: RetrainRequest,
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> ModelSummary:
+    metadata = await asyncio.to_thread(_do_retrain, request.sector, request.item, request.target)
+    return _model_summary(metadata)
+
+
+# --- ingest --------------------------------------------------------------
+
+
+def _run_ingest(names: list[str]) -> list[IngestResultItem]:
+    from ceynex.data.pipeline import run_source
+    from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
+
+    writer = UnifiedDatasetWriter()
+    items: list[IngestResultItem] = []
+    for name in names:
+        try:
+            result: WriteResult = run_source(name, writer)
+        except Exception as exc:  # noqa: BLE001 - one bad source must not stop the rest, see pipeline.main
+            items.append(
+                IngestResultItem(
+                    source_id=name, status="failed", rows_in=0, rows_written=0,
+                    dq_flags=0, error=str(exc),
+                )
+            )
+            continue
+        items.append(
+            IngestResultItem(
+                source_id=result.source_id,
+                status=result.status,
+                rows_in=result.rows_in,
+                rows_written=result.rows_written,
+                dq_flags=result.dq_flags,
+                error=result.error,
+                warnings=result.warnings,
+            )
+        )
+    return items
+
+
+@router.post("/pipeline/ingest", response_model=IngestResponse)
+async def trigger_ingest(
+    request: IngestRequest,
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> IngestResponse:
+    from ceynex.data.pipeline import CONNECTORS
+
+    names = list(CONNECTORS) if not request.sources else request.sources
+    unknown = [n for n in names if n not in CONNECTORS]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown sources: {unknown} (known: {sorted(CONNECTORS)})",
+        )
+
+    results = await asyncio.to_thread(_run_ingest, names)
+    return IngestResponse(results=results)
+
+
+@router.get("/pipeline/status", response_model=PipelineStatusResponse)
+async def pipeline_status(_admin: TokenPayload = Depends(require_admin)) -> PipelineStatusResponse:  # noqa: B008
+    try:
+        runs = await asyncio.to_thread(admin.pipeline_status)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="pipeline status unavailable") from exc
+    return PipelineStatusResponse(
+        runs=[
+            PipelineRunItem(
+                run_id=r.run_id, source_id=r.source_id, started_at=r.started_at,
+                finished_at=r.finished_at, status=r.status, rows_written=r.rows_written,
+                error=r.error,
+            )
+            for r in runs
+        ]
+    )
+
+
+# --- DQ review -------------------------------------------------------------
+
+
+@router.get("/dq-flags", response_model=DQFlagsResponse)
+async def list_dq_flags(
+    resolved: bool | None = None,
+    severity: str | None = None,
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> DQFlagsResponse:
+    try:
+        flags = await asyncio.to_thread(admin.list_dq_flags, resolved=resolved, severity=severity)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="dq flags unavailable") from exc
+    return DQFlagsResponse(
+        flags=[
+            DQFlagItem(
+                flag_id=f.flag_id, item=f.item, hs_code=f.hs_code, partner_iso3=f.partner_iso3,
+                period_start=f.period_start, metric=f.metric, source_a=f.source_a,
+                value_a=f.value_a, source_b=f.source_b, value_b=f.value_b,
+                pct_diff=f.pct_diff, severity=f.severity, detected_at=f.detected_at,
+                resolved=f.resolved,
+            )
+            for f in flags
+        ]
+    )
+
+
+@router.post("/dq-flags/{flag_id}/resolve", response_model=ResolveDQFlagResponse)
+async def resolve_dq_flag(
+    flag_id: int,
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> ResolveDQFlagResponse:
+    try:
+        found = await asyncio.to_thread(admin.resolve_dq_flag, flag_id)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not resolve dq flag") from exc
+    if not found:
+        raise HTTPException(status_code=404, detail=f"no dq_flag with id {flag_id}")
+    return ResolveDQFlagResponse(flag_id=flag_id, resolved=True)
