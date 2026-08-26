@@ -113,6 +113,18 @@ def _regions() -> dict[str, str]:
     row here, since they will never be a real trade partner and a country
     absent from this table just means "does not match a region filter" —
     see `region_of()` — never a raised error.
+
+    Two entries corrected after the initial import, cross-checked against a
+    second, independent source (a 2026 country-by-continent list):
+    - Taiwan (TWN): the source table left it blank for political-recognition
+      reasons, not geographic ones -- unambiguous Asia by every classification.
+    - Cyprus (CYP): the source table follows strict geological/UN-M49
+      classification (Asia, on the Anatolian plate); trade and political
+      convention -- EU member state -- puts it in Europe, the answer this
+      system's users mean.
+    Russia (RUS) is deliberately left Europe-only, the UN M49 single-region
+    convention, though it is genuinely transcontinental (Asia and Europe) --
+    this table supports one region per country, not a set.
     """
     with (REFERENCE_DIR / "regions.csv").open(encoding="utf-8") as fh:
         return {row["iso3"]: row["region"] for row in csv.DictReader(fh)}

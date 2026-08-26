@@ -56,6 +56,12 @@ def test_sri_lanka_is_lka_144():
         ("DEU", "Europe"),
         ("ZAF", "Africa"),
         ("AUS", "Oceania"),
+        # Corrected after cross-checking against a second, independent
+        # source: the strict geological/UN-M49 classification (Asia) is
+        # geographically defensible but not what a trade query means --
+        # Cyprus is an EU member state and trade/political convention puts
+        # it in Europe.
+        ("CYP", "Europe"),
     ],
 )
 def test_region_of_known_trade_partners(iso3, region):
