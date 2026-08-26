@@ -137,11 +137,7 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     # place. Evidence, agents_used and the forecast are still drawn from the
     # full `succeeded` set below -- only the merge prose's FINDING list and
     # conflict detection are narrowed.
-    contributing = {
-        name: out for name, out in succeeded.items()
-        if out.get("confidence", 0.0) >= DECLINE_CONFIDENCE_CEILING
-    }
-    declined = {name: out for name, out in succeeded.items() if name not in contributing}
+    contributing, declined = _split_succeeded(succeeded)
 
     unanswered = (
         _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
@@ -277,6 +273,40 @@ def _describe_gaps(
     for agent in sorted(never_reported):
         gaps.append(f"{_topic_of(agent)} did not return in time")
     return gaps
+
+
+def _split_succeeded(
+    succeeded: dict[AgentName, AgentOutput],
+) -> tuple[dict[AgentName, AgentOutput], dict[AgentName, AgentOutput]]:
+    """(contributing, declined) -- see DECLINE_CONFIDENCE_CEILING."""
+    contributing = {
+        name: out for name, out in succeeded.items()
+        if out.get("confidence", 0.0) >= DECLINE_CONFIDENCE_CEILING
+    }
+    declined = {name: out for name, out in succeeded.items() if name not in contributing}
+    return contributing, declined
+
+
+def unanswered_from_outputs(state: AgentState) -> list[str]:
+    """The same "could not be answered" list `merge()` uses internally, public.
+
+    `unanswered` is not part of `AgentState` (the frozen contracts package --
+    a change there needs 3-way approval) or `MergeResult.as_state_patch()`
+    (only `final_answer`/`final_confidence`/`merged_evidence` are written
+    back to state), so a caller that only has the graph's final `state` --
+    the API route, notably -- had no way to reconstruct it and fell back to
+    "agents that hard-failed" only, silently dropping honest declines and
+    out-of-scope gaps from `QueryResponse.unanswered`. This is the shared
+    source of truth both `merge()` and that caller should use instead of
+    each recomputing (or under-computing) their own version.
+    """
+    outputs = state.get("agent_outputs", {})
+    route = list(state.get("route", []) or outputs.keys())
+    failed = {name: out for name, out in outputs.items() if out.get("error")}
+    never_reported = [name for name in route if name not in outputs]
+    succeeded = {name: out for name, out in outputs.items() if not out.get("error")}
+    _, declined = _split_succeeded(succeeded)
+    return _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
 
 
 def _describe_declines(declined: dict[AgentName, AgentOutput]) -> list[str]:
@@ -489,4 +519,12 @@ def _staleness_months(state: AgentState) -> float | None:
     return max(0.0, months_since - EXPECTED_ANNUAL_PUBLICATION_LAG_MONTHS)
 
 
-__all__ = ["Conflict", "MergeResult", "compose_deterministic", "detect_conflicts", "dedupe_evidence", "merge"]
+__all__ = [
+    "Conflict",
+    "MergeResult",
+    "compose_deterministic",
+    "detect_conflicts",
+    "dedupe_evidence",
+    "merge",
+    "unanswered_from_outputs",
+]
