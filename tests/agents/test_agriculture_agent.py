@@ -175,6 +175,35 @@ def test_tea_export_volume_trend_uses_tea_board_series(monkeypatch):
     assert all(evidence["source_id"] == "TEA_BOARD" for evidence in out["evidence"])
 
 
+def test_rubber_volume_question_declines_instead_of_answering_about_tea(monkeypatch):
+    """Guard rail: SERIES["volume"] only has a sourced series for tea. A
+    query naming a different item must decline honestly, not silently
+    substitute tea's data -- this is the exact class of bug the cinnamon
+    forecast regression above caught, generalized to any other item.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    out = run("How have rubber export volumes changed over the last five years?")
+
+    assert all(evidence["source_id"] != "TEA_BOARD" for evidence in out["evidence"])
+    assert "rubber" in out["summary"].lower()
+    assert "figures" not in out or out["figures"] == {}
+    assert out["confidence"] == pytest.approx(0.20)
+
+
+def test_coconut_price_question_declines_instead_of_answering_about_cinnamon(monkeypatch):
+    """Same guard rail, the price side: SERIES["price"] only has a sourced
+    series for cinnamon.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    out = run("What is the current price trend for coconut?")
+
+    assert all(evidence["source_id"] != "FAOSTAT" for evidence in out["evidence"])
+    assert "coconut" in out["summary"].lower()
+    assert out["confidence"] == pytest.approx(0.20)
+
+
 def test_bare_forecast_question_defers_instead_of_answering_the_wrong_commodity(monkeypatch):
     """Regression: a real "cinnamon exports outlook" query returned TEA_BOARD
     evidence (this node's "volume" trend branch is hardcoded to tea) because
