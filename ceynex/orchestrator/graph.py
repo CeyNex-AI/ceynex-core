@@ -117,7 +117,14 @@ def build_graph(deps: AgentDeps, *, use_llm_router: bool = True) -> Any:
         patch = decision.as_state_patch()
         log.info("routed to %s (%s)", decision.route, decision.method)
         if decision.out_of_scope:
-            patch["errors"] = [f"out_of_scope: {decision.notes[0] if decision.notes else ''}"]
+            errors = [f"out_of_scope: {decision.notes[0] if decision.notes else ''}"]
+            if decision.no_topic_recognized:
+                # A second, machine-only marker (never surfaced as prose) --
+                # merger.py reads it to tell "named an excluded sector, still
+                # answer the in-scope part" from "named nothing CeyNex covers,
+                # answer nothing".
+                errors.append("out_of_scope_no_topic: true")
+            patch["errors"] = errors
         return patch
 
     builder.add_node("route", route_node)

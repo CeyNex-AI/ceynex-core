@@ -9,6 +9,8 @@ import pytest
 from ceynex.contracts import AgentOutput, Evidence, failed_output, new_state
 from ceynex.llm import FakeLLMClient
 from ceynex.orchestrator.merger import (
+    NO_TOPIC_MARKER,
+    OUT_OF_SCOPE_PREFIX,
     _dq_severities_from_evidence,
     compose_deterministic,
     dedupe_evidence,
@@ -46,11 +48,13 @@ def ev(source, claim, detail="MATCH (n) RETURN n"):
     return Evidence(source_id=source, claim=claim, detail=detail)
 
 
-def state(query="a question", outputs=None, route=None, relevance=None):
+def state(query="a question", outputs=None, route=None, relevance=None, errors=None):
     st = new_state(query, "tester")
     st["agent_outputs"] = outputs or {}
     st["route"] = route or list(st["agent_outputs"])
     st["relevance"] = relevance or dict.fromkeys(st["route"], 1.0)
+    if errors is not None:
+        st["errors"] = errors
     return st
 
 
@@ -255,6 +259,67 @@ async def test_a_gap_using_entirely_different_words_is_still_appended():
         state(outputs=outputs, route=["export_analytics", "apparel_manufacturing"]), llm
     )
     assert "Not covered:" in result.answer
+
+
+# --- fully out-of-topic questions -----------------------------------------
+
+
+async def test_a_no_topic_question_does_not_carry_the_agents_confident_answer():
+    """Regression, found live 2026-08-27 from a real user query ("who is
+    Euler"): export_analytics' own `item = intent.item or "tea"` default
+    answered with a confident (0.9), fully unrelated tea report, and the
+    merge LLM's paraphrase of it read as "does not relate to ... but here is
+    a tea report anyway" -- the router's out_of_scope flag only ever added a
+    disclaimer note, it never stopped the irrelevant finding from being
+    merged in as if it were real content.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Sri Lanka exported tea worth USD 1.4bn to 141 markets in 2025.",
+            figures={"total_export_value_usd": 1_431_567_471.0},
+            confidence=0.9,
+        ),
+    }
+    llm = FakeLLMClient(response="This should never be reached.")
+    result = await merge(
+        state(
+            outputs=outputs,
+            route=["export_analytics"],
+            errors=[f"{OUT_OF_SCOPE_PREFIX}the question does not name anything CeyNex covers.", NO_TOPIC_MARKER],
+        ),
+        llm,
+    )
+
+    assert "tea" not in result.answer.lower()
+    assert "1.4" not in result.answer
+    assert result.agents_used == []
+    assert result.evidence == []
+    assert result.confidence < 0.20
+    assert "does not name anything ceynex covers" in result.answer.lower()
+
+
+async def test_a_mixed_out_of_scope_question_still_gets_its_real_answer():
+    """The suppression above must not fire for the existing "gems or tea"
+    shape -- only a question naming nothing in scope at all is topic-less.
+    """
+    outputs = {
+        "agriculture_commodity": output(
+            "agriculture_commodity", summary="Tea prices rose 4% this year.", confidence=0.8,
+        ),
+    }
+    llm = FakeLLMClient(response="Tea prices rose 4% this year.")
+    result = await merge(
+        state(
+            outputs=outputs,
+            route=["agriculture_commodity"],
+            errors=[f"{OUT_OF_SCOPE_PREFIX}the question also asks about gem, which CeyNex does not cover."],
+        ),
+        llm,
+    )
+
+    assert "tea" in result.answer.lower()
+    assert result.agents_used == ["agriculture_commodity"]
 
 
 async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
