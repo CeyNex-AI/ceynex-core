@@ -199,6 +199,23 @@ def test_rubber_volume_question_declines_instead_of_answering_about_tea(monkeypa
     assert out["confidence"] == pytest.approx(0.20)
 
 
+def test_unsupported_target_evidence_says_no_compatible_series_was_found(monkeypatch):
+    """The generic second evidence entry attached to every _unsupported_target
+    decline claimed "no incompatible ... series was substituted" -- backwards,
+    since of course nothing incompatible was substituted. Found live
+    2026-08-27 from a user-reported "do we have cinnamon data?" answer that
+    (correctly) said only tea has volume data, justified with this
+    nonsensical claim.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    out = run("How have rubber export volumes changed over the last five years?")
+
+    claims = " ".join(e["claim"] for e in out["evidence"]).lower()
+    assert "incompatible" not in claims
+    assert "compatible" in claims
+
+
 def test_coconut_price_question_declines_instead_of_answering_about_cinnamon(monkeypatch):
     """Same guard rail, the price side: SERIES["price"] only has a sourced
     series for cinnamon.

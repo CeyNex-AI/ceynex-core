@@ -209,6 +209,54 @@ async def test_a_gap_already_phrased_as_cannot_or_not_available_is_not_duplicate
     assert result.answer.lower().count("cannot be provided") == 1
 
 
+async def test_a_gap_restated_in_different_words_is_not_duplicated():
+    """Regression, found live 2026-08-27 from a real user query ("do we have
+    cinnamon data?"): the decline's own text ("No sourced export volume
+    series is available for cinnamon; only tea is covered for this question.
+    There are no compatible price, volume, or export-value series available
+    to substitute for the requested target.") got restated a second,
+    near-verbatim time as "Not covered: <the same text>" -- the merge LLM's
+    own independent paraphrase used none of the marker words from the
+    2026-08-26 fix above, a second recurrence of the same bug class with
+    different wording.
+    """
+    summary = (
+        "No sourced export volume series is available for cinnamon; only tea is covered "
+        "for this question. There are no compatible price, volume, or export-value series "
+        "available to substitute for the requested target."
+    )
+    outputs = {
+        "agriculture_commodity": output(
+            "agriculture_commodity", summary=summary, figures={}, confidence=0.20,
+        ),
+    }
+    llm = FakeLLMClient(
+        response=(
+            "There is no available sourced export volume series specifically for cinnamon. "
+            "The data provided only covers tea for this question, and there are no compatible "
+            "price, volume, or export-value series that can be substituted for cinnamon."
+        )
+    )
+    result = await merge(state(outputs=outputs, route=["agriculture_commodity"]), llm)
+
+    assert "Not covered:" not in result.answer
+    assert result.answer == llm._response
+
+
+async def test_a_gap_using_entirely_different_words_is_still_appended():
+    """The word-overlap check above must not become so permissive that a
+    genuinely unstated gap silently disappears."""
+    outputs = {
+        "export_analytics": output("export_analytics", summary="Exports grew 4%.", confidence=0.8),
+        "apparel_manufacturing": failed_output("apparel_manufacturing", "no model"),
+    }
+    llm = FakeLLMClient(response="Exports grew four percent last year.")
+    result = await merge(
+        state(outputs=outputs, route=["export_analytics", "apparel_manufacturing"]), llm
+    )
+    assert "Not covered:" in result.answer
+
+
 async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     """Regression: a real "cinnamon exports outlook" question was narrated as
     "uncertain due to conflicting findings" -- one analysis gave a real
