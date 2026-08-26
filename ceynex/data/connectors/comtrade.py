@@ -1,7 +1,8 @@
 """Implements SRS 3.1.7 — UN Comtrade bilateral trade flows for Sri Lanka.
 
 Sri Lanka (reporter M49 144) exports, annual, for the HS codes CeyNex covers:
-tea 0902, cinnamon 0906, rubber 4001, and apparel chapters 61 and 62.
+tea 0902, cinnamon 0906, rubber 4001, coconut 0801/1513, and apparel
+chapters 61 and 62.
 
 Two endpoints, chosen by whether a key is present:
 
@@ -53,12 +54,22 @@ PREVIEW_URL = "https://comtradeapi.un.org/public/v1/preview/C/A/HS"
 # SRS 2.4 scope. Chapter-level 61/62 pulls come back as their own aggregate rows,
 # which is what the apparel agent wants; M3 layers his 6-digit view over the same
 # extract rather than issuing a second set of calls (settled at the Day 2 standup).
-DEFAULT_HS_CODES = ("0902", "0906", "4001", "61", "62")
+#
+# Coconut (0801 fresh/desiccated, 1513 coconut oil) is one of the four SRS 2.4
+# agriculture commodities and already fully wired everywhere else --
+# reference/hs_codes.csv, kg/loaders/agriculture.py's COMMODITIES,
+# trade_flows.ITEM_NODES -- but was never actually requested here, so it had
+# zero rows anywhere downstream despite looking fully supported. Found live
+# 2026-08-26 via a real "coconut exports outlook" forecast query correctly
+# (and honestly) declining for lack of any data at all.
+DEFAULT_HS_CODES = ("0902", "0906", "4001", "0801", "1513", "61", "62")
 
 ITEM_BY_HS = {
     "0902": "tea",
     "0906": "cinnamon",
     "4001": "rubber",
+    "0801": "coconut",
+    "1513": "coconut",
     "61": "apparel_knit",
     "62": "apparel_woven",
 }
