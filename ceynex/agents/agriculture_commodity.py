@@ -448,7 +448,7 @@ async def _unsupported_target(state: AgentState, deps: AgentDeps, reason: str) -
         evidence=[
             evidence_from_model(claim=reason, model_id="agriculture-agent/data-gap"),
             evidence_from_model(
-                claim="No incompatible price, volume, or export-value series was substituted for the requested target.",
+                claim="No compatible price, volume, or export-value series was available to substitute for the requested target.",
                 model_id="agriculture-agent/data-gap",
             ),
         ],

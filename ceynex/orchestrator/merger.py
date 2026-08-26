@@ -26,6 +26,7 @@ on every keyless run, not just in a test.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -489,25 +490,51 @@ def _ensure_conflicts_stated(answer: str, conflicts: list[Conflict]) -> str:
     return answer.rstrip() + " " + " ".join(c.describe() for c in missing)
 
 
+_GAP_MARKERS = (
+    "could not", "cannot", "can't", "unable", "not covered",
+    "no data", "not available", "no specific",
+)
+
+
+def _gap_already_stated(answer: str, item: str) -> bool:
+    """Is this specific gap already conveyed in the answer, in any wording?
+
+    Two independent checks, either is enough:
+
+    - a handful of common decline-phrasing markers anywhere in the answer
+      (cheap, and still catches the common case);
+    - most of *this item's own* significant words already appearing in the
+      answer, regardless of which words those are.
+
+    The marker list alone is not enough on its own: found live 2026-08-26
+    ("cannot be provided"/"is not available" matched none of the original
+    four markers), and recurred live 2026-08-27 with yet another phrasing
+    ("no available...", "no compatible... that can be substituted") that
+    also matched none of them -- proof a fixed vocabulary can't keep up with
+    open-ended LLM paraphrasing. Checking the gap's own words instead doesn't
+    depend on guessing every way a decline might be phrased.
+    """
+    lowered = answer.lower()
+    if any(marker in lowered for marker in _GAP_MARKERS):
+        return True
+    words = [w for w in re.findall(r"[a-z]+", item.lower()) if len(w) > 3]
+    if not words:
+        return False
+    hits = sum(1 for word in words if word in lowered)
+    return hits / len(words) >= 0.6
+
+
 def _ensure_gaps_stated(answer: str, unanswered: list[str]) -> str:
     """SAD §4.1 requires the user to be told what could not be answered.
 
-    Found live 2026-08-26: the marker list was narrower than the LLM's
-    actual phrasing for a decline -- "cannot be provided" and "is not
-    available" matched none of the original four markers, so this appended
-    the same reason a second time even though the prose already stated it
-    in its own words, producing a visibly duplicated sentence.
+    Per item, not all-or-nothing: only the gaps `_gap_already_stated` cannot
+    find in the answer get appended, rather than either appending the whole
+    list or none of it based on the answer as a whole.
     """
-    if not unanswered:
+    missing = [item for item in unanswered if not _gap_already_stated(answer, item)]
+    if not missing:
         return answer
-    lowered = answer.lower()
-    markers = (
-        "could not", "cannot", "can't", "unable", "not covered",
-        "no data", "not available", "no specific",
-    )
-    if any(marker in lowered for marker in markers):
-        return answer
-    return answer.rstrip() + " Not covered: " + "; ".join(unanswered) + "."
+    return answer.rstrip() + " Not covered: " + "; ".join(missing) + "."
 
 
 def _mentions(answer: str, figure: str) -> bool:
