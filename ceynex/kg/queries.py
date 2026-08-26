@@ -196,18 +196,30 @@ def graph_summary() -> Query:
     return cypher, {}
 
 
-def latest_observation_year() -> Query:
-    """The most recent year on any EXPORTS_TO edge.
+def latest_observation_year(item: str | None = None) -> Query:
+    """The most recent year on any EXPORTS_TO edge -- or one item's, if given.
 
     Feeds the staleness penalty in `ceynex/orchestrator/confidence.py`: an answer
     drawn from data three years old should not score as highly as one drawn from
     last quarter's.
+
+    Unscoped (`item=None`) is a graph-wide max, not any one item's -- callers
+    that then use the result to query a *specific* item (a "what's the latest
+    year, now show me that item's figures for it" pattern, as
+    `export_analytics`/`trade_economics` both do) must pass `item`, not rely on
+    the graph-wide max being that item's own latest year. Found live
+    2026-08-26: a single item with a later (and partly erroneous -- see
+    `ceynex/data/connectors/jaaf.py`) latest year silently made every *other*
+    item's cross-sector analytics query a year with no data for that item,
+    producing a false "no data" answer instead of the real, available figures.
     """
-    cypher = """
-    MATCH ()-[e:EXPORTS_TO]->()
+    item_filter = "WHERE toLower(i.name) = toLower($item)" if item is not None else ""
+    cypher = f"""
+    MATCH (i)-[e:EXPORTS_TO]->()
+    {item_filter}
     RETURN max(e.year) AS latest_year
     """
-    return cypher, {}
+    return cypher, {"item": item} if item is not None else {}
 
 
 def _hs_prefixes(hs_code: str | int) -> list[str]:

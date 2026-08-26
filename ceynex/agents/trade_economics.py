@@ -353,7 +353,7 @@ def _hs_for_item(item: str) -> str:
 
 async def _baseline_value(deps: AgentDeps, item: str) -> tuple[float | None, int | None, str]:
     """Most recent annual export value for an item, from the graph."""
-    latest_rows, _ = await deps.kg.run(*q.latest_observation_year())
+    latest_rows, _ = await deps.kg.run(*q.latest_observation_year(item))
     year = int(latest_rows[0]["latest_year"]) if latest_rows and latest_rows[0]["latest_year"] else 2023
 
     rows, cypher = await deps.kg.run(*q.market_share(item, year))
