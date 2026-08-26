@@ -60,7 +60,7 @@ async def export_analytics_node(state: AgentState, deps: AgentDeps) -> dict[str,
 async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     item = intent.item or "tea"
-    year = intent.year or await _latest_year(deps)
+    year = intent.year or await _latest_year(deps, item)
 
     figures: dict[str, float] = {}
     evidence: list[Evidence] = []
@@ -182,8 +182,8 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     )
 
 
-async def _latest_year(deps: AgentDeps) -> int:
-    rows, _ = await deps.kg.run(*q.latest_observation_year())
+async def _latest_year(deps: AgentDeps, item: str) -> int:
+    rows, _ = await deps.kg.run(*q.latest_observation_year(item))
     if rows and rows[0].get("latest_year"):
         return int(rows[0]["latest_year"])
     return 2023

@@ -24,7 +24,24 @@ ALL_QUERIES = [
     ("items_in_sector", lambda: q.items_in_sector("agriculture")),
     ("graph_summary", lambda: q.graph_summary()),
     ("latest_observation_year", lambda: q.latest_observation_year()),
+    ("latest_observation_year_scoped", lambda: q.latest_observation_year("tea")),
 ]
+
+
+def test_latest_observation_year_scopes_to_one_item_when_given():
+    """Regression: unscoped latest_observation_year() found live 2026-08-26 --
+    a single item's later (and erroneous) latest year silently made every
+    other item's "what year should I query" lookup return a year with no
+    data for that other item. Callers that then query one specific item
+    (export_analytics, trade_economics) must scope this to that item.
+    """
+    cypher, params = q.latest_observation_year("tea")
+    assert "toLower(i.name) = toLower($item)" in cypher
+    assert params == {"item": "tea"}
+
+    cypher, params = q.latest_observation_year()
+    assert "$item" not in cypher
+    assert params == {}
 
 
 @pytest.mark.parametrize(("name", "build"), ALL_QUERIES, ids=[n for n, _ in ALL_QUERIES])
