@@ -77,7 +77,12 @@ def test_current_cinnamon_price_trend_has_readable_faostat_evidence(monkeypatch)
     assert not any(evidence["source_id"] == "DQ_FLAG" for evidence in out["evidence"])
 
 
-def test_a_material_dq_flag_is_evidence_and_reduces_confidence_without_changing_values(monkeypatch):
+def test_a_material_dq_flag_is_evidence_without_changing_the_agents_own_confidence(monkeypatch):
+    """The DQ penalty is applied exactly once, centrally, by
+    orchestrator.merger's scan of the merged evidence for DQ_FLAG entries --
+    not here too. Double-applying it (once per-agent, once at merge) would
+    silently over-penalize the final score. See merger._dq_severities_from_evidence.
+    """
     monkeypatch.setattr(agriculture, "annual_series", _series)
     baseline = run("What is the current price trend for cinnamon?")
     monkeypatch.setattr(
@@ -100,13 +105,14 @@ def test_a_material_dq_flag_is_evidence_and_reduces_confidence_without_changing_
     out = run("What is the current price trend for cinnamon?")
 
     assert out["figures"] == baseline["figures"]
-    assert out["confidence"] == pytest.approx(baseline["confidence"] - 0.05)
+    assert out["confidence"] == pytest.approx(baseline["confidence"])
     assert any("material=1" in assumption for assumption in out["assumptions"])
     flag = next(evidence for evidence in out["evidence"] if evidence["source_id"] == "DQ_FLAG")
     assert "FAOSTAT" in flag["claim"] and "PINK_SHEET" in flag["claim"] and "10.1%" in flag["claim"]
+    assert "severity=material" in flag["detail"]
 
 
-def test_a_severe_dq_flag_uses_the_shared_severe_penalty(monkeypatch):
+def test_a_severe_dq_flag_is_evidence_without_changing_the_agents_own_confidence(monkeypatch):
     monkeypatch.setattr(agriculture, "annual_series", _series)
     baseline = run("What is the current price trend for cinnamon?")
     monkeypatch.setattr(
@@ -129,8 +135,10 @@ def test_a_severe_dq_flag_uses_the_shared_severe_penalty(monkeypatch):
     out = run("What is the current price trend for cinnamon?")
 
     assert out["figures"] == baseline["figures"]
-    assert out["confidence"] == pytest.approx(baseline["confidence"] - 0.10)
+    assert out["confidence"] == pytest.approx(baseline["confidence"])
     assert any("severe=1" in assumption for assumption in out["assumptions"])
+    flag = next(evidence for evidence in out["evidence"] if evidence["source_id"] == "DQ_FLAG")
+    assert "severity=severe" in flag["detail"]
 
 
 def test_cinnamon_forecast_uses_only_registered_price_model_with_80_percent_interval():

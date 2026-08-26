@@ -9,6 +9,7 @@ import pytest
 from ceynex.contracts import AgentOutput, Evidence, failed_output, new_state
 from ceynex.llm import FakeLLMClient
 from ceynex.orchestrator.merger import (
+    _dq_severities_from_evidence,
     compose_deterministic,
     dedupe_evidence,
     detect_conflicts,
@@ -307,6 +308,71 @@ async def test_a_failed_agent_lowers_confidence():
         FakeLLMClient(available=False),
     )
     assert low.confidence < high.confidence
+
+
+# --- the DQ penalty is now actually wired to real data --------------------
+
+
+async def test_a_dq_flag_in_the_evidence_lowers_the_aggregate_confidence():
+    """Regression: aggregate_confidence's `dq` term had a correct, tested
+    formula, but nothing in the real orchestrator graph ever called merge()
+    with a non-default dq_severities -- it always contributed 0 in
+    production regardless of real dq_flag data. merge() now reads severity
+    back out of any DQ_FLAG evidence entry in the merged set (the shape
+    agriculture_commodity._with_dq_flags already emits) instead of relying
+    on an external caller to supply it.
+    """
+    dq_evidence = ev(
+        "DQ_FLAG", "Material data-quality flag.",
+        "dq_flag: source_a=FAOSTAT; source_b=PINK_SHEET; metric=price; pct_diff=10.05; severity=material",
+    )
+    clean = {"export_analytics": output("export_analytics", confidence=0.9)}
+    flagged = {
+        "export_analytics": output(
+            "export_analytics", confidence=0.9, evidence=[ev("KG", "A claim."), dq_evidence]
+        ),
+    }
+    high = await merge(state(outputs=clean), FakeLLMClient(available=False))
+    lower = await merge(state(outputs=flagged), FakeLLMClient(available=False))
+    assert lower.confidence == pytest.approx(high.confidence - 0.05)
+
+
+async def test_severe_dq_flags_from_different_agents_both_count():
+    """DQ_FLAG evidence is read from the whole merged set, not per-agent --
+    two agents each surfacing their own real flag both contribute.
+    """
+    flag_a = ev(
+        "DQ_FLAG", "Severe flag A.",
+        "dq_flag: source_a=A; source_b=B; metric=price; pct_diff=50.0; severity=severe",
+    )
+    flag_b = ev(
+        "DQ_FLAG", "Severe flag B.",
+        "dq_flag: source_a=C; source_b=D; metric=export_volume; pct_diff=60.0; severity=severe",
+    )
+    outputs = {
+        "agriculture_commodity": output(
+            "agriculture_commodity", confidence=0.9, evidence=[ev("KG", "A."), flag_a]
+        ),
+        "apparel_manufacturing": output(
+            "apparel_manufacturing", confidence=0.9, evidence=[ev("EDB", "B."), flag_b]
+        ),
+    }
+    result = await merge(state(outputs=outputs), FakeLLMClient(available=False))
+    baseline = await merge(
+        state(outputs={"agriculture_commodity": output("agriculture_commodity", confidence=0.9)}),
+        FakeLLMClient(available=False),
+    )
+    assert result.confidence == pytest.approx(baseline.confidence - 0.20)  # 2 * severe (0.10 each)
+
+
+def test_dq_severities_from_evidence_ignores_non_flag_and_malformed_entries():
+    good = ev(
+        "DQ_FLAG", "A flag.",
+        "dq_flag: source_a=A; source_b=B; metric=price; pct_diff=10.0; severity=material",
+    )
+    not_a_flag = ev("KG", "Unrelated.", "MATCH (n) RETURN n")
+    malformed = Evidence(source_id="DQ_FLAG", claim="No severity field.", detail="dq_flag: metric=price")
+    assert _dq_severities_from_evidence([good, not_a_flag, malformed]) == ["material"]
 
 
 # --- the deterministic composer --------------------------------------------

@@ -33,7 +33,7 @@ from ceynex.contracts import AgentOutput, AgentState, Evidence, ForecastPoint, f
 from ceynex.data.reader import DatasetUnavailableError, annual_series, relevant_dq_flags
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
-from ceynex.orchestrator.confidence import clamp, dq_penalty, staleness_penalty
+from ceynex.orchestrator.confidence import clamp, staleness_penalty
 
 log = logging.getLogger(__name__)
 
@@ -508,7 +508,20 @@ def _with_dq_flags(
     assumptions: list[str],
     confidence: float,
 ) -> tuple[list[Evidence], list[str], float]:
-    """Surface material/severe discrepancies without changing measured values."""
+    """Surface material/severe discrepancies without changing measured values.
+
+    Does NOT reduce `confidence` here anymore -- that field is passed through
+    unchanged. The DQ penalty is applied exactly once, centrally, by
+    `ceynex.orchestrator.merger`'s scan of the merged evidence for these same
+    `DQ_FLAG` entries (which is the one place `confidence.py`'s own docstring
+    says the formula is allowed to live: "nothing else in the codebase is
+    allowed to invent its own"). Applying it here too would have silently
+    double-penalized any agriculture answer with a DQ flag once the
+    orchestrator-level term was wired up to real data (found 2026-08-26: that
+    term had a working formula and its own passing unit tests, but nothing in
+    the actual graph ever called `merge()` with a non-default
+    `dq_severities`, so it always contributed 0 in production).
+    """
     relevant = [flag for flag in flags if flag.get("severity") in {"material", "severe"}]
     if not relevant:
         return evidence, assumptions, confidence
@@ -538,7 +551,7 @@ def _with_dq_flags(
                 period=period_text,
             )
         )
-    return evidence, assumptions, clamp(confidence - dq_penalty(severities))
+    return evidence, assumptions, confidence
 
 
 def _direction(change: float) -> str:

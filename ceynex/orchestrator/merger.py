@@ -151,7 +151,7 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
         route=route,
         relevance=relevance,
         months_since_latest_observation=_staleness_months(state),
-        dq_severities=dq_severities,
+        dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
     )
 
     if not succeeded:
@@ -248,6 +248,44 @@ def dedupe_evidence(outputs: dict[AgentName, AgentOutput]) -> list[Evidence]:
             if key not in seen:
                 seen[key] = dict(item)  # type: ignore[assignment]
     return list(seen.values())
+
+
+def _dq_severities_from_evidence(evidence: list[Evidence]) -> list[str]:
+    """Real cross-source discrepancy severities, read from the merged evidence.
+
+    Closes a real gap found live 2026-08-26: `aggregate_confidence`'s `dq`
+    term (SRS 3.1.8) had a correct, unit-tested formula, but `merge()` never
+    called it with anything but the default `dq_severities=()` -- nothing in
+    the actual orchestrator graph ever passed real severities in, so the
+    term always contributed 0 regardless of real `dq_flag` data.
+
+    Reading it back out of the evidence (`agriculture_commodity.py`'s
+    `_with_dq_flags` already emits a `source_id="DQ_FLAG"` entry per flag,
+    with `severity=...` in `detail`) rather than requiring a new typed
+    channel is deliberate: `AgentState` is the frozen contracts package (a
+    change needs 3-way approval), and this way any current or future agent
+    that surfaces a DQ_FLAG entry in the same shape is picked up here with
+    no orchestrator-side knowledge of which agent or which item it came
+    from -- consistent with SRS 3.1.2's "organised by finding, not by
+    source".
+
+    This is also why `agriculture_commodity._with_dq_flags` no longer
+    subtracts `dq_penalty` from its own agent-level confidence: doing so
+    there *and* here would double-penalize the same flag. The penalty now
+    applies exactly once, centrally, matching confidence.py's own
+    docstring ("nothing else in the codebase is allowed to invent its
+    own").
+    """
+    severities: list[str] = []
+    for item in evidence:
+        if item.get("source_id") != "DQ_FLAG":
+            continue
+        detail = item.get("detail") or ""
+        for token in detail.split(";"):
+            key, _, value = token.strip().partition("=")
+            if key == "severity" and value:
+                severities.append(value)
+    return severities
 
 
 def _first_forecast(outputs: dict[AgentName, AgentOutput]) -> list[dict[str, Any]]:
