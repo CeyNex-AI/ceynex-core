@@ -56,6 +56,15 @@ def _bootstrap_interval(
         # Fewer than 2 residuals to resample: a deliberately wide, clearly
         # arbitrary +-25% band rather than a fabricated statistical one.
         lower, upper = point * 0.75, point * 1.25
+
+    # A mostly-one-directional residual sample (a partner series that has only
+    # grown, or only shrunk) can push a multi-step bootstrap sum's 10th/90th
+    # percentile past the point estimate itself -- the point is a flat carry
+    # forward that deliberately does not extrapolate that trend (class
+    # docstring), so the interval built from it may not implicitly do so
+    # either. Same crossing guard gbm.py applies to its own independently-fit
+    # quantiles.
+    lower, upper = min(lower, point), max(upper, point)
     return max(0.0, lower), upper
 
 
