@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ceynex.settings import llm_config, openai_api_key
+from ceynex.settings import llm_config, openai_api_key, openrouter_api_key
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ class LLMUsage:
     calls: int = 0
     cache_hits: int = 0
     failures: int = 0
+    fallback_calls: int = 0
     elapsed_s: float = 0.0
     cost_usd: float = 0.0
 
@@ -52,6 +53,7 @@ class LLMUsage:
         self.calls += other.calls
         self.cache_hits += other.cache_hits
         self.failures += other.failures
+        self.fallback_calls += other.fallback_calls
         self.elapsed_s += other.elapsed_s
         self.cost_usd += other.cost_usd
 
@@ -113,9 +115,11 @@ class LLMReasoningClient:
 
     config: dict[str, Any] = field(default_factory=llm_config)
     api_key: str | None = field(default_factory=openai_api_key)
+    fallback_api_key: str | None = field(default_factory=openrouter_api_key)
     usage: LLMUsage = field(default_factory=LLMUsage)
     _cache: PromptCache = field(init=False)
     _client: Any = field(init=False, default=None)
+    _fallback_client: Any = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         cache_cfg = self.config.get("cache", {})
@@ -128,9 +132,19 @@ class LLMReasoningClient:
     # --- availability ----------------------------------------------------
 
     @property
+    def _fallback_enabled(self) -> bool:
+        fb = self.config.get("fallback") or {}
+        return bool(fb.get("enabled")) and bool(self.fallback_api_key)
+
+    @property
     def available(self) -> bool:
-        """False means every answer this run is degraded, and that is fine."""
-        return bool(self.api_key)
+        """False means every answer this run is degraded, and that is fine.
+
+        True if either the primary or the failsafe provider (R5) could plausibly
+        answer — callers (health check, router mode) care whether prose is
+        possible this run, not which provider supplies it.
+        """
+        return bool(self.api_key) or self._fallback_enabled
 
     def _model(self, role: str) -> dict[str, Any]:
         """Config for a role: `router`, `merge`, or `explanation`."""
@@ -138,6 +152,24 @@ class LLMReasoningClient:
         if role not in models:
             raise KeyError(f"config/llm.yaml has no models.{role}")
         return models[role]
+
+    def _fallback_model(self, role: str) -> dict[str, Any] | None:
+        """Failsafe provider config for a role, or None if it isn't usable.
+
+        `models` is intentionally per-role and optional — a role with no entry
+        here just has no failsafe and degrades normally once the primary fails.
+        """
+        if not self._fallback_enabled:
+            return None
+        fb = self.config.get("fallback") or {}
+        models = fb.get("models", {})
+        if role not in models:
+            return None
+        return {
+            "model": models[role],
+            "base_url": fb.get("base_url"),
+            "timeout_s": float(fb.get("timeout_s", 5.0)),
+        }
 
     def _limits(self) -> dict[str, Any]:
         return self.config.get("limits", {})
@@ -169,8 +201,10 @@ class LLMReasoningClient:
             self.usage.cache_hits += 1
             return cached
 
-        if not self.available:
-            log.info("no OPENAI_API_KEY — degrading (SRS 3.4.3)")
+        fallback = self._fallback_model(role)
+
+        if not self.available and fallback is None:
+            log.info("no OPENAI_API_KEY and no usable failsafe — degrading (SRS 3.4.3)")
             self.usage.failures += 1
             return None
 
@@ -178,28 +212,60 @@ class LLMReasoningClient:
         timeout_s = float(limits.get("request_timeout_s", 8.0))
         attempts = int(limits.get("max_retries", 1)) + 1
         cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
-        if cap and self.usage.cost_usd >= cap:
+        cap_reached = bool(cap and self.usage.cost_usd >= cap)
+        if cap_reached:
             log.warning(
-                "daily spend cap ($%.2f, spent $%.2f) reached — degrading (SRS 3.4.3, R5)",
+                "daily spend cap ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
                 cap,
                 self.usage.cost_usd,
+                "trying the free failsafe" if fallback else "degrading",
             )
-            self.usage.failures += 1
-            return None
 
         started = time.perf_counter()
-        for attempt in range(1, attempts + 1):
+
+        if self.api_key and not cap_reached:
+            for attempt in range(1, attempts + 1):
+                try:
+                    text, cost = await asyncio.wait_for(
+                        self._call(model, system, user, temperature, max_tokens, json_mode, model_cfg),
+                        timeout=timeout_s,
+                    )
+                except TimeoutError:
+                    log.warning("llm timed out after %.1fs (attempt %d/%d)", timeout_s, attempt, attempts)
+                except Exception as exc:  # noqa: BLE001 - degrading is the contract
+                    log.warning("llm call failed (attempt %d/%d): %s", attempt, attempts, exc)
+                else:
+                    self.usage.calls += 1
+                    self.usage.elapsed_s += time.perf_counter() - started
+                    self.usage.cost_usd += cost
+                    if text:
+                        self._cache.put(cache_key, text)
+                    return text
+
+        if fallback is not None:
+            fallback_cfg = {"model": fallback["model"]}  # no cost fields — free tier, costs 0
             try:
                 text, cost = await asyncio.wait_for(
-                    self._call(model, system, user, temperature, max_tokens, json_mode, model_cfg),
-                    timeout=timeout_s,
+                    self._call(
+                        fallback["model"],
+                        system,
+                        user,
+                        temperature,
+                        max_tokens,
+                        json_mode,
+                        fallback_cfg,
+                        base_url=fallback["base_url"],
+                        api_key=self.fallback_api_key,
+                    ),
+                    timeout=fallback["timeout_s"],
                 )
             except TimeoutError:
-                log.warning("llm timed out after %.1fs (attempt %d/%d)", timeout_s, attempt, attempts)
+                log.warning("failsafe llm timed out after %.1fs — degrading", fallback["timeout_s"])
             except Exception as exc:  # noqa: BLE001 - degrading is the contract
-                log.warning("llm call failed (attempt %d/%d): %s", attempt, attempts, exc)
+                log.warning("failsafe llm call failed: %s — degrading", exc)
             else:
                 self.usage.calls += 1
+                self.usage.fallback_calls += 1
                 self.usage.elapsed_s += time.perf_counter() - started
                 self.usage.cost_usd += cost
                 if text:
@@ -208,8 +274,22 @@ class LLMReasoningClient:
 
         self.usage.failures += 1
         self.usage.elapsed_s += time.perf_counter() - started
-        log.warning("llm unavailable after %d attempts — degrading", attempts)
+        log.warning("llm unavailable after primary and failsafe — degrading")
         return None
+
+    def _client_for(self, base_url: str | None, api_key: str | None) -> Any:
+        """The primary and failsafe providers each get one lazily-built, cached
+        client — OpenRouter speaks the OpenAI API, so only base_url/api_key differ.
+        """
+        from openai import AsyncOpenAI
+
+        if base_url is None:
+            if self._client is None:
+                self._client = AsyncOpenAI(api_key=self.api_key)
+            return self._client
+        if self._fallback_client is None:
+            self._fallback_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return self._fallback_client
 
     async def _call(
         self,
@@ -220,16 +300,18 @@ class LLMReasoningClient:
         max_tokens: int,
         json_mode: bool,
         model_cfg: dict[str, Any],
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
     ) -> tuple[str | None, float]:
         """The provider-specific part. Swapping vendors means changing this method.
 
         Returns the text and what it cost, so `generate()` can charge it against
         `daily_spend_cap_usd` (R5) without knowing anything provider-specific.
+        `base_url`/`api_key` select the failsafe provider (R5); omitted, this
+        calls the primary provider.
         """
-        if self._client is None:
-            from openai import AsyncOpenAI
-
-            self._client = AsyncOpenAI(api_key=self.api_key)
+        client = self._client_for(base_url, api_key)
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -243,7 +325,7 @@ class LLMReasoningClient:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = await client.chat.completions.create(**kwargs)
         text = response.choices[0].message.content
         cost = self._cost(model_cfg, response.usage)
         return text, cost
