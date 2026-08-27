@@ -243,6 +243,26 @@ def test_a_region_named_reports_the_leader_within_that_region_only():
     assert "United States" not in claims
 
 
+def test_an_apparel_finding_states_its_own_scope_is_a_different_category_than_edb():
+    """Regression, found live 2026-08-27: this agent's Comtrade knit/woven
+    figures and apparel_manufacturing's EDB "Apparel" figures are two real,
+    deliberately separate categorizations (kg/loaders/apparel.py's own
+    docstring), but nothing told the merge LLM that, so it narrated the
+    difference as an unexplained "discrepancy" instead of the expected,
+    non-reconcilable scope difference it actually is.
+    """
+    out, _ = run(query="which market takes the largest share of apparel exports?")
+
+    assert any("not reconciled" in a for a in out["assumptions"])
+    assert any("EDB" in a for a in out["assumptions"])
+
+
+def test_a_non_apparel_finding_has_no_edb_scope_note():
+    out, _ = run()  # default query: tea
+
+    assert not any("EDB" in a for a in out["assumptions"])
+
+
 def test_a_region_with_no_matching_partners_is_reported_honestly():
     out, _ = run(
         query="which market takes the largest share of tea exports in oceania?",

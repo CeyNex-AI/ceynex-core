@@ -121,6 +121,24 @@ async def test_overview_query_when_no_partner_named():
     assert output["degraded"] is False
 
 
+async def test_overview_states_its_own_scope_is_a_different_category_than_comtrade():
+    """Regression, found live 2026-08-27: "top apparel export markets in
+    Asia" ran this agent (EDB's combined "Apparel" sub-category) alongside
+    export_analytics (Comtrade's HS 61/62 knit/woven split) -- two real,
+    deliberately separate categorizations that were never meant to match,
+    but the merge LLM narrated the difference as an unexplained
+    "discrepancy" with nothing telling it these are different sources.
+    """
+    deps = _deps(kg=FakeKGClient(overview_rows=_OVERVIEW_ROWS))
+
+    state = new_state(query="How are apparel exports doing overall?", user_id="u1")
+    result = await apparel_manufacturing_node(state, deps)
+    output = result["agent_outputs"]["apparel_manufacturing"]
+
+    assert any("not reconciled" in a for a in output["assumptions"])
+    assert any("Comtrade" in a for a in output["assumptions"])
+
+
 async def test_a_region_named_reports_only_that_regions_top_markets():
     """Regression, found live 2026-08-27: "top apparel export markets in
     Asia" answered with the global top 5 (none of them Asian) and declared
