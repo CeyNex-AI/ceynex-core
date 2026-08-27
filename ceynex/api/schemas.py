@@ -186,3 +186,42 @@ class ProviderStatusItem(BaseModel):
 class LLMStatusResponse(BaseModel):
     openai: ProviderStatusItem
     openrouter: ProviderStatusItem
+
+
+# --- account: notification preferences + API keys ---------------------------
+
+
+class NotificationPreferences(BaseModel):
+    dq_flag_alerts: bool
+    forecast_updates: bool
+    weekly_digest: bool
+
+
+class ApiKeyItem(BaseModel):
+    id: int
+    label: str
+    key_prefix: str
+    created_at: str
+    last_used_at: str | None
+    revoked: bool
+
+
+class ApiKeyListResponse(BaseModel):
+    keys: list[ApiKeyItem]
+
+
+class CreateApiKeyRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+
+
+class CreateApiKeyResponse(BaseModel):
+    id: int
+    label: str
+    key: str
+    key_prefix: str
+    created_at: str
+
+
+class RevokeApiKeyResponse(BaseModel):
+    id: int
+    revoked: bool
