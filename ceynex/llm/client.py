@@ -58,6 +58,23 @@ class LLMUsage:
         self.cost_usd += other.cost_usd
 
 
+@dataclass
+class ProviderStatus:
+    """One provider's health, for the admin dashboard (SRS 3.5.4).
+
+    Derived from the outcome of the most recent real `generate()` attempt,
+    not a live ping — free (no extra API spend just to check), but only as
+    fresh as the last actual query that reached this provider. An admin
+    reading "openai: down" alongside "openrouter: ok" is the point: GPT-4o
+    needs attention, and the free failsafe is covering in the meantime.
+    """
+
+    configured: bool
+    status: str  # "not_configured" | "cap_reached" | "unknown" | "ok" | "down"
+    last_error: str | None = None
+    last_checked_at: float | None = None  # unix epoch seconds; None if never attempted
+
+
 class PromptCache:
     """Content-addressed cache on disk, keyed by a hash of the exact request.
 
@@ -120,6 +137,15 @@ class LLMReasoningClient:
     _cache: PromptCache = field(init=False)
     _client: Any = field(init=False, default=None)
     _fallback_client: Any = field(init=False, default=None)
+    # Last-attempt outcome per provider, for provider_status() below. None
+    # means "never attempted since this process started", distinct from a
+    # real success or failure.
+    _primary_last_ok: bool | None = field(init=False, default=None)
+    _primary_last_error: str | None = field(init=False, default=None)
+    _primary_last_checked_at: float | None = field(init=False, default=None)
+    _fallback_last_ok: bool | None = field(init=False, default=None)
+    _fallback_last_error: str | None = field(init=False, default=None)
+    _fallback_last_checked_at: float | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         cache_cfg = self.config.get("cache", {})
@@ -145,6 +171,58 @@ class LLMReasoningClient:
         possible this run, not which provider supplies it.
         """
         return bool(self.api_key) or self._fallback_enabled
+
+    def _cap_reached(self) -> bool:
+        cap = float(self._limits().get("daily_spend_cap_usd", 0) or 0)
+        return bool(cap and self.usage.cost_usd >= cap)
+
+    def provider_status(self) -> dict[str, ProviderStatus]:
+        """Per-provider health for the admin dashboard (SRS 3.5.4).
+
+        Keyed "openai"/"openrouter" rather than "primary"/"fallback" -- the
+        provider names are what an admin recognises and needs to go fix,
+        not this client's internal role labels.
+        """
+        cap_reached = self._cap_reached()
+        return {
+            "openai": self._describe(
+                configured=bool(self.api_key),
+                last_ok=self._primary_last_ok,
+                last_error=self._primary_last_error,
+                last_checked_at=self._primary_last_checked_at,
+                cap_reached=cap_reached,
+            ),
+            "openrouter": self._describe(
+                configured=self._fallback_enabled,
+                last_ok=self._fallback_last_ok,
+                last_error=self._fallback_last_error,
+                last_checked_at=self._fallback_last_checked_at,
+            ),
+        }
+
+    @staticmethod
+    def _describe(
+        *,
+        configured: bool,
+        last_ok: bool | None,
+        last_error: str | None,
+        last_checked_at: float | None,
+        cap_reached: bool = False,
+    ) -> ProviderStatus:
+        if not configured:
+            return ProviderStatus(configured=False, status="not_configured")
+        if cap_reached:
+            # Calls are being deliberately skipped to protect the budget
+            # (R5) -- distinct from a real failure: nothing here says GPT-4o
+            # itself is broken, only that today's spend cap is spent.
+            return ProviderStatus(configured=True, status="cap_reached")
+        if last_ok is None:
+            return ProviderStatus(configured=True, status="unknown")
+        if last_ok:
+            return ProviderStatus(configured=True, status="ok", last_checked_at=last_checked_at)
+        return ProviderStatus(
+            configured=True, status="down", last_error=last_error, last_checked_at=last_checked_at
+        )
 
     def _model(self, role: str) -> dict[str, Any]:
         """Config for a role: `router`, `merge`, or `explanation`."""
@@ -224,6 +302,7 @@ class LLMReasoningClient:
         started = time.perf_counter()
 
         if self.api_key and not cap_reached:
+            primary_error: str | None = None
             for attempt in range(1, attempts + 1):
                 try:
                     text, cost = await asyncio.wait_for(
@@ -231,16 +310,27 @@ class LLMReasoningClient:
                         timeout=timeout_s,
                     )
                 except TimeoutError:
+                    primary_error = f"timed out after {timeout_s:.1f}s"
                     log.warning("llm timed out after %.1fs (attempt %d/%d)", timeout_s, attempt, attempts)
                 except Exception as exc:  # noqa: BLE001 - degrading is the contract
+                    primary_error = str(exc)
                     log.warning("llm call failed (attempt %d/%d): %s", attempt, attempts, exc)
                 else:
                     self.usage.calls += 1
                     self.usage.elapsed_s += time.perf_counter() - started
                     self.usage.cost_usd += cost
+                    self._primary_last_ok = True
+                    self._primary_last_error = None
+                    self._primary_last_checked_at = time.time()
                     if text:
                         self._cache.put(cache_key, text)
                     return text
+            # Every attempt failed -- record once per generate() call, not
+            # per retry, so provider_status() reflects "is the primary
+            # working right now" rather than flapping on individual retries.
+            self._primary_last_ok = False
+            self._primary_last_error = primary_error
+            self._primary_last_checked_at = time.time()
 
         if fallback is not None:
             fallback_cfg = {"model": fallback["model"]}  # no cost fields — free tier, costs 0
@@ -260,14 +350,23 @@ class LLMReasoningClient:
                     timeout=fallback["timeout_s"],
                 )
             except TimeoutError:
+                self._fallback_last_ok = False
+                self._fallback_last_error = f"timed out after {fallback['timeout_s']:.1f}s"
+                self._fallback_last_checked_at = time.time()
                 log.warning("failsafe llm timed out after %.1fs — degrading", fallback["timeout_s"])
             except Exception as exc:  # noqa: BLE001 - degrading is the contract
+                self._fallback_last_ok = False
+                self._fallback_last_error = str(exc)
+                self._fallback_last_checked_at = time.time()
                 log.warning("failsafe llm call failed: %s — degrading", exc)
             else:
                 self.usage.calls += 1
                 self.usage.fallback_calls += 1
                 self.usage.elapsed_s += time.perf_counter() - started
                 self.usage.cost_usd += cost
+                self._fallback_last_ok = True
+                self._fallback_last_error = None
+                self._fallback_last_checked_at = time.time()
                 if text:
                     self._cache.put(cache_key, text)
                 return text
@@ -398,3 +497,11 @@ class FakeLLMClient:
     async def generate_explanation(self, context: dict[str, Any]) -> str:
         text = await self.generate("explanation", EXPLANATION_SYSTEM, json.dumps(context, default=str))
         return text or ""
+
+    def provider_status(self) -> dict[str, ProviderStatus]:
+        """Never real network, so "ok"/"down" from a fake response would be a
+        fabricated status -- "unknown" (configured but never really checked)
+        is the honest answer regardless of `available`.
+        """
+        status = ProviderStatus(configured=self.available, status="unknown" if self.available else "not_configured")
+        return {"openai": status, "openrouter": ProviderStatus(configured=False, status="not_configured")}

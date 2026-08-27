@@ -28,6 +28,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
 from ceynex.api import admin
+from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.routes.auth import TokenPayload, require_admin
 from ceynex.api.schemas import (
     DQFlagItem,
@@ -35,15 +36,53 @@ from ceynex.api.schemas import (
     IngestRequest,
     IngestResponse,
     IngestResultItem,
+    LLMStatusResponse,
     ModelsResponse,
     ModelSummary,
     PipelineRunItem,
     PipelineStatusResponse,
+    ProviderStatusItem,
     ResolveDQFlagResponse,
     RetrainRequest,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+# --- LLM provider status -------------------------------------------------
+
+
+def _iso(epoch_s: float | None) -> str | None:
+    if epoch_s is None:
+        return None
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(epoch_s, tz=UTC).isoformat()
+
+
+@router.get("/llm/status", response_model=LLMStatusResponse)
+async def llm_status(
+    # require_admin first: FastAPI resolves dependencies in parameter order,
+    # and a bad/missing token should 401/403 even if the runtime dependency
+    # below would itself fail (e.g. in a test with no Runtime configured).
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+    runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
+) -> LLMStatusResponse:
+    status = runtime.llm.provider_status()
+    return LLMStatusResponse(
+        openai=ProviderStatusItem(
+            configured=status["openai"].configured,
+            status=status["openai"].status,
+            last_error=status["openai"].last_error,
+            last_checked_at=_iso(status["openai"].last_checked_at),
+        ),
+        openrouter=ProviderStatusItem(
+            configured=status["openrouter"].configured,
+            status=status["openrouter"].status,
+            last_error=status["openrouter"].last_error,
+            last_checked_at=_iso(status["openrouter"].last_checked_at),
+        ),
+    )
 
 
 # --- models / retrain --------------------------------------------------
