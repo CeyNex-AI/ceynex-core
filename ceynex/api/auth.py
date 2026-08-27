@@ -54,6 +54,14 @@ _USERS: dict[str, DemoUser] = {
 }
 
 
+def role_for_email(email: str) -> str | None:
+    """The role a fixed demo account maps to, or None if `email` isn't one of
+    the four. Exposed for `api_keys.py` to build a `TokenPayload` for a key
+    without duplicating `_ROLE_BY_EMAIL`, and so a key always authenticates at
+    its account's *current* role rather than one frozen at key-creation time."""
+    return _ROLE_BY_EMAIL.get(email.strip().lower())
+
+
 def authenticate(email: str, password: str) -> DemoUser | None:
     """None on any failure — never distinguish "no such user" from "wrong
     password" to a caller, which would let someone enumerate valid emails."""
