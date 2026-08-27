@@ -153,6 +153,20 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                     period=str(year),
                 )
             )
+
+        if item in ("apparel_knit", "apparel_woven"):
+            # See apparel_manufacturing.py's matching note -- same finding,
+            # from the other side. Comtrade's HS-code split and EDB's own
+            # combined "Apparel" sub-category are separate sources, loaded
+            # under different item keys specifically so they never collide
+            # (kg/loaders/apparel.py's docstring); a same-country figure from
+            # each is expected to differ, not a discrepancy to reconcile.
+            assumptions.append(
+                f"{item.replace('_', ' ').title()} here is Comtrade's HS-code-based category, a "
+                "separate source and boundary from EDB's own combined 'Apparel' sub-category "
+                "reported elsewhere -- the two are not reconciled against each other, so they "
+                "will not match."
+            )
     elif region:
         assumptions.append(f"No {region} destination has recorded {item} exports for {year}.")
     else:

@@ -297,6 +297,21 @@ async def _query_overview(kg: KnowledgeGraphClientProtocol, region: str | None =
             "Figures are Sri Lanka's Apparel sub-category exports only, not the "
             "broader Apparel & Textiles total, to avoid double-counting against "
             "EDB's own aggregate table.",
+            # Found live 2026-08-27: a "top apparel export markets in Asia"
+            # question ran this agent (EDB's own combined "Apparel"
+            # sub-category, kg/loaders/apparel.py) alongside export_analytics
+            # (Comtrade's HS 61/62 knit/woven split, kg/loaders/trade_flows.py)
+            # -- two real, deliberately separate categorizations, loaded from
+            # different sources specifically so their (item, country, year)
+            # merge keys never collide (see that loader's own docstring). The
+            # merge LLM, given both figures with no signal they come from
+            # different category boundaries, narrated it as an unexplained
+            # "discrepancy" rather than the expected, non-reconcilable
+            # scope difference it actually is.
+            "This EDB Apparel sub-category total is a separate source and "
+            "category boundary from the HS 61 knit / HS 62 woven Comtrade "
+            "figures reported elsewhere for the same country -- the two are "
+            "not reconciled against each other, so they will not match.",
         ],
         evidence=evidence,
         confidence=confidence,
