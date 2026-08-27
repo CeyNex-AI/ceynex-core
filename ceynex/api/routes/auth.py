@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from ceynex.api import api_keys
 from ceynex.api.auth import TokenPayload, authenticate, issue_token, verify_token
 from ceynex.api.schemas import LoginRequest, LoginResponse, UserResponse
 
@@ -27,13 +28,23 @@ async def login(request: LoginRequest) -> LoginResponse:
     return LoginResponse(token=issue_token(user), email=user.email, role=user.role)
 
 
+def _verify_bearer(token: str) -> TokenPayload | None:
+    """A `ck_`-prefixed token is an API key (`ceynex/api/api_keys.py`);
+    anything else is a login JWT. Shared by `require_user` and
+    `get_optional_user` so a key works everywhere a token does — query
+    history included, which is the point of "programmatic access"."""
+    if token.startswith(api_keys.KEY_PREFIX):
+        return api_keys.authenticate(token)
+    return verify_token(token)
+
+
 def require_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),  # noqa: B008
 ) -> TokenPayload:
     """FastAPI dependency for any route that needs a signed-in user."""
     if credentials is None:
         raise HTTPException(status_code=401, detail="missing bearer token")
-    payload = verify_token(credentials.credentials)
+    payload = _verify_bearer(credentials.credentials)
     if payload is None:
         raise HTTPException(status_code=401, detail="invalid or expired token")
     return payload
@@ -47,7 +58,7 @@ def get_optional_user(
     something extra (query history) without gating the route itself."""
     if credentials is None:
         return None
-    return verify_token(credentials.credentials)
+    return _verify_bearer(credentials.credentials)
 
 
 def require_admin(user: TokenPayload = Depends(require_user)) -> TokenPayload:  # noqa: B008
