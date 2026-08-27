@@ -6,6 +6,7 @@ from ceynex.llm.client import (
     LLMReasoningClient,
     LLMUsage,
     PromptCache,
+    ProviderStatus,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "LLMReasoningClient",
     "LLMUsage",
     "PromptCache",
+    "ProviderStatus",
 ]

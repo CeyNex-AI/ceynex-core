@@ -403,3 +403,85 @@ async def test_fake_client_records_calls_and_can_be_made_unavailable():
     degraded = FakeLLMClient(available=False)
     assert await degraded.generate_explanation({"a": 1}) == ""
     assert degraded.usage.failures == 1
+
+
+# --- provider_status (SRS 3.5.4 admin dashboard) --------------------------
+
+
+def test_provider_status_is_not_configured_with_no_keys(tmp_path):
+    status = client(tmp_path, api_key=None).provider_status()
+    assert status["openai"].configured is False
+    assert status["openai"].status == "not_configured"
+    assert status["openrouter"].configured is False
+    assert status["openrouter"].status == "not_configured"
+
+
+def test_provider_status_is_unknown_before_any_call(tmp_path):
+    """Configured but never actually exercised since this process started --
+    distinct from a real success or failure, neither of which happened yet.
+    """
+    status = client(tmp_path, api_key="sk-test").provider_status()
+    assert status["openai"].configured is True
+    assert status["openai"].status == "unknown"
+    assert status["openai"].last_checked_at is None
+
+
+async def test_provider_status_is_ok_after_a_successful_call(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+
+    async def succeeds(*args, **kwargs):
+        return "prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", succeeds)
+    await llm.generate("explanation", "sys", "user")
+
+    status = llm.provider_status()["openai"]
+    assert status.status == "ok"
+    assert status.last_error is None
+    assert status.last_checked_at is not None
+
+
+async def test_provider_status_is_down_after_every_attempt_fails(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+
+    async def fails(*args, **kwargs):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(llm, "_call", fails)
+    await llm.generate("explanation", "sys", "user")
+
+    status = llm.provider_status()["openai"]
+    assert status.status == "down"
+    assert status.last_error == "rate limited"
+
+
+async def test_provider_status_distinguishes_a_down_primary_from_an_ok_failsafe(tmp_path, monkeypatch):
+    """The dashboard's whole point: "openai: down" next to "openrouter: ok"
+    tells an admin GPT-4o needs attention while the free failsafe covers it.
+    """
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+
+    async def primary_fails_fallback_succeeds(*args, base_url=None, **kwargs):
+        if base_url is None:
+            raise RuntimeError("openai is down")
+        return "failsafe prose", 0.0
+
+    monkeypatch.setattr(llm, "_call", primary_fails_fallback_succeeds)
+    await llm.generate("explanation", "sys", "user")
+
+    status = llm.provider_status()
+    assert status["openai"].status == "down"
+    assert status["openai"].last_error == "openai is down"
+    assert status["openrouter"].status == "ok"
+
+
+def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
+    """Calls are deliberately skipped to protect the budget (R5) -- an admin
+    should not read that as "GPT-4o is broken", only that today's spend cap
+    is spent. Doesn't need a real generate() call: the cap check reads
+    `usage.cost_usd` live, same as generate() itself does.
+    """
+    llm = client(tmp_path, api_key="sk-test")
+    llm.usage.cost_usd = 5.0  # == CONFIG's daily_spend_cap_usd
+
+    assert llm.provider_status()["openai"].status == "cap_reached"
