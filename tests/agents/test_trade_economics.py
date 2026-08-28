@@ -306,3 +306,106 @@ def test_retrieval_never_rescues_a_refusal_into_a_number():
 
     assert out["figures"] == {}, "a refusal that reports an impact figure is not a refusal"
     assert any("cannot be simulated" in a for a in out["assumptions"])
+
+
+# --- descriptive policy questions (D10, routing fix) ---------------------
+#
+# The branch exists because routing policy questions here *without* it made the
+# system worse: `_classify_shock` fell through to `fx`, so "What does India's
+# Foreign Trade Policy say about imports from Sri Lanka?" was answered with a 5%
+# rupee depreciation and a figure of USD -8,240,802.
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What does India's Foreign Trade Policy say about imports from Sri Lanka?",
+        "What non-tariff measures does the European Union apply to imported spices?",
+        "Does the Netherlands' foreign trade policy identify Sri Lanka as a priority market?",
+        "Does the United Kingdom's trade strategy keep preferential access for Sri Lankan tea?",
+        "Which trade agreement gives Sri Lankan cinnamon preferential access to the European Union?",
+    ],
+)
+def test_a_question_about_what_a_policy_says_is_not_a_shock(query):
+    from ceynex.agents.trade_economics import _classify_shock
+
+    assert _classify_shock(query) == "policy"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What happens to apparel export revenue if Sri Lanka loses GSP+?",
+        "What if the European Union raised tariffs on Sri Lankan tea by 10%?",
+        "How would a 5% depreciation of the Sri Lankan rupee affect apparel exports?",
+        "If the United States withdrew duty-free access for Sri Lankan knitted apparel, what tariff would apply?",
+        "How much would apparel export revenue fall if the United Kingdom ended DCTS preferences?",
+    ],
+)
+def test_a_question_that_posits_a_change_is_still_a_simulation(query):
+    """The descriptive check must not swallow the simulations the agent exists for."""
+    from ceynex.agents.trade_economics import _classify_shock
+
+    assert _classify_shock(query) != "policy"
+
+
+def test_a_price_driver_question_is_not_a_policy_lookup():
+    """S06 in the 30-question set belongs to the agriculture agent.
+
+    A bare "what is" marker classified it as a policy question; the markers are
+    specific to policy instruments for this reason.
+    """
+    from ceynex.agents.trade_economics import _classify_shock
+
+    assert _classify_shock("What is driving the recent movement in cinnamon prices?") != "policy"
+
+
+def test_a_descriptive_question_reports_no_impact_figure():
+    """The whole point of the branch. Nothing was shocked, so nothing moved."""
+    out = asyncio.run(
+        run_with(
+            "What does India's Foreign Trade Policy say about imports from Sri Lanka?",
+            PolicyKG(coverage=GSP_PLUS, documents=("IND-DGFT-FTP-2023",)),
+            SpyRetriever([policy_chunk("India's FTP sets out import licensing for agricultural goods.")]),
+        )
+    )
+
+    assert out["figures"] == {}, "a question about what a document says has no impact figure"
+    assert not any("depreciation" in a.lower() for a in out["assumptions"])
+    assert any(e["source_id"] == "POLICY" for e in out["evidence"])
+
+
+def test_a_descriptive_question_anchors_on_the_destination_not_sri_lanka():
+    """`parse_intent` resolves the longest country name, and "Sri Lanka" is long.
+
+    Measured before the fix: this question anchored on LKA and answered about
+    Indian policy with four passages from Sri Lanka's own export strategy.
+    """
+    spy = SpyRetriever()
+    asyncio.run(
+        run_with(
+            "What does India's Foreign Trade Policy say about imports from Sri Lanka?",
+            PolicyKG(coverage=GSP_PLUS, documents=("IND-DGFT-FTP-2023",)),
+            spy,
+        )
+    )
+
+    assert spy.calls
+    assert spy.calls[0].iso3 == ("IND",), "the destination is India, never the reporter"
+
+
+def test_an_empty_corpus_for_a_country_is_stated_with_its_cypher():
+    """A gap the reader can check beats an answer from the wrong country."""
+    out = asyncio.run(
+        run_with(
+            "Does the Netherlands' foreign trade policy identify Sri Lanka as a priority market?",
+            PolicyKG(coverage=GSP_PLUS, documents=()),
+            SpyRetriever([]),
+        )
+    )
+
+    assert out["figures"] == {}
+    assert "cannot be answered" in out["summary"]
+    assert any(e["source_id"] == "KG" for e in out["evidence"]), (
+        "the Cypher that found no document is the evidence for saying so"
+    )

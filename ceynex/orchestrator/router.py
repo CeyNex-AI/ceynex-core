@@ -43,6 +43,22 @@ SIMULATION_WORDS = (
     "tariff", "duty", "gsp", "fta", "trade agreement", "policy", "simulat",
     "what happens if", "what if", "impact of", "shock",
 )
+
+# Questions about what a destination market's policy *says*, which
+# `trade_economics` answers from the D10 document corpus rather than by
+# simulating anything. Kept as its own list rather than folded into
+# SIMULATION_WORDS because these are not shocks, and a reader of this file
+# should not have to infer that "priority market" is a simulation keyword.
+#
+# `export_analytics` holds only Sri Lanka's own trade flows, so a question about
+# the UK's trade strategy routed to it alone returns no evidence at all —
+# measured at 0 evidence and 0.15 confidence on P03/P04/P05 (EVALUATION.md §7).
+POLICY_WORDS = (
+    "trade strategy", "trade policy", "foreign trade", "export strategy",
+    "preferential", "preference", "non-tariff", "market access",
+    "priority market", "rules of origin", "duty-free", "duty free",
+    "trade agreement", "quota", "licensing",
+)
 FORECAST_WORDS = (
     "forecast", "predict", "projection", "outlook", "next year", "next quarter",
     "next month", "will ", "future", "expected", "going to",
@@ -94,7 +110,9 @@ def keyword_route(query: str) -> RouteDecision:
 
     hits_agriculture = _any(lowered, AGRICULTURE_WORDS)
     hits_apparel = _any(lowered, APPAREL_WORDS)
-    wants_simulation = _any(lowered, SIMULATION_WORDS)
+    # Both go to trade_economics; the agent's own `_classify_shock` decides
+    # whether the question is a shock to simulate or a policy to describe.
+    wants_simulation = _any(lowered, SIMULATION_WORDS) or _any(lowered, POLICY_WORDS)
     wants_forecast = _any(lowered, FORECAST_WORDS)
     wants_analytics = _any(lowered, ANALYTICS_WORDS)
 
@@ -236,13 +254,14 @@ The agents:
 - export_analytics: trends, growth rates, market share, district concentration, rankings. Answers from a knowledge graph.
 - agriculture_commodity: tea, cinnamon, rubber, coconut — prices, production, substitution.
 - apparel_manufacturing: HS 61 knit and HS 62 woven garments — buyer demand, capacity, labour costs.
-- trade_economics: simulating exchange-rate moves, tariffs, and trade-agreement changes on export revenue.
+- trade_economics: two jobs. (a) simulating exchange-rate moves, tariffs, and trade-agreement changes on export revenue; (b) answering what a DESTINATION MARKET's own trade policy says -- it is the only agent with the foreign policy-document corpus (US, UK, India, Canada, Italy, EU, and Sri Lanka's own export strategy).
 - forecast: forward-looking export volume and value projections with intervals.
 
 Rules:
 - Return at least one agent. Never an empty list.
 - A question spanning both sectors gets both sector agents.
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
+- ANY question about a foreign government's or trade bloc's trade policy, trade strategy, tariffs, non-tariff measures, preferences, market access or priority markets gets trade_economics -- INCLUDING when it only asks what that policy SAYS and simulates nothing. "What does India's Foreign Trade Policy say about imports from Sri Lanka?", "What non-tariff measures does the EU apply to spices?" and "Does the Netherlands identify Sri Lanka as a priority market?" are all trade_economics. export_analytics holds only Sri Lanka's own trade flows and cannot answer any of them; routing such a question to it alone returns no evidence at all.
 - A trend, growth rate, ranking ("fastest", "largest", "top", "which country"), market share, or concentration question gets export_analytics, IN ADDITION TO the sector agent(s) it names -- not instead of them. "Which country is the fastest growing market for cinnamon?" is both agriculture_commodity (names cinnamon) and export_analytics (asks for a growth ranking) at once.
 - relevance is 0.0-1.0 per agent: how central it is to the question.
 - CeyNex covers only agriculture (tea, cinnamon, rubber, coconut) and apparel. Set out_of_scope true if

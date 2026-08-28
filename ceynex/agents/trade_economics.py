@@ -22,10 +22,12 @@ its assumptions rather than implying a precision it does not have.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 from ceynex.agents.common import (
     AgentDeps,
+    Intent,
     evidence_from_policy,
     evidence_from_query,
     finish,
@@ -37,7 +39,7 @@ from ceynex.kg.client import KnowledgeGraphUnavailableError
 from ceynex.kg.queries import hs_hierarchy
 from ceynex.retrieval.rates import SourcedRate, extract_tariff_rate
 from ceynex.retrieval.schema import SIMULATION_MEASURES, PolicyChunk, RetrievalFilter
-from ceynex.retrieval.tagging import HS_FOR_ITEM
+from ceynex.retrieval.tagging import HS_FOR_ITEM, countries_in
 from ceynex.settings import elasticity_config
 
 log = logging.getLogger(__name__)
@@ -59,6 +61,52 @@ SHOCK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("agreement", ("gsp", "gsp+", "agreement", "fta", "preference", "duty-free", "duty free")),
     ("tariff", ("tariff", "duty", "customs", "import tax")),
     ("fx", ("deprecia", "apprecia", "exchange rate", "rupee", "lkr", "currency", "devalu")),
+)
+
+# Words that posit a change. Their presence makes a question a simulation — the
+# reader is asking what *would happen*, not what the rules currently are.
+CHANGE_MARKERS = (
+    "what if", "if the", "if sri lanka", "if a ", "if every", "were to", "would",
+    "happens to", "happened", "impact of", "effect of", "suppose", "simulat",
+    "raise", "raised", "raises", "withdrew", "withdraw", "withdrawn", "lose",
+    "loses", "losing", "lost", "end ", "ends", "ended", "ending", "suspend",
+    "remove", "increase", "cut ", "fell", "falls", "fall ", "change",
+)
+
+# Words that mark a question about what a policy *says*. Answered from the
+# document corpus, not by simulating anything.
+#
+# This distinction exists because the alternative is much worse than a missing
+# answer. `_classify_shock` used to fall through to `fx` for anything it did not
+# recognise, so "What does India's Foreign Trade Policy say about imports from
+# Sri Lanka?" was answered with a 5% rupee-depreciation simulation and a figure
+# of USD -8,240,802 — a confident number about a currency move nobody mentioned,
+# in reply to a question about a document. Routing such questions here without
+# this branch would have made the system worse, not better.
+# Deliberately specific. A bare "what is"/"what are" was tried and removed: it
+# classified "What is driving the recent movement in cinnamon prices?" (S06, a
+# question for the agriculture agent about price drivers) as a policy lookup.
+# Every marker here names a policy instrument or asks what a document states.
+DESCRIPTIVE_MARKERS = (
+    "what does", "say about", "says about", "state about", "identify",
+    "priority market", "priorities", "trade strategy", "trade policy",
+    "foreign trade policy", "export strategy", "non-tariff", "measures does",
+    "measures do", "rules of origin", "provisions", "does the", "do the ",
+    "which trade agreement", "market access", "preferential access", "eligible",
+    "what tariff", "which tariff", "what rate", "what duty",
+)
+
+#: What kind of measure a descriptive question is about, so retrieval can be
+#: filtered to it. Checked in order; the first match wins.
+DESCRIPTIVE_MEASURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ntm", ("non-tariff", "sanitary", "phytosanitary", "standards", "certification",
+             "quota", "licensing", "technical barrier", "traceability")),
+    ("tariff", ("tariff", "duty", "duties", "customs", "mfn")),
+    ("fta", ("agreement", "gsp", "dcts", "fta", "preference", "preferential",
+             "rules of origin", "duty-free", "duty free")),
+    ("export_promotion", ("export promotion", "export development", "priority market",
+                          "market access", "priorities", "strategy")),
+    ("investment", ("investment", "fdi")),
 )
 
 
@@ -87,6 +135,11 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     shock = _classify_shock(state["query"])
     magnitude = intent.pct_change if intent.pct_change is not None else 0.05
 
+    # A question about what a policy *says* is not a shock, and answering it with
+    # one produces a figure nobody asked for. See `_describe_policy`.
+    if shock == "policy":
+        return await _describe_policy(state, deps, intent)
+
     # Which sectors the question touches. Both, unless it named one.
     sectors = _sectors_for(state, intent.item)
 
@@ -109,9 +162,13 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         hs_prefixes = tuple(hs_hierarchy(_hs_for_item(item)))
 
         if shock in ("agreement", "tariff"):
-            chunks, retrieval_detail = await _retrieve_policy(
-                deps, state, partner=intent.partner, hs_prefixes=hs_prefixes
+            context = await _retrieve_policy(
+                deps,
+                state,
+                partner=_destination(state["query"], intent),
+                hs_prefixes=hs_prefixes,
             )
+            chunks, retrieval_detail = context.chunks, context.detail
             sourced = extract_tariff_rate(chunks, hs_prefixes) if chunks else None
 
         baseline, baseline_year, baseline_cypher = await _baseline_value(deps, item)
@@ -382,7 +439,127 @@ async def _simulate_agreement_loss(
     return (baseline * revenue_change, revenue_change, detail), cypher
 
 
+# --- describing a policy, rather than shocking one (D10) ------------------
+
+
+async def _describe_policy(
+    state: AgentState, deps: AgentDeps, intent: Intent
+) -> dict[str, Any]:
+    """Answer "what does this market's policy say" from the documents. No simulation.
+
+    **Produces no impact figures, deliberately.** Nothing was shocked, so there
+    is no impact to report, and inventing one is the failure this branch exists
+    to prevent: before it, "What does India's Foreign Trade Policy say about
+    imports from Sri Lanka?" fell through to the `fx` default and was answered
+    with a 5% rupee depreciation and a figure of USD -8,240,802.
+
+    Where the graph can answer part of the question it still does. A question
+    naming an item gets its `agreement_coverage` lookup, so "which agreement
+    gives cinnamon preferential access" is answered from the graph and the
+    document corroborates it, rather than the other way round — the graph is the
+    source of record for coverage, and a retrieved passage that disagreed with it
+    would be a corpus problem, not a correction.
+    """
+    partner = _destination(state["query"], intent)
+    hs_prefixes = tuple(hs_hierarchy(_hs_for_item(intent.item))) if intent.item else ()
+    measures = _descriptive_measures(state["query"])
+
+    evidence: list[Evidence] = []
+    assumptions: list[str] = [
+        "This answers what the cited documents say. Nothing is simulated and no "
+        "impact figure is derived.",
+        "Policy documents are recorded `unverified`: no human has checked these "
+        "passages against the issuing authority's current text.",
+    ]
+    lines: list[str] = []
+
+    # 1. What the graph knows, when the question named goods.
+    if intent.item:
+        rows, cypher = await deps.kg.run(*q.agreement_coverage(_hs_for_item(intent.item)))
+        if rows:
+            names = ", ".join(sorted({r["agreement"] for r in rows}))
+            lines.append(
+                f"The knowledge graph records {intent.item} (HS {rows[0]['matched_on']}) as "
+                f"covered by {names}."
+            )
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"{intent.item.replace('_', ' ').title()} exports under HS "
+                        f"{rows[0]['matched_on']} are covered by {names} in the knowledge graph."
+                    ),
+                    cypher=cypher,
+                )
+            )
+
+    # 2. What the documents say.
+    context = await _retrieve_policy(
+        deps,
+        state,
+        partner=partner,
+        hs_prefixes=hs_prefixes,
+        measure_types=measures,
+        limit=4,
+    )
+
+    if context.chunks:
+        sources = sorted({c.title for c in context.chunks})
+        lines.append(
+            f"{len(context.chunks)} passage(s) from {', '.join(sources)} address this."
+        )
+        evidence.extend(_policy_evidence(context.chunks, context.detail, limit=4))
+    else:
+        # The corpus not holding something is a real answer and has to be said in
+        # the prose, not left as an empty evidence list the reader must notice.
+        where = f"for {partner}" if partner else "for the market named"
+        lines.append(
+            f"No policy document {where} in the corpus addresses this, so the question "
+            "cannot be answered from the documents CeyNex holds."
+        )
+        assumptions.append(
+            f"Policy retrieval returned nothing: {context.detail}. "
+            "Reporting the gap rather than answering from the wrong country's document."
+        )
+        if context.cypher:
+            held = ", ".join(sorted(r["doc_id"] for r in context.documents)) or "none"
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"The knowledge graph's indexed policy documents {where} are: {held}. "
+                        "None of them contains a passage answering this question."
+                    ),
+                    cypher=context.cypher,
+                )
+            )
+
+    return await finish(
+        agent=AGENT,
+        state=state,
+        deps=deps,
+        summary=" ".join(lines),
+        figures={},
+        evidence=evidence,
+        assumptions=assumptions,
+    )
+
+
 # --- policy retrieval (D10) ----------------------------------------------
+
+
+@dataclass
+class PolicyContext:
+    """What retrieval found, plus the graph lookup that scoped it.
+
+    The Cypher comes back so a descriptive answer can cite the query that decided
+    which documents were eligible — including when it found none, which is the
+    evidence for saying the corpus holds nothing for that country.
+    """
+
+    chunks: list[PolicyChunk]
+    detail: str
+    doc_ids: tuple[str, ...] = ()
+    documents: list[dict[str, Any]] = field(default_factory=list)
+    cypher: str = ""
 
 
 async def _retrieve_policy(
@@ -391,8 +568,10 @@ async def _retrieve_policy(
     *,
     partner: str | None,
     hs_prefixes: tuple[str, ...],
-) -> tuple[list[PolicyChunk], str]:
-    """Graph-anchored policy retrieval. Returns `(chunks, detail)`; never raises.
+    measure_types: tuple[str, ...] = SIMULATION_MEASURES,
+    limit: int = 5,
+) -> PolicyContext:
+    """Graph-anchored policy retrieval. Never raises.
 
     Anchoring happens in two steps, and both matter:
 
@@ -412,32 +591,37 @@ async def _retrieve_policy(
     """
     retriever = deps.extras.get("policy")
     if retriever is None:
-        return [], "policy retrieval not configured"
+        return PolicyContext([], "policy retrieval not configured")
 
     try:
         rows, doc_cypher = await deps.kg.run(
             *q.policy_documents_for(iso3=partner, hs_code=hs_prefixes[0] if hs_prefixes else None)
         )
     except KnowledgeGraphUnavailableError as exc:
-        return [], f"policy document lookup failed: {exc}"
+        return PolicyContext([], f"policy document lookup failed: {exc}")
 
     doc_ids = tuple(row["doc_id"] for row in rows)
     if not doc_ids:
-        return [], f"no policy document matches this country and code; {doc_cypher.split()[0]}"
+        return PolicyContext(
+            [],
+            "the knowledge graph holds no indexed policy document for this country",
+            cypher=doc_cypher,
+            documents=rows,
+        )
 
     filters = RetrievalFilter(
         iso3=(partner,) if partner else (),
         hs_prefixes=hs_prefixes,
-        measure_types=SIMULATION_MEASURES,
+        measure_types=measure_types,
         doc_ids=doc_ids,
         extra_notes=[f"documents scoped by Cypher: {' '.join(doc_cypher.split())[:160]}"],
     )
     try:
-        chunks, description = await retriever.search(state["query"], filters=filters)
+        chunks, description = await retriever.search(state["query"], filters=filters, limit=limit)
     except Exception as exc:  # noqa: BLE001 - retrieval degrades, it never fails the query
         log.warning("%s: policy retrieval unavailable: %s", AGENT, exc)
-        return [], f"policy retrieval unavailable: {exc}"
-    return chunks, description
+        return PolicyContext([], f"policy retrieval unavailable: {exc}", doc_ids, rows, doc_cypher)
+    return PolicyContext(chunks, description, doc_ids, rows, doc_cypher)
 
 
 def _policy_evidence(
@@ -480,11 +664,54 @@ def _policy_evidence(
 
 
 def _classify_shock(query: str) -> str:
+    """`policy` | `agreement` | `tariff` | `fx`.
+
+    The descriptive check runs first and is the only one that can veto the
+    others: "what non-tariff measures does the EU apply" contains "tariff" and is
+    not a tariff shock, and "which trade agreement covers cinnamon" contains
+    "agreement" and simulates nothing. A question is descriptive when it asks
+    what the rules *are* and nothing in it posits a change.
+    """
     lowered = query.lower()
+    if any(marker in lowered for marker in DESCRIPTIVE_MARKERS) and not any(
+        marker in lowered for marker in CHANGE_MARKERS
+    ):
+        return "policy"
     for shock, keywords in SHOCK_KEYWORDS:
         if any(keyword in lowered for keyword in keywords):
             return shock
     return "fx"
+
+
+def _destination(query: str, intent: Intent) -> str | None:
+    """The destination market the question is about. Never Sri Lanka.
+
+    `parse_intent().partner` resolves the *longest* country name in the query,
+    and "Sri Lanka" is longer than most. In "What does India's Foreign Trade
+    Policy say about imports from Sri Lanka?" that returns LKA, which anchors
+    policy retrieval on Sri Lanka's own export strategy and answers a question
+    about Indian policy with four confident passages from the wrong country's
+    document — measured, before this existed.
+
+    Sri Lanka is always the reporter (`queries.REPORTER_ISO3`); it is never one
+    of its own export destinations, so it can be excluded outright rather than
+    disambiguated.
+    """
+    if intent.partner and intent.partner != q.REPORTER_ISO3:
+        return intent.partner
+    for iso3 in countries_in(query):
+        if iso3 != q.REPORTER_ISO3:
+            return iso3
+    return None
+
+
+def _descriptive_measures(query: str) -> tuple[str, ...]:
+    """Which measure types a descriptive question is about. Empty means all."""
+    lowered = query.lower()
+    for measure, keywords in DESCRIPTIVE_MEASURES:
+        if any(keyword in lowered for keyword in keywords):
+            return (measure,)
+    return ()
 
 
 SECTOR_WORDS: dict[str, tuple[str, ...]] = {
