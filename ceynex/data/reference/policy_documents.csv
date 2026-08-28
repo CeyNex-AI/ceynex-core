@@ -69,20 +69,46 @@
 #     needed.
 #   * Netherlands, 2 of 3 — /topics/international-trade and the ministry index
 #     are navigation pages. The 2022 policy document itself is kept.
+#
+# FETCHED 2026-08-28. 11 of 15 downloaded; 6 of those extract into real text and
+# are in the index. The rows below all stay in the manifest — a row with no
+# sha256, or one that fetched but did not extract, is the record of a gap, and
+# deleting it would lose the fact that the source was tried.
+#
+#   HTTP 404, URL needs replacing:
+#     IND-MOC-TRADE-AGREEMENTS, EU-DGTRADE-POLICY, CAN-GAC-STATE-OF-TRADE
+#
+#   Fetched but served a JavaScript shell — the HTML given to a non-browser
+#   client holds the page chrome and none of the policy text, so extraction
+#   returns a few hundred characters of navigation. `extract.py` rejects these
+#   rather than indexing them (MIN_DOCUMENT_CHARS), because a citation to a
+#   nav menu looks exactly like a citation to a document:
+#     DEU-BMWK-FOREIGN-TRADE (93 chars), ARE-MOFA-PRIORITIES (123),
+#     NLD-BHOS-POLICY-2022 (456), ARE-EXPORT-DEV-POLICY (898),
+#     ITA-MAECI-ECON-DIPLOMACY (1,351)
+#   Each of these pages links to a PDF; pointing the URL at the PDF is the fix
+#   and needs no code change.
+#
+#   IN THE INDEX (6): LKA-EDB-NES-2018, GBR-DBT-TRADE-STRATEGY-2025,
+#   CAN-GAC-BRIEFING-2025, USA-USTR-TARIFF-ACTIONS, IND-DGFT-FTP-2023,
+#   ITA-MAECI-EXPORT-PLAN.
+#   Countries covered: LKA, GBR, CAN, USA, IND, ITA.
+#   NOT covered: DEU, NLD, ARE, CHN, FRA — half the top 10. Any evaluation
+#   result for those countries measures an empty corpus, not the retriever.
 # ---------------------------------------------------------------------------
 doc_id,iso3,title,publisher,url,doc_type,hs_focus,agreements,language,published,retrieved_at,sha256,verified
 LKA-EDB-NES-2018,LKA,National Export Strategy of Sri Lanka 2018-2022,Sri Lanka Export Development Board,https://www.srilankabusiness.com/pdf/nes/national-export-strategy-of-sri-lanka.pdf,strategy,0902;0906;4001;1513;61;62,,en,2018,,,unverified
-USA-USTR-TARIFF-ACTIONS,USA,Presidential Tariff Actions,Office of the United States Trade Representative,https://www.ustr.gov/trade-topics/presidential-tariff-actions,tariff_action,,,en,2025,,,unverified
-IND-DGFT-FTP-2023,IND,Foreign Trade Policy 2023,Directorate General of Foreign Trade,https://www.dgft.gov.in/CP/,policy,,ISFTA;SAFTA;APTA,en,2023,,,unverified
+USA-USTR-TARIFF-ACTIONS,USA,Presidential Tariff Actions,Office of the United States Trade Representative,https://www.ustr.gov/trade-topics/presidential-tariff-actions,tariff_action,,,en,2025,2026-08-28,7b9aa83e3cb90032dd6075ff30389452b96ac881ab880e2d22fe746223c0fee4,unverified
+IND-DGFT-FTP-2023,IND,Foreign Trade Policy 2023,Directorate General of Foreign Trade,https://www.dgft.gov.in/CP/,policy,,ISFTA;SAFTA;APTA,en,2023,2026-08-28,5c6edeb659aaaa1b6ad775fcdf8d48bc1186e5630a89e16dd8cc38a21d9d68c0,unverified
 IND-MOC-TRADE-AGREEMENTS,IND,India's Trade Agreements and Market Access,Ministry of Commerce and Industry,https://www.commerce.gov.in/trade-and-commerce/trade-agreements/,policy,,ISFTA;SAFTA;APTA,en,2024,,,unverified
-GBR-DBT-TRADE-STRATEGY-2025,GBR,The UK's Trade Strategy,Department for Business and Trade,https://www.gov.uk/government/publications/uk-trade-strategy/the-uks-trade-strategy,strategy,,UK DCTS,en,2025,,,unverified
+GBR-DBT-TRADE-STRATEGY-2025,GBR,The UK's Trade Strategy,Department for Business and Trade,https://www.gov.uk/government/publications/uk-trade-strategy/the-uks-trade-strategy,strategy,,UK DCTS,en,2025,2026-08-28,739f20ad65e31891106a2e5d1a0fe7b525544f7b0dd48db3533115824b001e06,unverified
 EU-DGTRADE-POLICY,DEU;ITA;FRA,An Open Sustainable and Assertive Trade Policy,European Commission DG TRADE,https://policy.trade.ec.europa.eu/eu-trade-relationships-country-and-region/trade-policy_en,policy,,GSP+,en,2021,,,unverified
-DEU-BMWK-FOREIGN-TRADE,DEU,Foreign Trade and Investment,Federal Ministry for Economic Affairs and Energy,https://www.bundeswirtschaftsministerium.de/Navigation/EN/Foreign-and-Economic-Policy/Foreign-Trade-and-Investment/foreign-trade-and-investment.html,policy,,,en,2024,,,unverified
-DEU-AWG-2013,DEU,Aussenwirtschaftsgesetz (Foreign Trade and Payments Act),Bundesministerium der Justiz,https://www.gesetze-im-internet.de/awg_2013/,law,,,de,2013,,,unverified
-ITA-MAECI-EXPORT-PLAN,ITA,Italian Export Action Plan,Ministry of Foreign Affairs and International Cooperation,https://www.esteri.it/en/temi/diplomazia_economica/piano-dazione-per-lexport/,strategy,,,en,2024,,,unverified
-ITA-MAECI-ECON-DIPLOMACY,ITA,Economic Diplomacy,Ministry of Foreign Affairs and International Cooperation,https://www.esteri.it/en/politica-estera-e-cooperazione-allo-sviluppo/diplomazia-economica/,policy,,,en,2024,,,unverified
-NLD-BHOS-POLICY-2022,NLD,Policy Document for Foreign Trade and Development Cooperation: Do What We Do Best,Government of the Netherlands,https://www.government.nl/documents/2022/10/10/policy-document-for-foreign-trade-and-development-cooperation-do-what-we-do-best,policy,,,en,2022,,,unverified
-ARE-EXPORT-DEV-POLICY,ARE,UAE Export Development Policy,Government of the United Arab Emirates,https://u.ae/en/about-the-uae/economy/uae-export-development-policy,policy,,,en,2024,,,unverified
-ARE-MOFA-PRIORITIES,ARE,Strategic Priorities,UAE Ministry of Foreign Affairs,https://www.mofa.gov.ae/en/about-the-ministry/strategic-priorities,strategy,,,en,2024,,,unverified
-CAN-GAC-BRIEFING-2025,CAN,Minister of International Trade Briefing Book March 2025,Global Affairs Canada,https://www.international.gc.ca/transparency-transparence/briefing-documents-information/briefing-books-cahiers-breffage/2025-03-trade-commerce.aspx?lang=eng,report,,,en,2025,,,unverified
+DEU-BMWK-FOREIGN-TRADE,DEU,Foreign Trade and Investment,Federal Ministry for Economic Affairs and Energy,https://www.bundeswirtschaftsministerium.de/Navigation/EN/Foreign-and-Economic-Policy/Foreign-Trade-and-Investment/foreign-trade-and-investment.html,policy,,,en,2024,2026-08-28,cc0690e7dccda4b5a8e1a9a57d351f074b41fecfbc6fdac9389da26d6538e287,unverified
+DEU-AWG-2013,DEU,Aussenwirtschaftsgesetz (Foreign Trade and Payments Act),Bundesministerium der Justiz,https://www.gesetze-im-internet.de/awg_2013/,law,,,de,2013,2026-08-28,48c53569d793605fc112986bc1cd677604e95d21d49453721f60690829add331,unverified
+ITA-MAECI-EXPORT-PLAN,ITA,Italian Export Action Plan,Ministry of Foreign Affairs and International Cooperation,https://www.esteri.it/en/temi/diplomazia_economica/piano-dazione-per-lexport/,strategy,,,en,2024,2026-08-28,6b7c6feeddbb138116f27440ebdab017fa57a75ab73a4f3d0e1e9bd180342cc4,unverified
+ITA-MAECI-ECON-DIPLOMACY,ITA,Economic Diplomacy,Ministry of Foreign Affairs and International Cooperation,https://www.esteri.it/en/politica-estera-e-cooperazione-allo-sviluppo/diplomazia-economica/,policy,,,en,2024,2026-08-28,18707cab07bf3c08994be143b44b70cb7cbda112060cbb0a3b9f0351df167ace,unverified
+NLD-BHOS-POLICY-2022,NLD,Policy Document for Foreign Trade and Development Cooperation: Do What We Do Best,Government of the Netherlands,https://www.government.nl/documents/2022/10/10/policy-document-for-foreign-trade-and-development-cooperation-do-what-we-do-best,policy,,,en,2022,2026-08-28,db2b97ef119dfb84267f6d74210d536ed8f5cfadce3786f0204f9d7ab7def82a,unverified
+ARE-EXPORT-DEV-POLICY,ARE,UAE Export Development Policy,Government of the United Arab Emirates,https://u.ae/en/about-the-uae/economy/uae-export-development-policy,policy,,,en,2024,2026-08-28,6e9be6318a15194f26cc51a99132c486413d07a5f8c4495236754bb13de0b415,unverified
+ARE-MOFA-PRIORITIES,ARE,Strategic Priorities,UAE Ministry of Foreign Affairs,https://www.mofa.gov.ae/en/about-the-ministry/strategic-priorities,strategy,,,en,2024,2026-08-28,71814c1cc2facb27acfb49857b8e310cc7fd2548128be82cb4ab93c415426c00,unverified
+CAN-GAC-BRIEFING-2025,CAN,Minister of International Trade Briefing Book March 2025,Global Affairs Canada,https://www.international.gc.ca/transparency-transparence/briefing-documents-information/briefing-books-cahiers-breffage/2025-03-trade-commerce.aspx?lang=eng,report,,,en,2025,2026-08-28,dc1e3d98e5e47b8c267bccf12fc98fef64e1e8242346c544848902487b82aa70,unverified
 CAN-GAC-STATE-OF-TRADE,CAN,State of Canada's Trade,Global Affairs Canada,https://international.canada.ca/en/global-affairs/corporate/reports/state-trade,report,,,en,2024,,,unverified
