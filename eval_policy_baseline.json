@@ -1,0 +1,485 @@
+{
+  "degraded_run": false,
+  "summary": {
+    "questions": 15,
+    "crashed": 0,
+    "routing": {
+      "exact_match": {
+        "rate": 0.5333,
+        "of": 15
+      },
+      "recall": 0.6778,
+      "never_empty": {
+        "rate": 1.0,
+        "of": 15
+      }
+    },
+    "evidence": {
+      "answers_fully_grounded": {
+        "rate": 0.3333,
+        "of": 12
+      },
+      "ungrounded_figures_total": 9,
+      "mean_evidence_per_answer": 2.42,
+      "answers_with_no_evidence": 3
+    },
+    "refusal": {
+      "unanswerable_correctly_refused": {
+        "rate": 0.3333,
+        "of": 3
+      },
+      "answerable_with_no_content": {
+        "rate": 0.0,
+        "of": 12
+      },
+      "answerable_that_stated_some_limit": {
+        "rate": 0.75,
+        "of": 12
+      }
+    },
+    "latency_ms": {
+      "cross_sector": {
+        "p50": 5216.8,
+        "p95": 5722.5,
+        "max": 5722.5,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "simulation": {
+        "p50": 5263.2,
+        "p95": 5830.3,
+        "max": 5830.3,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "single_sector": {
+        "p50": 5103.1,
+        "p95": 10352.9,
+        "max": 10352.9,
+        "budget_ms": 10000,
+        "within_budget": false
+      }
+    },
+    "degraded_answers": 0
+  },
+  "results": [
+    {
+      "id": "P01",
+      "category": "single_sector",
+      "question": "Which trade agreement gives Sri Lankan cinnamon preferential access to the European Union?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 10352.9,
+      "confidence": 0.7595000000000001,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "The specific trade agreement that grants Sri Lankan cinnamon preferential access to the European Union is not identified in the available data. However, it is noted that losing such preferential access could lead to a decrease in agricultural export revenue by USD 4,717,369, or approximately 2.2%, based on a Most Favored Nation tariff of 5.5% for cinnamon. Additionally, the price of cinnamon has increased from 854.01 USD/kg in 2015 to 960.81 USD/kg in 2024, marking a 12.5% rise. The lack of specific information on the trade agreement itself limits the ability to provide a more detailed analysis.",
+      "ungrounded_figures": [
+        "4,717,369,"
+      ],
+      "refused": false,
+      "error": null
+    },
+    {
+      "id": "P02",
+      "category": "single_sector",
+      "question": "Does the United Kingdom's trade strategy keep preferential access for Sri Lankan tea?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "export_analytics",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6351.1,
+      "confidence": 0.735,
+      "degraded": false,
+      "evidence_count": 5,
+      "answer": "The United Kingdom's trade strategy may impact the preferential access for Sri Lankan tea, as indicated by a potential decrease in Sri Lanka's agriculture export revenue by approximately USD 8,240,802, representing a 0.6% reduction from the 2024 baseline. This suggests that the new trade strategy could affect the current trade dynamics. However, the specific details of how preferential access for Sri Lankan tea is maintained or altered are not explicitly provided. The tea export value to the United Kingdom has been growing at a compounded annual growth rate of 5.7% from 2020 to 2024, indicating a positive trend in trade relations up to this point. The overall market for Sri Lankan tea is diversified, as shown by a Herfindahl concentration index of 0.05.",
+      "ungrounded_figures": [
+        "8,240,802,"
+      ],
+      "refused": false,
+      "error": null
+    },
+    {
+      "id": "P03",
+      "category": "single_sector",
+      "question": "What does India's Foreign Trade Policy say about imports from Sri Lanka?",
+      "expected_route": [
+        "trade_economics"
+      ],
+      "actual_route": [
+        "export_analytics"
+      ],
+      "agents_used": [],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 3328.3,
+      "confidence": 0.15,
+      "degraded": false,
+      "evidence_count": 0,
+      "answer": "This question could not be answered from the data currently loaded. Part of the question names a sector CeyNex does not cover.",
+      "ungrounded_figures": [],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P04",
+      "category": "single_sector",
+      "question": "What non-tariff measures does the European Union apply to imported spices?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "export_analytics"
+      ],
+      "agents_used": [],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4093.7,
+      "confidence": 0.15,
+      "degraded": false,
+      "evidence_count": 0,
+      "answer": "This question could not be answered from the data currently loaded. Part of the question names a sector CeyNex does not cover.",
+      "ungrounded_figures": [],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P05",
+      "category": "single_sector",
+      "question": "Does the Netherlands' foreign trade policy identify Sri Lanka as a priority market?",
+      "expected_route": [
+        "trade_economics"
+      ],
+      "actual_route": [
+        "export_analytics"
+      ],
+      "agents_used": [],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 3699.2,
+      "confidence": 0.15,
+      "degraded": false,
+      "evidence_count": 0,
+      "answer": "This question could not be answered from the data currently loaded. Part of the question names a sector CeyNex does not cover.",
+      "ungrounded_figures": [],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P06",
+      "category": "single_sector",
+      "question": "What tariff will the United States apply to Sri Lankan tea in 2030?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 5103.1,
+      "confidence": 0.6599999999999999,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "The specific tariff that the United States will apply to Sri Lankan tea in 2030 is not available. The analysis did not provide a forecast due to the lack of compatible price, volume, or export-value series. A hypothetical scenario suggested that a 5.0% tariff could lead to a 2.0% decrease in Sri Lanka's agriculture export revenue, but this is not a prediction for 2030. Therefore, any future tariff rate remains uncertain based on the current data.",
+      "ungrounded_figures": [
+        "2030",
+        "2030."
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P07",
+      "category": "cross_sector",
+      "question": "Compare the preferential access Sri Lankan apparel receives in the United Kingdom and the European Union.",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5722.5,
+      "confidence": 0.22666666666666666,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "Sri Lankan apparel receives preferential access in both the United Kingdom and the European Union, which is projected to increase export revenue by approximately USD 11,355,453 in 2024. This represents a 0.4% increase over the baseline revenue of USD 2,838,863,126. However, specific data on the preferential access for knit and woven garments in the UK could not be covered due to the absence of detailed sub-category data for the UK market. The analysis assumes a linear impact over a 12-month period and uses elasticity ranges from existing literature rather than estimates specific to Sri Lanka.",
+      "ungrounded_figures": [],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P08",
+      "category": "cross_sector",
+      "question": "Which of Sri Lanka's largest apparel markets has the most restrictive import tariffs?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "export_analytics",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5524.2,
+      "confidence": 0.4099999999999999,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "The largest market for Sri Lanka's apparel knit exports in 2024 was the United States, accounting for 38.8% of the total export value. However, specific information on the import tariffs imposed by the United States or other major markets is not available. It is projected that if the most restrictive import tariffs were applied, Sri Lanka's apparel export revenue could decrease by approximately USD 85,165,894, representing a decline of about 3.0%. The analysis assumes a tariff shock magnitude of 5.0% but does not specify which market this applies to. Additionally, the apparel side, including knit and woven garments, could not be fully covered due to a lack of data from the EDB Apparel sub-category.",
+      "ungrounded_figures": [
+        "85,165,894,"
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P09",
+      "category": "cross_sector",
+      "question": "Which sector, agriculture or apparel, is more exposed to losing European Union preferences?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5216.8,
+      "confidence": 0.31000000000000005,
+      "degraded": false,
+      "evidence_count": 6,
+      "answer": "Apparel is more exposed to losing European Union preferences than agriculture. If preferences are lost, agriculture export revenue is expected to decrease by approximately USD 30,216,274, or 2.2%, from a 2024 baseline of USD 1,373,467,019. In contrast, apparel export revenue would decline by about USD 161,815,198, or 5.7%, from a 2024 baseline of USD 2,838,863,126. This indicates that the impact on apparel is larger by 3.5 percentage points. However, specific data on knit and woven garments within the apparel sector could not be covered due to a lack of detailed sub-category data.",
+      "ungrounded_figures": [
+        "30,216,274,",
+        "161,815,198,"
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P10",
+      "category": "cross_sector",
+      "question": "How do Japan's tariffs on Sri Lankan tea compare with Germany's?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 4994.0,
+      "confidence": 0.6483333333333334,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "There is no specific data available comparing Japan's tariffs on Sri Lankan tea with those of Germany. However, it is noted that a change in Japan's tariffs could potentially decrease Sri Lanka's agricultural export revenue by approximately USD 27,469,340, which would be a 2.0% impact on the projected baseline revenue of USD 1,373,467,019 for 2024. Additionally, the export volume of Sri Lankan tea has decreased by 20.7% from 2015 to 2024. The lack of direct comparison data means we cannot determine how Japan's tariffs on Sri Lankan tea compare to Germany's.",
+      "ungrounded_figures": [
+        "27,469,340,"
+      ],
+      "refused": false,
+      "error": null
+    },
+    {
+      "id": "P11",
+      "category": "simulation",
+      "question": "If the United States withdrew duty-free access for Sri Lankan knitted apparel, what tariff would apply?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5263.2,
+      "confidence": 0.4099999999999999,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "If the United States withdrew duty-free access for Sri Lankan knitted apparel, the applicable tariff would be 9.5%. This change could lead to an estimated decrease in apparel export revenue of approximately USD 161,815,198, representing a 5.7% reduction from the 2024 baseline of USD 2,838,863,126. However, specific data on the impact on the apparel side, including both knit and woven garments, could not be covered due to the absence of sub-category data from the Export Development Board for the USA.",
+      "ungrounded_figures": [
+        "161,815,198,"
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P12",
+      "category": "simulation",
+      "question": "What happens to tea export revenue if the European Union suspends GSP+?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5626.8,
+      "confidence": 0.7483333333333334,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "If the European Union suspends GSP+, the revenue from tea exports is expected to decrease due to the imposition of a Most Favored Nation (MFN) tariff of 5.5%, which would replace the current preferential treatment under GSP+. One analysis estimates that agriculture export revenue, which includes tea, would decrease by approximately USD 30,216,274, representing a 2.2% reduction from a baseline of USD 1,373,467,019 in 2024. Another analysis highlights that tea export volumes have already been declining, with a 20.7% decrease from 301,230,925 kg in 2015 to 238,766,776.50 kg in 2024. This ongoing reduction in export volume could further exacerbate the negative impact on revenue. However, the exact impact on tea export revenue specifically could not be determined due to differing focuses of the analyses.",
+      "ungrounded_figures": [
+        "30,216,274,"
+      ],
+      "refused": false,
+      "error": null
+    },
+    {
+      "id": "P13",
+      "category": "simulation",
+      "question": "How much would apparel export revenue fall if the United Kingdom ended DCTS preferences?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5132.5,
+      "confidence": 0.31000000000000005,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "If the United Kingdom ended DCTS preferences, apparel export revenue from Sri Lanka is estimated to decrease by approximately USD 161,815,198, representing a 5.7% reduction from the 2024 baseline of USD 2,838,863,126. This estimate assumes the application of a Most Favored Nation (MFN) tariff of 9.5% on apparel exports. However, specific data on the impact on knit and woven garments could not be covered due to the absence of EDB Apparel sub-category data for the UK. The model assumes a linear impact over a 12-month period without compounding effects and relies on elasticity ranges from existing literature rather than estimates specific to Sri Lanka.",
+      "ungrounded_figures": [
+        "161,815,198,"
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P14",
+      "category": "simulation",
+      "question": "If the United States raised tariffs on Sri Lankan apparel by 15%, what is the revenue impact?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5072.0,
+      "confidence": 0.22666666666666666,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "If the United States raised tariffs on Sri Lankan apparel by 15%, the revenue impact is estimated to be a decrease of approximately USD 255,497,681, representing a 9.0% drop from the 2024 baseline of USD 2,838,863,126. This indicates a significant negative effect on apparel export revenue due to the tariff increase. However, specific data on the impact on knit and woven garments could not be covered due to the absence of detailed sub-category data for the USA. The analysis assumes a linear effect over a 12-month period without compounding and uses elasticity ranges from existing literature rather than estimates specific to Sri Lanka.",
+      "ungrounded_figures": [
+        "255,497,681,"
+      ],
+      "refused": true,
+      "error": null
+    },
+    {
+      "id": "P15",
+      "category": "simulation",
+      "question": "By how much would Sri Lanka's GDP grow if every top-10 destination removed all tariffs?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "actual_route": [
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 5830.3,
+      "confidence": 0.86,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "The removal of all tariffs by Sri Lanka's top-10 export destinations would result in a decrease in export revenue for both agriculture and apparel sectors. Specifically, agriculture export revenue would decrease by approximately USD 27,469,340, a 2.0% reduction from its baseline of USD 1,373,467,019. Apparel export revenue would decline by about USD 85,165,894, representing a 3.0% decrease from its baseline of USD 2,838,863,126. The impact on apparel is larger than that on agriculture by 1.0 percentage point. The findings assume a tariff shock magnitude of 5.0% and use elasticities from literature ranges, not estimates specific to Sri Lankan data. The overall impact on Sri Lanka's GDP could not be determined from the available data.",
+      "ungrounded_figures": [
+        "27,469,340,",
+        "85,165,894,"
+      ],
+      "refused": false,
+      "error": null
+    }
+  ]
+}
