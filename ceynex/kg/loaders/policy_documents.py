@@ -123,10 +123,17 @@ MERGE (p)-[:DESCRIBES]->(t)
 RETURN count(*) AS merged
 """
 
+# `indexed` means RETRIEVABLE, not "eligible in principle". A row can be English
+# and still have no chunks — the URL 404'd, or it served a JavaScript shell that
+# `extract.py` rejected. Leaving those marked `indexed` makes
+# `policy_documents_for()` hand Qdrant a doc_id allow-list containing documents
+# with nothing behind them, so the graph claims coverage the corpus does not
+# have. Set from the count Qdrant actually reports, never from the manifest.
 SET_CHUNK_COUNTS = """
 UNWIND $counts AS row
 MATCH (p:PolicyDocument {doc_id: row.doc_id})
-  SET p.chunk_count = row.chunk_count
+  SET p.chunk_count = row.chunk_count,
+      p.indexed     = (p.language = 'en' AND row.chunk_count > 0)
 RETURN count(p) AS updated
 """
 
@@ -191,9 +198,18 @@ async def load(kg: KnowledgeGraphClient) -> dict[str, int]:
             {"counts": [{"doc_id": k, "chunk_count": v} for k, v in counts.items()]},
         )
 
-    indexed = sum(1 for row in rows if row["indexed"])
+    # With Qdrant reachable, "indexed" is what it actually holds. Without it, the
+    # optimistic language-only value from `document_rows()` stands and the count
+    # stays 0 — stated here so a run against a stopped Qdrant is not mistaken for
+    # a run against an empty one.
+    if counts:
+        indexed = sum(1 for row in rows if row["indexed"] and counts.get(row["doc_id"], 0) > 0)
+    else:
+        indexed = sum(1 for row in rows if row["indexed"])
+        log.warning("qdrant not reachable — `indexed` reflects language only, not real coverage")
+
     log.info(
-        "merged %d policy documents (%d indexable), %d chunks known",
+        "merged %d policy documents (%d retrievable), %d chunks",
         len(rows),
         indexed,
         sum(counts.values()),
