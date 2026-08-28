@@ -210,3 +210,66 @@ what the agent does when coverage is absent, is in
 **Reversal cost is low by construction:** add the connector and register it in
 `CONNECTORS` in `ceynex/data/pipeline.py`. The writer, schema and agents do not
 change — which is the point of the `DataSourceConnector` ABC.
+
+---
+
+## D10 — a fourth datastore: Qdrant, anchored by the graph
+
+**Decided 2026-08-28, M2.**
+**Spec touched:** SAD §8 (layer rules), SRS 3.1.4, 3.1.5, 3.1.9.
+
+The SAD's Knowledge Layer is Neo4j and its Data Layer is Postgres plus Parquet.
+A vector store is neither, and adding one is a real deviation rather than an
+implementation detail.
+
+**Why.** Every answer the system gave was derived from Sri Lanka's own trade
+flows. Nothing in it knew what a *destination market* does — the US tariff
+schedule, the UK's post-DCTS preferences, EU non-tariff measures on spices — so
+any question about them had no grounding at all, and the preference-loss
+simulations D9 left resting on a literature constant had no second source to
+check against.
+
+**What was added.** A Qdrant collection (`ceynex_policy`) holding chunked
+trade-policy documents for Sri Lanka's top 10 export destinations, reached only
+through `ceynex/retrieval/client.py::PolicyRetriever` — the same single-entry
+rule the SAD's layer rules impose on Neo4j and Postgres, for the same reason.
+
+**The direction of the dependency is the design.** Qdrant does not answer
+questions; it answers *passages*. Which documents are eligible is decided in
+Cypher first, by `kg/queries.py::policy_documents_for()`, and the resulting
+`doc_id` list is passed to Qdrant as a filter. Trade-policy documents read alike
+by construction — objectives, market access, competitiveness — so an unanchored
+similarity search returns the right topic from the wrong country. Measured on
+the first live run: a question about US tariffs on knitwear returned the
+corpus's ABBREVIATIONS page, which matched only because it contains the words
+"United States dollars".
+
+**The graph stores a pointer, not the text.** `:PolicyDocument` carries
+`doc_id`, provenance, `sha256` and `qdrant_collection`; the passages live only in
+Qdrant. Two copies of the text would be two things that can disagree about what
+the corpus contains.
+
+**Why not put the chunks in Neo4j and skip the deviation.** It would work at
+this scale — 544 chunks — and it was considered. It was rejected because the two
+stores are being asked different questions: Cypher answers "which documents are
+about the United States and HS 61" exactly, and a vector index answers "which
+passage is about *this*" approximately. Neo4j Community has no vector index, so
+the approximate half would become a full scan with a cosine computed in Cypher.
+
+**Cost, stated plainly.** A fourth service in `docker-compose.yml`, an optional
+`[policy]` dependency extra, and roughly 300–700 ms added to an agreement or
+tariff simulation — inside the 2 s ceiling `RETRIEVAL_TIMEOUT_S` enforces, but
+spent on a path whose p95 already breaches SRS 3.4.1 (EVALUATION.md §1). FX
+shocks skip retrieval entirely, which is most simulation traffic.
+
+**Reversal cost is low.** Unset `QDRANT_URL`, or set
+`CEYNEX_POLICY_RETRIEVAL=off`. `PolicyRetriever.from_settings()` returns None and
+`trade_economics` answers exactly as it did before — the path
+`make eval-policy-baseline` measures, and the one
+`test_no_retriever_configured_behaves_exactly_as_before` holds.
+
+**The contract change this needs is not applied.** `:PolicyDocument` requires a
+constraint in `ceynex-contracts`' frozen `schema.cypher`, which is a three-way
+approval. The proposed diff is in
+[CONTRACT_PROPOSAL_POLICY_DOCUMENT.md](CONTRACT_PROPOSAL_POLICY_DOCUMENT.md);
+the loader works without it, so the PR is not on the critical path.
