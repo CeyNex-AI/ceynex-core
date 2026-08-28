@@ -203,13 +203,31 @@ UNIMPLEMENTED = re.compile(r"[^;.]*not implemented yet[^;.]*[;.]?", re.IGNORECAS
 def is_refusal(answer: str, result: dict[str, Any]) -> bool:
     """Did the system state a limit on answering the question it was asked?
 
-    True when the system said some part of the question could not be answered
-    from what it has — including naming an out-of-scope sector — and when it
-    produced no substantive content at all.
+    **Structural first.** The orchestrator already knows what it could not
+    cover and records it in `unanswered` (`merger.unanswered_from_outputs`), so
+    the honest test is whether that list is non-empty — not whether the prose
+    happens to contain a phrase this module guessed in advance.
+
+    That distinction is not academic. Measured 2026-08-28 on the same 30
+    questions: the marker list scored refusals at **100%** in degraded mode and
+    **33%** with the LLM writing the prose. The system behaved identically; the
+    deterministic composer simply uses the vocabulary the list was built from,
+    and the LLM paraphrases. X11 ("data for the fisheries sector is not
+    available for comparison, so a direct comparison ... cannot be made") is a
+    textbook correct refusal that matched no marker. `merger._gap_already_stated`
+    documents the same lesson from the other side — a fixed vocabulary cannot
+    keep up with open-ended paraphrasing.
+
+    The marker list is kept as a fallback for results that predate `unanswered`
+    (older `--json` dumps replayed through `report`), and an empty-answer check
+    stays first because producing nothing at all is a refusal whatever the
+    fields say.
     """
     substantive = UNIMPLEMENTED.sub("", answer).strip()
     if not substantive:
         return True
+    if "unanswered" in result:
+        return bool(result["unanswered"])
     return any(marker in substantive.lower() for marker in REFUSAL_MARKERS)
 
 

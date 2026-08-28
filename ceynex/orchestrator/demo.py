@@ -23,6 +23,7 @@ from ceynex.contracts import new_state
 from ceynex.kg.client import KnowledgeGraphClient
 from ceynex.llm import FakeLLMClient, LLMReasoningClient
 from ceynex.orchestrator.graph import build_graph
+from ceynex.orchestrator.merger import agents_used_from_outputs, unanswered_from_outputs
 
 log = logging.getLogger(__name__)
 
@@ -46,8 +47,16 @@ async def answer(query: str, *, use_llm: bool = True, user_id: str = "cli") -> d
         "query": query,
         "answer": final.get("final_answer", ""),
         "confidence": final.get("final_confidence", 0.0),
-        "agents_used": sorted(name for name, out in outputs.items() if not out.get("error")),
+        # The same helpers the API route uses, rather than recomputing here.
+        # Recomputing is what let the API drift once already (see
+        # merger.no_topic_recognized's docstring), and this path feeds
+        # eval/harness.py — a metric computed from a second, slightly different
+        # definition measures a system nobody ships.
+        "agents_used": agents_used_from_outputs(final),
         "agents_failed": sorted(name for name, out in outputs.items() if out.get("error")),
+        # What the system said it could not answer, structurally. `is_refusal`
+        # reads this instead of grepping the prose for decline phrasing.
+        "unanswered": unanswered_from_outputs(final),
         "route": final.get("route", []),
         "sectors": final.get("sectors", []),
         "evidence": final.get("merged_evidence", []),
