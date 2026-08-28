@@ -5,10 +5,17 @@
 #   make install CONTRACTS_SPEC="ceynex-contracts @ git+ssh://git@github.com/CeyNex-AI/ceynex-contracts.git"
 CONTRACTS_SPEC ?= -e ../ceynex-contracts
 
+# The checkout's own interpreter, not whatever `python` resolves to on PATH.
+# A bare `python` outside an activated venv is the system one, which here is
+# 3.10 — and ceynex-contracts requires >=3.11, so `make install` failed with a
+# Python-version error while .venv sat there on 3.12. Every target that runs
+# project code goes through this.
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
+
 install:
-	python -m pip install $(CONTRACTS_SPEC)
-	python -m pip install -e ".[dev,docs]"
-	pre-commit install
+	$(PYTHON) -m pip install $(CONTRACTS_SPEC)
+	$(PYTHON) -m pip install -e ".[dev,docs]"
+	$(PYTHON) -m pre_commit install
 
 up:
 	docker compose up -d
@@ -25,49 +32,49 @@ logs:
 	docker compose logs -f
 
 test:
-	pytest
+	$(PYTHON) -m pytest
 
 test-unit:
-	pytest -m "not integration"
+	$(PYTHON) -m pytest -m "not integration"
 
 lint:
-	ruff check .
+	$(PYTHON) -m ruff check .
 
 fmt:
-	ruff check --fix . && ruff format .
+	$(PYTHON) -m ruff check --fix . && $(PYTHON) -m ruff format .
 
 # Applies ceynex-contracts' schema.sql and seeds dim_country / dim_hs. Idempotent.
 # Runs against whatever POSTGRES_* in .env points at, so it serves both the local
 # stack and the deployed database VM.
 db-init:
-	python -m ceynex.data.bootstrap
+	$(PYTHON) -m ceynex.data.bootstrap
 
 ingest:
-	python -m ceynex.data.pipeline --sources all
+	$(PYTHON) -m ceynex.data.pipeline --sources all
 
 kg-load:
-	python -m ceynex.kg.load --schema --agreements --apparel --flows
+	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows
 
 # usage: make backtest SECTOR=agriculture ITEM=cinnamon
 backtest:
-	python -m eval.backtest --sector $(SECTOR) --item $(ITEM)
+	$(PYTHON) -m eval.backtest --sector $(SECTOR) --item $(ITEM)
 
 # The 30-question orchestrator evaluation. `eval-degraded` runs the same set with
 # the LLM forced unavailable (SRS 3.4.3); both must complete without crashing.
 eval:
-	python -m eval.harness --json eval_results.json
+	$(PYTHON) -m eval.harness --json eval_results.json
 
 eval-degraded:
-	python -m eval.harness --degraded --json eval_degraded.json
+	$(PYTHON) -m eval.harness --degraded --json eval_degraded.json
 
 # Blind merge-coherence sheets for three human raters. Needs `make eval` first.
 coherence:
-	python -m eval.coherence sheet --results eval_results.json --out coherence_sheet.csv
+	$(PYTHON) -m eval.coherence sheet --results eval_results.json --out coherence_sheet.csv
 
 # Governing documents -> plain text under docs/_text/ so they are greppable.
 # Reads the .docx whenever one sits beside a .pdf.
 docs:
-	python tools/docs_to_text.py
+	$(PYTHON) tools/docs_to_text.py
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
