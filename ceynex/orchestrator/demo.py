@@ -24,6 +24,7 @@ from ceynex.kg.client import KnowledgeGraphClient
 from ceynex.llm import FakeLLMClient, LLMReasoningClient
 from ceynex.orchestrator.graph import build_graph
 from ceynex.orchestrator.merger import agents_used_from_outputs, unanswered_from_outputs
+from ceynex.retrieval.client import PolicyRetriever
 
 log = logging.getLogger(__name__)
 
@@ -34,13 +35,23 @@ async def answer(query: str, *, use_llm: bool = True, user_id: str = "cli") -> d
     """Run one query through the graph and return the merged result."""
     llm = LLMReasoningClient() if use_llm else FakeLLMClient(available=False)
 
+    policy = PolicyRetriever.from_settings()
+    if policy is not None:
+        # Outside the timed section deliberately: model loading is startup cost,
+        # and folding it into the first query's elapsed_ms would put a one-off
+        # second into a latency figure that feeds eval/harness.py.
+        await policy.warmup()
+
     async with KnowledgeGraphClient() as kg:
-        deps = AgentDeps(kg=kg, llm=llm)
+        deps = AgentDeps(kg=kg, llm=llm, extras={"policy": policy})
         graph = build_graph(deps, use_llm_router=use_llm and getattr(llm, "available", False))
 
         started = time.perf_counter()
         final = await graph.ainvoke(new_state(query, user_id))
         elapsed_ms = (time.perf_counter() - started) * 1000
+
+    if policy is not None:
+        await policy.close()
 
     outputs = final.get("agent_outputs", {})
     return {

@@ -54,7 +54,7 @@ ingest:
 	$(PYTHON) -m ceynex.data.pipeline --sources all
 
 kg-load:
-	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows
+	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows --policy
 
 # usage: make backtest SECTOR=agriculture ITEM=cinnamon
 backtest:
