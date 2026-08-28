@@ -1,5 +1,41 @@
 # Evaluation — M2, Core Systems and Orchestration
 
+> ## ⚠ These numbers are superseded. Do not quote them in the report.
+>
+> Every figure below was measured on **2026-08-19**. Three things have changed
+> since, and each one independently invalidates a different part of it:
+>
+> 1. **Both sector agents were stubs then.** §5 says so outright and warns that
+>    "coherence cannot be fairly rated until those agents land". M1's
+>    `agriculture_commodity` and M3's `apparel_manufacturing` both landed on
+>    2026-08-26. Every routing, grounding and coverage figure describes a system
+>    two agents smaller than the current one.
+> 2. **No LLM key was configured then; one is now** (OpenAI, plus an OpenRouter
+>    free-tier failsafe added 2026-08-26). §1 predicts single-sector latency
+>    moving from 1.36 s into the 3–8 s range once prose generation is on. Every
+>    latency figure here is a measurement of the degraded path.
+> 3. **The LLM router was therefore never exercised.** §1's three "genuine
+>    routing misses" (X09, M05, M06) are all attributed to keyword-only routing,
+>    and `llm_route` now actually runs.
+>
+> A fourth change affects grounding specifically: answers are now validated
+> against retrieved facts at runtime (SRS 3.1.3,
+> `ceynex/orchestrator/grounding.py`), so a composed answer carrying an
+> unsupported figure is discarded rather than served. The 92.6% grounding rate
+> below was measured with nothing enforcing that.
+>
+> **Re-run before writing the Testing and Evaluation Document (activity 084,
+> due 20 Sept):**
+>
+> ```bash
+> make eval            # 30 questions, LLM live
+> make eval-degraded   # the same set, SRS 3.4.3 path
+> make coherence       # blind rating sheets — now unblocked, see §4
+> ```
+>
+> Keep this file's structure and its §5 threats-to-validity discipline; replace
+> the measurements.
+
 Measured on 2026-08-19 against the deployed stack: PostgreSQL 18 and Neo4j 5.26
 on the database VM, 4,625 `fact_trade` rows of live UN Comtrade data covering
 2015–2024 for HS 0902, 0906, 4001, 61 and 62.
@@ -311,6 +347,8 @@ different conversation from finding them hidden.
   because a working router pointing at an unbuilt agent is a different situation
   from a broken router. Cross-sector answers are consequently thinner than they
   will be, and coherence cannot be fairly rated until those agents land.
+  **Both landed 2026-08-26**, which is the single biggest reason this run needs
+  repeating — see the banner at the top.
 - **Latency was measured with no LLM configured.** See §1.
 - **The expected routes are one person's judgement**, written in advance but not
   reviewed by the other two members. Several disagreements in §1 are arguably
