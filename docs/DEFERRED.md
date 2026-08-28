@@ -111,6 +111,30 @@ to be in scope.
 **To undo the cut,** add a `WITSConnector(DataSourceConnector)` and register it
 in `CONNECTORS` in `ceynex/data/pipeline.py`; nothing else changes shape.
 
+### Amended 2026-08-28: a second source, not a replacement (D10)
+
+Policy-document retrieval now supplies an MFN rate **where a retrieved document
+states one unambiguously**, and `trade_economics` cites the sentence it came
+from. The cut still stands, and the difference matters:
+
+- **WITS would have been a tariff schedule** — every rate, every line, queryable.
+- **This is one rate, from prose, when the prose happens to say so.**
+  `ceynex/retrieval/rates.py` requires the percentage, a tariff word, and the
+  goods to appear in the *same sentence*, and refuses outright when two
+  different rates qualify. It is built to return None more often than not,
+  because a plausible wrong rate carrying a real citation is worse than the
+  documented constant — `orchestrator/grounding.py` cannot tell the two apart.
+
+So the honest description is now: **preference-loss magnitudes rest on a
+literature constant unless a policy document states a rate for those goods, and
+the answer says which of the two it used, on every run.** Neither is a queried
+tariff schedule, and neither is verified — the rate ships `unverified` like every
+other figure derived from the reference CSVs.
+
+`agreement_loss_mfn_tariff` stays in `config/elasticities.yaml` and is still the
+fallback. Deleting it once retrieval existed would have made the system's answer
+depend on whether a search happened to hit.
+
 ## Data owned by teammates
 
 `fact_trade` and the sector nodes are populated by M1 (agriculture) and M3
