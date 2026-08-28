@@ -49,6 +49,8 @@ from typing import Any
 
 import yaml
 
+from ceynex.orchestrator import grounding
+
 log = logging.getLogger(__name__)
 
 QUESTIONS = Path(__file__).parent / "questions.yaml"
@@ -75,7 +77,10 @@ REFUSAL_MARKERS = (
 )
 
 # A bare number in prose. Used to check every claimed figure traces to evidence.
-NUMBER = re.compile(r"-?\d[\d,]*\.?\d*")
+# Defined in ceynex.orchestrator.grounding, which the runtime guard also uses:
+# the measurement and the guarantee have to agree on what counts as a figure.
+# Re-exported here because this name was part of the harness first.
+NUMBER = grounding.NUMBER
 
 
 @dataclass
@@ -170,24 +175,21 @@ def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
     ungrounded. That over-reports rather than under-reports, which is the right
     direction for a metric whose purpose is to catch hallucinated figures — a
     false alarm costs a manual check, a miss costs the claim.
-    """
-    supporting = " ".join(str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence)
-    grounded = {n.replace(",", "") for n in NUMBER.findall(supporting)}
 
-    missing = []
-    for raw in NUMBER.findall(answer):
-        value = raw.replace(",", "")
-        # Years and small integers are almost always structural (a horizon, a
-        # count of markets), not claims that need their own evidence line.
-        if len(value.lstrip("-").replace(".", "")) <= 2:
-            continue
-        if value in grounded:
-            continue
-        # Allow a rounded restatement: 1234.5 in prose, 1234.52 in evidence.
-        if any(g.startswith(value.split(".")[0]) for g in grounded):
-            continue
-        missing.append(raw)
-    return missing
+    **Evidence only**, deliberately, and this is where the metric is stricter
+    than the runtime guard in `ceynex.orchestrator.merger`: that one also
+    accepts a figure quoted from the question or stated in a finding's summary,
+    because rejecting an answer for restating its own question would be wrong.
+    Here the claim being measured is the stronger one — every figure traces to
+    a cited source — so a shock magnitude the user supplied genuinely does not
+    count as grounded, and the report says so rather than quietly widening the
+    denominator. The comparison itself is shared, so both agree on what a
+    figure is.
+    """
+    return grounding.ungrounded_figures(
+        answer,
+        [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence],
+    )
 
 
 # The "Not covered:" clause carries two different kinds of gap, and they must be
