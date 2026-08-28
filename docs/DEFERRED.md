@@ -126,11 +126,14 @@ so the numbers mean something per query. They pass their budgets with 5–15x
 headroom, and that headroom is partly because no LLM key was configured when
 they were taken, so the system never paid for a model call.
 
-**A key is configured now** (2026-08-26), so that explanation for the headroom
-has expired and the figures have not been retaken. Two separate things remain
-unverified: throughput at 50 concurrent users, and latency with prose generation
-switched on. Both need re-measuring before any claim about SRS 3.4.1/3.4.2 is
-made in the final report — see EVALUATION.md's banner.
+**Retaken on 2026-08-28 with a key configured, and one budget now fails.**
+Single-sector p95 came out at 14.6 s against a 10 s budget (SRS 3.4.1), where
+the keyless run had posted 2.7 s. That headroom was never real — it was the
+degraded path being reported as the system. See EVALUATION.md §1.
+
+**Throughput at 50 concurrent users (SRS 3.4.2) is still untested**, and is now
+the more important of the two: the single-user numbers no longer have headroom
+to spare.
 
 One thing that *does* now exist between a load test and a real outage: the SRS
 3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
@@ -142,6 +145,12 @@ One thing that *does* now exist between a load test and a real outage: the SRS
 three human raters and the session has not happened, so SRS 3.1.2's "one
 coherent answer, not a list of per-agent responses" is currently supported by
 the merger's design and its unit tests, not by a measurement.
+
+**Now unblocked and now the longest-lead item.** It was waiting on the two
+sector agents (landed 26 Aug) and on prose generation being on (it is). Rating
+prose the LLM never wrote would have measured the deterministic composer, which
+is not what SRS 3.1.2 is about. Everything else outstanding is a command; this
+one needs three people's calendars, so book it before writing anything else.
 
 ## Audit logging (SRS 3.4.7) — not built
 
@@ -190,11 +199,10 @@ throttled: login, a user reading their own history, and the admin routes.
 - **`OPENAI_API_KEY` is now set** (and an OpenRouter free-tier failsafe sits
   behind it), so the system no longer runs the SRS 3.4.3 degraded path by
   default on a machine that has the `.env`. Degraded mode is still reachable
-  deliberately — `--no-llm`, or `make eval-degraded` — and still tested. What
-  changed is that it is no longer the *only* path anyone has measured; see
-  EVALUATION.md's banner. Whether the deployed VM's own `.env` carries the key
-  is not visible from a checkout and should be confirmed on the box, not
-  assumed from this file.
+  deliberately — `--no-llm`, or `make eval-degraded` — and still tested. Both
+  paths are now measured side by side in EVALUATION.md §1. Whether the deployed
+  VM's own `.env` carries the key is not visible from a checkout and should be
+  confirmed on the box, not assumed from this file.
 - **`COMTRADE_API_KEY` is unset.** Comtrade uses the keyless public preview
   endpoint, which returns real data at a lower rate limit.
 - **SSH (22) and RDP (3389) are open to `0.0.0.0/0`** on the `ceynex-dev` VPC.
