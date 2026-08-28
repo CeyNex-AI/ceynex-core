@@ -50,6 +50,31 @@ services:
       retries: 20
       start_period: 30s
 
+  # Policy-document vector store (deviation D10). Holds chunked trade-policy text
+  # for Sri Lanka's top 10 export destinations, keyed to the Neo4j entities each
+  # chunk is about so retrieval is filtered by the graph rather than run blind.
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    container_name: ceynex-qdrant
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # A bash TCP probe, not `curl`/`wget` and not the qdrant binary. The image
+      # ships bash but neither curl nor wget (checked against v1.17.1), and the
+      # binary has no health subcommand — `--help` lists none. Both of the
+      # obvious probes therefore fail with "executable file not found", which
+      # docker reports as unhealthy, so `make up` would wait forever on a
+      # service that is actually running.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   adminer:
     image: adminer:4
     container_name: ceynex-adminer
@@ -63,3 +88,4 @@ volumes:
   postgres_data:
   neo4j_data:
   neo4j_logs:
+  qdrant_data:

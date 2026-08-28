@@ -21,9 +21,10 @@ up:
 	docker compose up -d
 	@echo "waiting for services to report healthy..."
 	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-postgres)" = "healthy" ] && \
-	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-neo4j)" = "healthy" ]; do \
+	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-neo4j)" = "healthy" ] && \
+	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-qdrant)" = "healthy" ]; do \
 	  sleep 2; done
-	@echo "postgres + neo4j healthy. adminer on http://localhost:$${ADMINER_PORT:-8080}"
+	@echo "postgres + neo4j + qdrant healthy. adminer on http://localhost:$${ADMINER_PORT:-8080}"
 
 down:
 	docker compose down
