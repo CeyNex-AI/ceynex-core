@@ -461,3 +461,153 @@ Ranked by what a marker would ask about first, not by effort:
 4. **S06's contradictory price sentence** — verify by hand, then decide whether
    anything can catch a right number on a wrong claim.
 5. **The coherence rating session** — longest lead time, needs three people.
+
+---
+
+## 7. Policy retrieval — the 15-question set (D10)
+
+Measured on **2026-08-28**, `eval/policy_questions.yaml`, against a Qdrant
+collection of **901 chunks from 6 documents**. Reproduce with:
+
+```bash
+make eval-policy-baseline   # CEYNEX_POLICY_RETRIEVAL=off — the system before D10
+make eval-policy            # with retrieval
+```
+
+The 15 questions were committed in `dc70aa3`, **before** `ceynex/retrieval/`
+existed, for the reason `questions.yaml` was: questions written after watching
+the system answer them describe it instead of testing it.
+
+### Headline
+
+| Metric | Retrieval off | Retrieval on | Denominator |
+|---|---|---|---|
+| Routing — exact agent-set match | 53.3% | **53.3%** | 15 |
+| Answers fully grounded | 33.3% | **33.3%** | 12 answerable |
+| Ungrounded figures | 9 | **10** | — |
+| Mean evidence per answer | 2.42 | **2.67** | 12 |
+| Answers with no evidence at all | 3 | **3** | 12 |
+| Unanswerable correctly refused | 33.3% | **33.3%** | 3 |
+
+**Read this as a negative result on the end-to-end metrics.** Retrieval changed
+the evidence count on 3 of 15 questions and moved nothing else. Reporting it as
+a win would require quoting the mean-evidence column and hiding the rest.
+
+Latency is the one clean result: every category stays inside its SRS 3.4.1
+budget, and single-sector — the budget the 30-question set breaches — came in at
+p95 6,993 ms against 10,000 ms. Retrieval costs 300–900 ms on the paths that use
+it and is skipped entirely for FX shocks.
+
+### Why the numbers did not move, in order of how much each matters
+
+**1. The router never sends a policy question to the agent that can retrieve.**
+P03, P04 and P05 — "what does India's Foreign Trade Policy say", "what non-tariff
+measures does the EU apply", "does the Netherlands identify Sri Lanka as a
+priority market" — all route to `export_analytics` **alone**, score 0 evidence
+and 0.15 confidence in *both* runs. Retrieval lives in `trade_economics`
+(the D10 scope decision), so a question that never reaches `trade_economics`
+cannot benefit from it however good the corpus is. This is the binding
+constraint and it is a routing problem, not a retrieval problem.
+
+**2. The corpus does not cover the countries the reachable questions ask about.**
+Of the 15 manifest rows, 11 downloaded and **6 extract into usable text**:
+Sri Lanka, the UK, Canada, the US, India and Italy. Germany, the Netherlands,
+the UAE, China and France are absent — three URLs 404, five served JavaScript
+shells of 93–1,351 characters that `extract.py` rejects rather than indexing.
+The simulation questions that *do* reach `trade_economics` are US- and
+EU-focused, and the EU document is one of the 404s.
+
+**3. The one US document is a link index, not a schedule.** The USTR
+"Presidential Tariff Actions" page is a list of press-release titles and "to
+read the tariff schedule, click here". Asked what tariff applies to Sri Lankan
+knitwear, its best chunk scores **−7.91** and the retriever returns nothing.
+
+That last one is the result worth keeping. **The retriever declining to answer
+is correct behaviour, and it is the behaviour that most needed testing.** Before
+the relevance floor existed, this same question cited the corpus's
+ABBREVIATIONS page — which matched only because it contains the words "United
+States dollars" — as evidence about US apparel tariffs. A real citation, a real
+URL, a real page number, attached to a claim the page does not support. That is
+precisely the failure §5 says `orchestrator/grounding.py` cannot catch.
+
+### The retriever itself works
+
+Measured directly, outside the orchestrator, on the documents that did extract:
+
+| Query | Top hit | Score |
+|---|---|---|
+| "Does the UK trade strategy keep preferential access for developing countries?" | UK Trade Strategy — Economic Partnership Agreements | **+5.95** |
+| "What does the UK DCTS do for tariffs?" | UK Trade Strategy — cumulation groups, DCTS | **+5.55** |
+| "What are Canada's trade priorities and market access negotiations?" | Canada briefing book — Trade Policy / Market Access | **+6.24** |
+| "What does India's foreign trade policy say about imports and exports?" | India FTP 2023 — DGFT scheme administration | **+3.65** |
+
+Country anchoring holds under test: the India query's second-ranked hit is the
+Sri Lankan strategy at **+0.22**, correctly far below the Indian document rather
+than winning on general trade vocabulary.
+
+So the machinery is sound and the corpus is the bottleneck. **The honest summary
+is that D10 built a retrieval path that demonstrably works, and an evaluation
+that demonstrably does not yet exercise it.**
+
+### What to fix, in priority order
+
+1. **Route policy questions to an agent that retrieves.** Either add
+   `trade_economics` to the route when a question names a foreign trade policy,
+   or move retrieval somewhere `export_analytics` can reach it. Nothing else on
+   this list matters until this is done — it is what makes P03/P04/P05
+   answerable at all.
+2. **Replace the five JavaScript-shell URLs with the PDFs they link to.** No
+   code change; the manifest header names each one.
+3. **Replace the USTR landing page with the actual HTS schedule**, and fix the
+   three 404s (India MoC, EU DG TRADE, Canada State of Trade).
+4. **Add the per-country WTO Trade Policy Reviews.** Still the most tariff-dense
+   documents available for these markets, and still not collected.
+
+### Threats specific to this section
+
+- **Six documents, one of them 60% of the corpus.** The Sri Lankan strategy is
+  544 of 901 chunks, so any unfiltered retrieval is biased toward it. The
+  country filter is what holds that in check, which makes the anchoring test
+  above load-bearing rather than decorative.
+- **Every retrieved figure is `unverified`.** Same status as
+  `trade_agreements.csv`. No rate lifted from a document has been checked
+  against an official schedule by a human.
+- **The relevance floor is calibrated on one corpus.** `MIN_RERANK_SCORE = 0.0`
+  is the cross-encoder's own boundary rather than a tuned constant, but the
+  evidence that 0.0 separates useful from useless here is 15 questions on 6
+  documents.
+- **The three "unanswerable" questions are refused at 33.3% on both paths.**
+  That is unchanged by D10 and is the same measurement problem §2 describes:
+  worth re-checking by hand before it is quoted.
+
+### Regression check on the 30-question set
+
+D10 touches `trade_economics`, `kg/queries.py` and `agents/common.py`, so the
+original set was re-run cold against the same stack. Compared with §1's
+2026-08-28 figures:
+
+| Metric | §1 (before D10) | After D10 |
+|---|---|---|
+| Routing — exact match | 53.3% | 53.3% |
+| Routing — recall | 0.856 | 0.856 |
+| Answers fully grounded | 77.8% | **81.5%** |
+| Ungrounded figures | 6 | **5** |
+| Mean evidence per answer | 3.67 | **3.93** |
+| Answers with no evidence at all | 2 | **1** |
+| Unanswerable correctly refused | 100% (3) | 100% (3) |
+| Crashes | 0 | 0 |
+
+**No regression, and the grounding numbers improved slightly.** The gain is not
+from retrieval — it is the evidence fix retrieval work uncovered. Adding the
+relevance floor removed a junk policy citation from an agreement simulation,
+which dropped that answer to one evidence entry and exposed that
+`trade_economics` had been citing the baseline query but never the coverage
+query that supplied the MFN rate. The rate was a figure in the answer traceable
+to nothing — EVALUATION.md §1 grounding class 1, in the agent that section names.
+Citing the coverage query fixes it for every agreement question, D10 or not.
+
+**Single-sector p95 still breaches SRS 3.4.1**: 11,888 ms against 10,000 ms.
+That is unchanged in kind from §1's finding. It came in below §1's 14,638 ms,
+but §1 already records p95 swinging between 14.6 s and 29.0 s across two cold
+runs of the same questions, so this is inside that spread and is **not** evidence
+of an improvement.
