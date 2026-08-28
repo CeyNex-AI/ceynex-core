@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
@@ -70,6 +71,24 @@ RETRIEVAL_TIMEOUT_S = 2.0
 #: narrow enough that scoring the pairs stays inside the budget.
 CANDIDATE_LIMIT = 30
 DEFAULT_LIMIT = 5
+
+#: Below this cross-encoder score, a chunk is dropped rather than returned.
+#:
+#: **Returning nothing is a correct outcome; returning the least-bad chunk is
+#: not.** The filters guarantee a chunk is about the right country and goods,
+#: not that it answers anything, so without a floor the top result for a
+#: question with no answer in the corpus is whatever survived filtering. Measured
+#: on the first live run: "what tariff applies to Sri Lankan knitwear in the US"
+#: returned the document's ABBREVIATIONS page, which matched only because it
+#: contains the words "United States dollars". It scored **-10.05**, while
+#: genuinely responsive passages on the same corpus score **+0.85 to +3.64**.
+#:
+#: `Xenova/ms-marco-MiniLM-L-6-v2` emits a relevance logit, so 0.0 is the
+#: model's own "more relevant than not" boundary rather than a tuned constant.
+#: An abbreviations table cited as evidence is worse than no evidence: it is a
+#: real citation, with a real URL and page, attached to a claim it does not
+#: support — which is the one failure `orchestrator/grounding.py` cannot see.
+MIN_RERANK_SCORE = 0.0
 
 
 class PolicyRetrieverUnavailableError(RuntimeError):
@@ -209,22 +228,62 @@ class PolicyRetriever:
         memory what it thinks it asked for.
         """
         filters = filters or RetrievalFilter()
-        description = filters.describe()
+
+        # Model loading sits OUTSIDE the budget, deliberately. The three ONNX
+        # sessions take seconds to build on first use — far more than the whole
+        # per-query allowance — so leaving it inside meant the first query after
+        # a cold start always timed out and every later one was fine. That is the
+        # worst possible shape for a failure: it never reproduces once the
+        # process is warm. `warmup()` at wiring time is the intended path; this
+        # await is the safety net for a caller that skipped it.
+        models = await _models_ready()
 
         try:
             chunks = await asyncio.wait_for(
-                self._search(query, filters, limit), timeout=self._timeout_s
+                self._search(models, query, filters, limit), timeout=self._timeout_s
             )
         except TimeoutError as exc:
             raise PolicyRetrieverUnavailableError(
                 f"policy retrieval exceeded its {self._timeout_s:.1f}s budget"
             ) from exc
-        return chunks, description
+
+        widened = filters
+        if not chunks and filters.hs_prefixes:
+            # 83% of the corpus carries no HS tag — most of a trade strategy is
+            # objectives and context, not statements about particular goods — so
+            # a goods-filtered search returning nothing is the ordinary case, not
+            # an error. Widening beats answering nothing, but the widening goes
+            # into the description, because evidence that says it was scoped to
+            # HS 61 when it was not is evidence that misrepresents itself.
+            widened = replace(filters, hs_prefixes=())
+            widened.extra_notes = [
+                *filters.extra_notes,
+                f"no chunk matched hs_prefix in {list(filters.hs_prefixes)}; "
+                "retried without the goods filter",
+            ]
+            try:
+                chunks = await asyncio.wait_for(
+                    self._search(models, query, widened, limit), timeout=self._timeout_s
+                )
+            except TimeoutError as exc:
+                raise PolicyRetrieverUnavailableError(
+                    f"policy retrieval exceeded its {self._timeout_s:.1f}s budget"
+                ) from exc
+
+        return chunks, widened.describe()
+
+    async def warmup(self) -> None:
+        """Build the ONNX sessions ahead of the first query.
+
+        Called once at application start. Without it the first query pays several
+        seconds of model loading against a 2-second budget and degrades, which
+        looks like a broken retriever rather than a cold one.
+        """
+        await _models_ready()
 
     async def _search(
-        self, query: str, filters: RetrievalFilter, limit: int
+        self, models: dict[str, Any], query: str, filters: RetrievalFilter, limit: int
     ) -> list[PolicyChunk]:
-        models = await _models_ready()
         dense, sparse = await asyncio.to_thread(_embed_query, models, query)
         query_filter = _build_filter(filters)
 
@@ -294,7 +353,15 @@ def _rerank(
         key=lambda c: c.score,
         reverse=True,
     )
-    return ranked[:limit]
+    kept = [c for c in ranked if c.score >= MIN_RERANK_SCORE][:limit]
+    if ranked and not kept:
+        log.debug(
+            "all %d candidates scored below %.1f (best %.2f) — returning nothing",
+            len(ranked),
+            MIN_RERANK_SCORE,
+            ranked[0].score,
+        )
+    return kept
 
 
 def _build_filter(filters: RetrievalFilter) -> Any:
@@ -343,6 +410,7 @@ def _build_filter(filters: RetrievalFilter) -> Any:
 __all__ = [
     "CANDIDATE_LIMIT",
     "DEFAULT_LIMIT",
+    "MIN_RERANK_SCORE",
     "RETRIEVAL_TIMEOUT_S",
     "PolicyRetriever",
     "PolicyRetrieverUnavailableError",

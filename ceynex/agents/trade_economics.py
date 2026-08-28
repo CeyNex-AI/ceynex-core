@@ -26,6 +26,7 @@ from typing import Any
 
 from ceynex.agents.common import (
     AgentDeps,
+    evidence_from_policy,
     evidence_from_query,
     finish,
     parse_intent,
@@ -33,6 +34,9 @@ from ceynex.agents.common import (
 from ceynex.contracts import AgentState, Evidence, failed_output
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
+from ceynex.kg.queries import hs_hierarchy
+from ceynex.retrieval.rates import SourcedRate, extract_tariff_rate
+from ceynex.retrieval.schema import SIMULATION_MEASURES, PolicyChunk, RetrievalFilter
 from ceynex.retrieval.tagging import HS_FOR_ITEM
 from ceynex.settings import elasticity_config
 
@@ -93,6 +97,23 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
 
     for sector in sectors:
         item = _representative_item(sector, intent.item)
+
+        # Policy retrieval, per sector, and only where policy text can change the
+        # answer. An FX question needs no tariff schedule — the shock comes
+        # entirely from the currency move — so skipping it there keeps the
+        # commonest simulation on exactly the latency it has today, which matters
+        # because single-sector p95 already breaches SRS 3.4.1 (EVALUATION.md §1).
+        chunks: list[PolicyChunk] = []
+        retrieval_detail = "not attempted for an fx shock"
+        sourced: SourcedRate | None = None
+        hs_prefixes = tuple(hs_hierarchy(_hs_for_item(item)))
+
+        if shock in ("agreement", "tariff"):
+            chunks, retrieval_detail = await _retrieve_policy(
+                deps, state, partner=intent.partner, hs_prefixes=hs_prefixes
+            )
+            sourced = extract_tariff_rate(chunks, hs_prefixes) if chunks else None
+
         baseline, baseline_year, baseline_cypher = await _baseline_value(deps, item)
 
         if baseline is None:
@@ -108,9 +129,13 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         refusal_cypher = baseline_cypher
         if shock == "agreement":
             outcome, refusal_cypher = await _simulate_agreement_loss(
-                deps, sector, item, baseline, config
+                deps, sector, item, baseline, config, sourced
             )
         elif shock == "tariff":
+            # The magnitude of an explicit tariff question comes from the
+            # question ("raise tariffs by 10%"), so a retrieved rate must not
+            # override it — that would answer a different question than the one
+            # asked. Retrieved text is context here, never the input.
             outcome = _simulate_tariff(sector, baseline, magnitude, config)
         else:
             outcome = _simulate_fx(sector, baseline, magnitude, config)
@@ -145,6 +170,17 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                     period=str(baseline_year),
                 )
             )
+            # A refusal that can still say what the destination's own policy
+            # states is a better refusal. It does not become an answer — no
+            # figure is produced and none is implied — but "the graph records no
+            # coverage, and here is what the UK strategy says about preferences"
+            # tells the reader something, where a bare refusal tells them nothing.
+            evidence.extend(_policy_evidence(chunks, retrieval_detail, limit=2))
+            if chunks:
+                assumptions.append(
+                    f"No simulation was run. {len(chunks)} passage(s) of destination-market "
+                    "policy are cited for context only; no figure is derived from them."
+                )
             continue
 
         delta, pct, detail = outcome
@@ -163,6 +199,41 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                 period=str(baseline_year),
             )
         )
+        # The coverage query is the other half of an agreement-loss claim, and it
+        # was being run and then cited only on the refusal path. That left a
+        # successful single-sector simulation carrying one evidence entry against
+        # the agent contract's floor of two, and — more to the point — the rate
+        # that produced the figure appeared in no evidence at all, which is
+        # EVALUATION.md §1's grounding class 1 with this agent named in it.
+        if shock == "agreement" and refusal_cypher != baseline_cypher:
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"Preference coverage for {sector} ({item}, HS {hs_prefixes[0]}) is "
+                        f"recorded in the knowledge graph, and losing it is modelled as an MFN "
+                        f"tariff of {(sourced.rate if sourced else _value(config, 'agreement_loss_mfn_tariff', sector, 0.095)) * 100:.1f}%."
+                    ),
+                    cypher=refusal_cypher,
+                    period=str(baseline_year),
+                )
+            )
+
+        # The sourced rate is a figure this agent computed with, so it gets its
+        # own evidence entry naming the sentence it came from. EVALUATION.md §1
+        # grounding class 1 is precisely this agent producing figures that appear
+        # in no evidence; adding a new number without a new entry would repeat
+        # the bug the same run found.
+        if sourced is not None:
+            figures[f"{sector}_mfn_tariff_pct"] = round(sourced.rate * 100, 2)
+            evidence.append(
+                evidence_from_policy(
+                    claim=sourced.claim,
+                    detail=f"{sourced.chunk.citation}; {retrieval_detail}",
+                    url=sourced.chunk.url,
+                )
+            )
+        evidence.extend(_policy_evidence(chunks, retrieval_detail, limit=2, exclude=sourced))
+
         assumptions.append(detail)
         lines.append(
             f"{sector.title()} export revenue would move by roughly USD {delta:+,.0f} "
@@ -255,6 +326,7 @@ async def _simulate_agreement_loss(
     item: str,
     baseline: float,
     config: dict[str, Any],
+    sourced: SourcedRate | None = None,
 ) -> tuple[tuple[float, float, str] | None, str]:
     """Losing a preference re-imposes the MFN tariff.
 
@@ -262,6 +334,11 @@ async def _simulate_agreement_loss(
     preference coverage — the SAD §4.1 refusal path, because without coverage
     there is no honest number to give. The Cypher comes back either way so the
     caller can cite the query that found nothing as the evidence for saying so.
+
+    `sourced` is an MFN rate read out of a retrieved policy document (D10), or
+    None. It replaces the configured constant when present, and the assumption
+    text says which of the two was used on every run — the constant disappearing
+    silently behind a sourced figure would be the same defect as inventing one.
     """
     hs_code = _hs_for_item(item)
     rows, cypher = await deps.kg.run(*q.agreement_coverage(hs_code))
@@ -272,9 +349,22 @@ async def _simulate_agreement_loss(
     if not preferences:
         return None, cypher
 
-    # Without a WITS tariff pull this is the documented fallback (the plan's
-    # "static GSP+ table" cut). Stated as an assumption, not hidden as a constant.
-    mfn_tariff = _value(config, "agreement_loss_mfn_tariff", sector, 0.095)
+    # Deviation D9 cut the WITS tariff pull, so the fallback is a documented
+    # constant. D10 supplies a sourced rate where a policy document states one;
+    # where none does, the constant still stands and still says so.
+    if sourced is not None:
+        mfn_tariff = sourced.rate
+        rate_basis = (
+            f"MFN tariff of {mfn_tariff * 100:.1f}% read from {sourced.chunk.citation} "
+            f"(unverified — no human has checked this rate against the official schedule)"
+        )
+    else:
+        mfn_tariff = _value(config, "agreement_loss_mfn_tariff", sector, 0.095)
+        rate_basis = (
+            f"MFN tariff of {mfn_tariff * 100:.1f}% from config/elasticities.yaml "
+            f"(a literature constant, not a queried tariff schedule — deviation D9)"
+        )
+
     incidence = _value(config, "tariff_incidence", "default", 0.5)
     elasticity = _value(config, "export_demand_elasticity", sector, -1.0)
 
@@ -286,10 +376,104 @@ async def _simulate_agreement_loss(
     detail = (
         f"{sector}: preference coverage resolved from the knowledge graph ({names}, matched on "
         f"HS {preferences[0]['matched_on']}, status {'/'.join(sorted(verified))}). Loss modelled "
-        f"as an MFN tariff of {mfn_tariff * 100:.1f}% with exporter incidence {incidence:.2f} "
+        f"as an {rate_basis}, with exporter incidence {incidence:.2f} "
         f"and demand elasticity {elasticity:.2f}."
     )
     return (baseline * revenue_change, revenue_change, detail), cypher
+
+
+# --- policy retrieval (D10) ----------------------------------------------
+
+
+async def _retrieve_policy(
+    deps: AgentDeps,
+    state: AgentState,
+    *,
+    partner: str | None,
+    hs_prefixes: tuple[str, ...],
+) -> tuple[list[PolicyChunk], str]:
+    """Graph-anchored policy retrieval. Returns `(chunks, detail)`; never raises.
+
+    Anchoring happens in two steps, and both matter:
+
+    1. `policy_documents_for()` asks Neo4j which documents could be relevant to
+       this country and these goods. That is a Cypher query over the graph, and
+       its result is a `doc_id` allow-list.
+    2. Qdrant searches only inside that allow-list, further filtered to tariff
+       and FTA passages.
+
+    Without step 1 the search is similarity over the whole corpus, and
+    trade-policy documents are similar to each other by construction — the top
+    hit for a question about the United States is whichever document phrased the
+    same idea most fluently, whoever wrote it.
+
+    Every failure path returns `([], reason)`. Retrieval is an enhancement to an
+    agent that already works without it; it is never the reason a query fails.
+    """
+    retriever = deps.extras.get("policy")
+    if retriever is None:
+        return [], "policy retrieval not configured"
+
+    try:
+        rows, doc_cypher = await deps.kg.run(
+            *q.policy_documents_for(iso3=partner, hs_code=hs_prefixes[0] if hs_prefixes else None)
+        )
+    except KnowledgeGraphUnavailableError as exc:
+        return [], f"policy document lookup failed: {exc}"
+
+    doc_ids = tuple(row["doc_id"] for row in rows)
+    if not doc_ids:
+        return [], f"no policy document matches this country and code; {doc_cypher.split()[0]}"
+
+    filters = RetrievalFilter(
+        iso3=(partner,) if partner else (),
+        hs_prefixes=hs_prefixes,
+        measure_types=SIMULATION_MEASURES,
+        doc_ids=doc_ids,
+        extra_notes=[f"documents scoped by Cypher: {' '.join(doc_cypher.split())[:160]}"],
+    )
+    try:
+        chunks, description = await retriever.search(state["query"], filters=filters)
+    except Exception as exc:  # noqa: BLE001 - retrieval degrades, it never fails the query
+        log.warning("%s: policy retrieval unavailable: %s", AGENT, exc)
+        return [], f"policy retrieval unavailable: {exc}"
+    return chunks, description
+
+
+def _policy_evidence(
+    chunks: list[PolicyChunk],
+    detail: str,
+    *,
+    limit: int,
+    exclude: SourcedRate | None = None,
+) -> list[Evidence]:
+    """Cite retrieved passages as context, without deriving anything from them.
+
+    Capped at `limit`. Evidence is read by a person and merged into an answer by
+    an LLM, and five near-identical policy passages crowd out the graph evidence
+    that carries the actual figures — the KG entries are the ones a marker checks.
+
+    `exclude` drops the chunk a rate was already read from, so the same passage
+    is not cited twice under two different claims.
+    """
+    already_cited = (
+        (exclude.chunk.doc_id, exclude.chunk.chunk_index) if exclude is not None else None
+    )
+    entries: list[Evidence] = []
+    for chunk in chunks:
+        if already_cited is not None and (chunk.doc_id, chunk.chunk_index) == already_cited:
+            continue
+        snippet = " ".join(chunk.text.split())[:220]
+        entries.append(
+            evidence_from_policy(
+                claim=f"{chunk.publisher} — {chunk.title}: \"{snippet}\"",
+                detail=f"{chunk.citation}; {detail}",
+                url=chunk.url,
+            )
+        )
+        if len(entries) >= limit:
+            break
+    return entries
 
 
 # --- helpers -------------------------------------------------------------

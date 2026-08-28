@@ -135,10 +135,10 @@ def hs_prefixes_in(text: str) -> tuple[str, ...]:
     """HS prefixes the text is about — explicit codes first, then item words.
 
     Explicit codes are expanded to every level of their hierarchy, the same way
-    `kg.queries._hs_prefixes` does, because a document that names 610910 is also
+    `kg.queries.hs_hierarchy` does, because a document that names 610910 is also
     about 6109 and 61 and a question asked at either level should find it.
     """
-    from ceynex.kg.queries import _hs_prefixes
+    from ceynex.kg.queries import hs_hierarchy
 
     found: list[str] = []
 
@@ -149,7 +149,7 @@ def hs_prefixes_in(text: str) -> tuple[str, ...]:
         if len(raw) % 2:
             continue
         try:
-            expanded = _hs_prefixes(raw)
+            expanded = hs_hierarchy(raw)
         except Exception:  # noqa: BLE001 - a number that is not an HS code is ordinary
             continue
         for code in expanded:
