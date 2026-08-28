@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded coherence docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -66,6 +66,17 @@ eval:
 
 eval-degraded:
 	$(PYTHON) -m eval.harness --degraded --json eval_degraded.json
+
+# The 15-question policy-retrieval set (eval/policy_questions.yaml), separate
+# from the 30 so that baseline stays comparable. Run both of these: the delta
+# between them is the whole accuracy claim for policy retrieval.
+eval-policy-baseline:
+	CEYNEX_POLICY_RETRIEVAL=off $(PYTHON) -m eval.harness \
+	  --questions eval/policy_questions.yaml --json eval_policy_baseline.json
+
+eval-policy:
+	$(PYTHON) -m eval.harness \
+	  --questions eval/policy_questions.yaml --json eval_policy.json
 
 # Blind merge-coherence sheets for three human raters. Needs `make eval` first.
 coherence:
