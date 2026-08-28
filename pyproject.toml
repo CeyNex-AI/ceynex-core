@@ -32,6 +32,11 @@ dependencies = [
     "openpyxl>=3.1",
     "pyjwt>=2.9",
     "bcrypt>=4.2",
+    # SRS 3.4.6's rate-limit counter, shared across the deployed image's two
+    # uvicorn workers. Optional at runtime — no REDIS_URL falls back to a
+    # per-process window (ceynex/api/rate_limit.py) — but declared so the
+    # backend image, which does set it, is never built without the client.
+    "redis>=5.0",
 ]
 
 [project.optional-dependencies]

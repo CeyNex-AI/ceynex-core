@@ -52,6 +52,7 @@ def config_dir() -> Path:
         + ". Set CEYNEX_CONFIG_DIR to point at it."
     )
 
+
 # Loaded once, and never overriding what is already exported: a value set in the
 # real environment (the container, CI) must win over a stray local .env.
 load_dotenv(REPO_ROOT / ".env", override=False)
@@ -121,6 +122,18 @@ def jwt_secret() -> str:
 def comtrade_api_key() -> str | None:
     """None falls the connector back to its committed bulk extract (R2)."""
     return _env("COMTRADE_API_KEY") or None
+
+
+def redis_url() -> str | None:
+    """Shared store for the SRS 3.4.6 rate limiter.
+
+    The backend VM's compose has always passed this; nothing read it until the
+    limiter existed. None is supported — the limiter falls back to a
+    per-process counter, which is correct for a single-worker developer run and
+    understated for the deployed two-worker image (see
+    `ceynex/api/rate_limit.py`).
+    """
+    return _env("REDIS_URL") or None
 
 
 def data_dir() -> Path:
