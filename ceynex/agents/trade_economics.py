@@ -58,7 +58,12 @@ SECTOR_OF_ITEM = {
 # Which shock the question is about. Checked in this order: an agreement question
 # that also mentions a currency is still an agreement question.
 SHOCK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("agreement", ("gsp", "gsp+", "agreement", "fta", "preference", "duty-free", "duty free")),
+    # "losing access to the United States market" is a preference loss, not a
+    # currency move. Without these, X09 fell through to the `fx` default and was
+    # answered with a 5% rupee depreciation — a figure about a shock the question
+    # never mentioned, and one the grounding check duly flagged as unsupported.
+    ("agreement", ("gsp", "gsp+", "agreement", "fta", "preference", "duty-free",
+                   "duty free", "access to", "market access", "losing access")),
     ("tariff", ("tariff", "duty", "customs", "import tax")),
     ("fx", ("deprecia", "apprecia", "exchange rate", "rupee", "lkr", "currency", "devalu")),
 )
