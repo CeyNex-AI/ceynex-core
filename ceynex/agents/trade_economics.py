@@ -33,6 +33,7 @@ from ceynex.agents.common import (
 from ceynex.contracts import AgentState, Evidence, failed_output
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
+from ceynex.retrieval.tagging import HS_FOR_ITEM
 from ceynex.settings import elasticity_config
 
 log = logging.getLogger(__name__)
@@ -341,14 +342,14 @@ def _representative_item(sector: str, requested: str | None) -> str:
 
 
 def _hs_for_item(item: str) -> str:
-    return {
-        "tea": "0902",
-        "cinnamon": "0906",
-        "rubber": "4001",
-        "coconut": "1513",
-        "apparel_knit": "61",
-        "apparel_woven": "62",
-    }.get(item, "61")
+    """The HS code an item's trade is recorded under.
+
+    The table moved to `ceynex/retrieval/tagging.py` when the policy pipeline
+    started needing it too: the code a chunk is tagged with and the code this
+    agent filters on have to be the same value, and two copies of a mapping are
+    two copies that can drift.
+    """
+    return HS_FOR_ITEM.get(item, "61")
 
 
 async def _baseline_value(deps: AgentDeps, item: str) -> tuple[float | None, int | None, str]:
