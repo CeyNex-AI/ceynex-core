@@ -261,7 +261,8 @@ Rules:
 - Return at least one agent. Never an empty list.
 - A question spanning both sectors gets both sector agents.
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
-- ANY question about a foreign government's or trade bloc's trade policy, trade strategy, tariffs, non-tariff measures, preferences, market access or priority markets gets trade_economics -- INCLUDING when it only asks what that policy SAYS and simulates nothing. "What does India's Foreign Trade Policy say about imports from Sri Lanka?", "What non-tariff measures does the EU apply to spices?" and "Does the Netherlands identify Sri Lanka as a priority market?" are all trade_economics. export_analytics holds only Sri Lanka's own trade flows and cannot answer any of them; routing such a question to it alone returns no evidence at all.
+- ANY question about a foreign government's or trade bloc's trade policy, trade strategy, tariffs, non-tariff measures, preferences, market access or priority markets gets trade_economics -- INCLUDING when it only asks what that policy SAYS and simulates nothing. export_analytics holds only Sri Lanka's own trade flows and cannot answer any of them.
+  ADD the sector agent too whenever such a question names goods: "What non-tariff measures does the EU apply to spices?" is trade_economics AND agriculture_commodity; "Which trade agreement gives Sri Lankan cinnamon preferential access?" is trade_economics AND agriculture_commodity. trade_economics alone is right only when no commodity or garment is named at all, as in "What does India's Foreign Trade Policy say about imports from Sri Lanka?".
 - A trend, growth rate, ranking ("fastest", "largest", "top", "which country"), market share, or concentration question gets export_analytics, IN ADDITION TO the sector agent(s) it names -- not instead of them. "Which country is the fastest growing market for cinnamon?" is both agriculture_commodity (names cinnamon) and export_analytics (asks for a growth ranking) at once.
 - relevance is 0.0-1.0 per agent: how central it is to the question.
 - CeyNex covers only agriculture (tea, cinnamon, rubber, coconut) and apparel. Set out_of_scope true if
@@ -270,6 +271,12 @@ Rules:
   second case, sectors must not include "agriculture" or "apparel" -- naming one of those, even in a
   route picked only because a route can never be empty, would say the question is partly about a real
   sector when it is not about one at all.
+  IN SCOPE, out_of_scope FALSE: the trade policy of any country Sri Lanka exports to, even when the
+  question names no commodity at all. "What does India's Foreign Trade Policy say about imports from
+  Sri Lanka?" and "Does the Netherlands identify Sri Lanka as a priority market?" are squarely in scope
+  -- a destination market's rules govern Sri Lankan exports, and trade_economics holds documents for
+  them. Use sectors ["macro"] for these. Marking one out_of_scope makes the merger discard the
+  agent's findings as noise and the user gets "CeyNex does not cover that" about a question it does.
 - Still return at least one agent even when out_of_scope is true (a route can never be empty) --
   export_analytics with a low relevance is the reasonable default when nothing else fits.
 
