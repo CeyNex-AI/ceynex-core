@@ -32,6 +32,7 @@ from typing import Any
 
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.orchestrator.confidence import aggregate_confidence, confidence_band
+from ceynex.orchestrator.grounding import ungrounded_figures
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +108,12 @@ class MergeResult:
     degraded: bool = False
     conflicts: list[Conflict] = field(default_factory=list)
     unanswered: list[str] = field(default_factory=list)
+    # Figures the composed prose stated that no finding or evidence entry
+    # supports (SRS 3.1.3). Non-empty means the prose was discarded and
+    # `answer` is the deterministic composition instead — see
+    # `_reject_ungrounded_prose`. Empty on every normal answer, including
+    # every degraded one, since the deterministic path cannot invent a figure.
+    ungrounded: list[str] = field(default_factory=list)
 
     def as_state_patch(self) -> dict[str, Any]:
         return {
@@ -201,6 +208,14 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     )
     degraded = not prose
 
+    # SRS 3.1.3. Checked against the raw model output, before the guards below
+    # append any deterministic sentence of their own — those restate figures
+    # the agents reported, so including them would let the guard's own text
+    # vouch for the prose it is meant to be policing.
+    ungrounded = _reject_ungrounded_prose(prose, state["query"], contributing, evidence)
+    if ungrounded:
+        prose = ""
+
     answer = prose or deterministic
     if prose:
         # The LLM is told to surface conflicts, but the requirement is not
@@ -219,7 +234,72 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
         degraded=degraded or any(o.get("degraded") for o in succeeded.values()),
         conflicts=conflicts,
         unanswered=unanswered,
+        ungrounded=ungrounded,
     )
+
+
+# --- grounding (SRS 3.1.3) -----------------------------------------------
+
+
+def _reject_ungrounded_prose(
+    prose: str,
+    query: str,
+    outputs: dict[AgentName, AgentOutput],
+    evidence: list[Evidence],
+) -> list[str]:
+    """Figures the composed prose asserts that nothing it was given supports.
+
+    Returning a non-empty list means `merge` discards the prose and serves
+    `compose_deterministic` instead. That is a real cost — the deterministic
+    answer is plainer — and it is the right trade: a fabricated figure in a
+    fluent sentence is the one failure mode a reader cannot detect, and this
+    system's whole claim is that its numbers are traceable. Serving the
+    invented figure with a caveat attached would keep the fluency and give up
+    the claim.
+
+    Discarding wholesale rather than excising the offending number is
+    deliberate too. A sentence built around a figure does not survive having
+    that figure cut out of it, and the surrounding clauses are exactly as
+    unsupported as the number was.
+    """
+    if not prose:
+        return []
+    missing = ungrounded_figures(prose, _grounding_corpus(query, outputs, evidence))
+    if missing:
+        log.warning(
+            "merge prose discarded: %d figure(s) not supported by any finding or "
+            "evidence entry (%s); serving the deterministic composition instead",
+            len(missing),
+            ", ".join(missing),
+        )
+    return missing
+
+
+def _grounding_corpus(
+    query: str, outputs: dict[AgentName, AgentOutput], evidence: list[Evidence]
+) -> list[str]:
+    """Everything the merge LLM was shown, as text to draw figures from.
+
+    Mirrors `_merge_prompt` plus the evidence. The figures are rendered in
+    several forms on purpose: the prompt shows `f"{value:,.4g}"`, so a large
+    number reaches the model as `1.235e+09` and can honestly come back as
+    "1.235 billion", while the same value's plain `str()` is what a summary
+    sentence would contain. Only offering one spelling would reject correct
+    prose for restating a figure in the form it was given.
+    """
+    texts: list[str] = [query]
+    for output in outputs.values():
+        texts.append(output.get("summary") or "")
+        for value in (output.get("figures") or {}).values():
+            texts.append(str(value))
+            if isinstance(value, int | float):
+                texts.append(f"{value:,.4g}")
+                texts.append(f"{value:,.2f}")
+        texts.extend(output.get("assumptions") or [])
+    for item in evidence:
+        texts.append(str(item.get("claim", "")))
+        texts.append(str(item.get("detail", "")))
+    return texts
 
 
 # --- conflicts -----------------------------------------------------------
