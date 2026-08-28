@@ -127,3 +127,182 @@ def test_confidence_is_derived_rather_than_hardcoded():
     refused = asyncio.run(run("What if Sri Lanka loses GSP+ for apparel?", KG(coverage=[])))
     answered = asyncio.run(run("What if Sri Lanka loses GSP+ for apparel?", KG(coverage=GSP_PLUS)))
     assert refused["confidence"] != answered["confidence"]
+
+
+# --- policy retrieval (deviation D10) ------------------------------------
+#
+# The four tests above hold the D9 refusal line and must keep passing unchanged:
+# adding a second source of tariff rates must not turn a refusal into a guess.
+
+
+class PolicyKG(KG):
+    """`KG`, plus the policy-document lookup the retrieval path runs first."""
+
+    def __init__(self, *, documents=("USA-USTR-TARIFF-ACTIONS",), **kwargs):
+        super().__init__(**kwargs)
+        self._documents = documents
+
+    async def run(self, cypher, params=None):
+        if "PolicyDocument" in cypher:
+            return [{"doc_id": doc_id} for doc_id in self._documents], cypher
+        return await super().run(cypher, params)
+
+
+class SpyRetriever:
+    """Records what it was asked for and returns a fixed set of chunks."""
+
+    def __init__(self, chunks=(), raises=None):
+        self._chunks = list(chunks)
+        self._raises = raises
+        self.calls: list = []
+
+    async def search(self, query, *, filters=None, limit=5):
+        self.calls.append(filters)
+        if self._raises:
+            raise self._raises
+        return list(self._chunks), filters.describe() if filters else ""
+
+
+def policy_chunk(text: str):
+    from ceynex.retrieval.schema import PolicyChunk
+
+    return PolicyChunk(
+        doc_id="USA-USTR-TARIFF-ACTIONS",
+        chunk_index=0,
+        text=text,
+        title="Presidential Tariff Actions",
+        publisher="USTR",
+        url="https://example.invalid/tariff",
+        page=7,
+    )
+
+
+MFN_TEXT = "Knitted apparel under HS 61 faces an MFN duty of 16.5% when preferences do not apply."
+
+
+async def run_with(query: str, kg: KG, retriever):
+    deps = AgentDeps(kg=kg, llm=FakeLLMClient(available=False), extras={"policy": retriever})
+    patch = await trade_economics_node(new_state(query, "test"), deps)
+    return patch["agent_outputs"][AGENT]
+
+
+def test_no_retriever_configured_behaves_exactly_as_before():
+    """`None` is the pre-retrieval system, and it has to stay byte-identical.
+
+    `make eval-policy-baseline` measures against this path, so any drift here
+    makes the before/after comparison meaningless.
+    """
+    query = "What happens to apparel exports if Sri Lanka loses GSP+?"
+    without = asyncio.run(run("What happens to apparel exports if Sri Lanka loses GSP+?", KG(coverage=GSP_PLUS)))
+    explicit_none = asyncio.run(run_with(query, KG(coverage=GSP_PLUS), None))
+
+    assert without["figures"] == explicit_none["figures"]
+    assert without["summary"] == explicit_none["summary"]
+
+
+def test_an_fx_shock_never_calls_the_retriever():
+    """A currency question needs no tariff schedule.
+
+    Skipping it there is what keeps the commonest simulation on the latency it
+    has today, which matters because single-sector p95 already breaches SRS
+    3.4.1 (EVALUATION.md §1).
+    """
+    spy = SpyRetriever()
+    asyncio.run(run_with("How would a 5% rupee depreciation affect apparel?", PolicyKG(coverage=GSP_PLUS), spy))
+
+    assert spy.calls == []
+
+
+def test_an_agreement_shock_anchors_the_search_on_the_graphs_entities():
+    spy = SpyRetriever()
+    asyncio.run(
+        run_with(
+            "What happens to apparel exports to the United States if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=GSP_PLUS),
+            spy,
+        )
+    )
+
+    assert spy.calls, "an agreement question must consult the policy corpus"
+    filters = spy.calls[0]
+    assert filters.iso3 == ("USA",), "the partner resolved from the query must scope the search"
+    assert "61" in filters.hs_prefixes
+    assert filters.doc_ids == ("USA-USTR-TARIFF-ACTIONS",), "Cypher must supply the allow-list"
+    assert filters.is_anchored
+
+
+def test_a_sourced_rate_replaces_the_constant_and_appears_in_evidence():
+    """EVALUATION.md §1 grounding class 1 names this agent for figures that
+    appear in no evidence. A new figure without a new evidence entry would
+    repeat the bug the same run found."""
+    out = asyncio.run(
+        run_with(
+            "What happens to apparel exports to the United States if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=GSP_PLUS),
+            SpyRetriever([policy_chunk(MFN_TEXT)]),
+        )
+    )
+
+    assert out["figures"]["apparel_mfn_tariff_pct"] == 16.5
+    assert any(e["source_id"] == "POLICY" for e in out["evidence"])
+    assert any("16.5" in e["claim"] for e in out["evidence"]), "the rate must be restated in evidence"
+    assert any(e.get("url") for e in out["evidence"] if e["source_id"] == "POLICY")
+
+
+def test_the_assumptions_say_which_rate_was_used():
+    """Whichever source supplied the magnitude, the answer names it.
+
+    A constant disappearing silently behind a sourced figure is the same defect
+    as inventing one — the reader cannot tell how much to trust the number.
+    """
+    sourced = asyncio.run(
+        run_with(
+            "What happens to apparel exports to the United States if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=GSP_PLUS),
+            SpyRetriever([policy_chunk(MFN_TEXT)]),
+        )
+    )
+    fallback = asyncio.run(
+        run_with(
+            "What happens to apparel exports to the United States if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=GSP_PLUS),
+            SpyRetriever([]),
+        )
+    )
+
+    assert any("USTR" in a for a in sourced["assumptions"])
+    assert any("literature constant" in a for a in fallback["assumptions"])
+    assert sourced["figures"]["apparel_impact_usd"] != fallback["figures"]["apparel_impact_usd"]
+
+
+def test_a_retriever_that_fails_does_not_fail_the_query():
+    """Retrieval is an enhancement to an agent that already works without it."""
+    out = asyncio.run(
+        run_with(
+            "What happens to apparel exports if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=GSP_PLUS),
+            SpyRetriever(raises=RuntimeError("qdrant unreachable")),
+        )
+    )
+
+    assert out["figures"], "a retrieval outage must not empty the simulation"
+    assert not out.get("error")
+
+
+def test_retrieval_never_rescues_a_refusal_into_a_number():
+    """The D9 line, retested with the new source present.
+
+    Policy text may be cited for context when the graph records no coverage, but
+    it must not become the missing premise: a preference that the graph does not
+    record is still not a preference that can be lost.
+    """
+    out = asyncio.run(
+        run_with(
+            "What happens to apparel exports to the United States if Sri Lanka loses GSP+?",
+            PolicyKG(coverage=[]),
+            SpyRetriever([policy_chunk(MFN_TEXT)]),
+        )
+    )
+
+    assert out["figures"] == {}, "a refusal that reports an impact figure is not a refusal"
+    assert any("cannot be simulated" in a for a in out["assumptions"])
