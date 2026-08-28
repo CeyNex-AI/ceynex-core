@@ -9,7 +9,6 @@ was built from and the LLM paraphrases. These tests hold the fix in place.
 
 from eval.harness import is_refusal, ungrounded
 
-
 # --- refusal detection ---------------------------------------------------
 
 
