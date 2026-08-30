@@ -513,3 +513,85 @@ def known_aliases() -> tuple[str, ...]:
     plain tuple (not the live dict) so callers can't mutate the crosswalk.
     """
     return tuple(_ALIASES.keys())
+
+
+# --- Product vocabulary (EDB free text -> a stable item key) -----------------
+#
+# The same trap as `market_to_iso3`, one column over. EDB's `Product :` line is
+# free text that drifts between editions, and `item` is part of
+# `fact_trade_upsert_key`, so a drifted spelling is a new identity: it inserts
+# rather than updates and silently splits one series into two. Normalize first,
+# then look the normalized form up, exactly as the country aliases work.
+
+
+class ItemVocabularyError(CrosswalkError):
+    """A product label that is not in `reference/item_vocabulary.csv`.
+
+    Loud on purpose, and the one design decision here worth defending: passing
+    an unknown label through unchanged is what produced `APPREL` alongside
+    `APPAREL` in the first place. A new EDB edition inventing a label should
+    stop the ingest and get a vocabulary row, not quietly create a second
+    series that nobody notices until a total looks wrong.
+    """
+
+
+@functools.lru_cache(maxsize=1)
+def _item_vocabulary() -> dict[str, tuple[str, str]]:
+    """normalized label -> (canonical_item, granularity)."""
+    path = REFERENCE_DIR / "item_vocabulary.csv"
+    with path.open(encoding="utf-8") as fh:
+        rows = csv.DictReader(line for line in fh if not line.startswith("#"))
+        return {
+            row["normalized_label"]: (row["canonical_item"], row["granularity"])
+            for row in rows
+        }
+
+
+def _normalize_item(label: str) -> str:
+    """Punctuation-insensitive key for a product label.
+
+    Absorbs every variant EDB has actually produced except real misspellings:
+    the parenthetical gloss ("MADE - UP TEXTILE ARTICLES (Blankets, Rugs...)"
+    vs the bare form), '&' against 'AND', and hyphen against en-dash. Those
+    three account for five of the six duplicate labels measured in production;
+    `APPREL` and `SPORTSWERA` are typos and carry their own vocabulary rows.
+    """
+    s = label.casefold().strip()
+    s = re.sub(r"\([^)]*\)", " ", s)
+    s = s.replace("&", " and ")
+    s = re.sub(r"[‐-―\-/]", " ", s)
+    s = re.sub(r"[^\w\s]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def canonical_item(label: str) -> str:
+    """Resolve a free-text product label to its stable `item` key.
+
+    >>> canonical_item("APPREL") == canonical_item("APPAREL")
+    True
+    """
+    entry = _item_vocabulary().get(_normalize_item(label))
+    if entry is None:
+        raise ItemVocabularyError(
+            f"{label!r} (normalized {_normalize_item(label)!r}) is not in "
+            "reference/item_vocabulary.csv — add a row rather than letting a "
+            "new spelling create a second series"
+        )
+    return entry[0]
+
+
+def item_granularity(label: str) -> str:
+    """'total', 'group' or 'component' for a product label.
+
+    PROPOSED values pending the `granularity` contract change; see the header
+    of `reference/item_vocabulary.csv` for what has and has not been verified.
+    """
+    entry = _item_vocabulary().get(_normalize_item(label))
+    if entry is None:
+        raise ItemVocabularyError(f"{label!r} is not in reference/item_vocabulary.csv")
+    return entry[1]
+
+
+def known_items() -> tuple[str, ...]:
+    """Every canonical item key, deduplicated. For tests and the KG loaders."""
+    return tuple(sorted({item for item, _ in _item_vocabulary().values()}))
