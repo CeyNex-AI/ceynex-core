@@ -48,7 +48,7 @@ import pdfplumber
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
-from ceynex.data.crosswalk import market_to_iso3
+from ceynex.data.crosswalk import canonical_item, market_to_iso3
 
 # "annual" layout — matches: <rank> <market> <5 numeric year columns> <% share> <% avg growth>
 ROW_PATTERN = re.compile(
@@ -285,12 +285,20 @@ class EDBConnector(DataSourceConnector):
         between editions (2023's "25.89" is "Made-Up Textile Articles"; 2024's
         "25.89" is "Made-Up Clothing Accessories"), so `table_id` is only a
         page locator for the edition it came from, never a stable product key.
-        Wording also drifts slightly between editions for what is otherwise
-        the same category (e.g. "&" vs "," in the parenthetical) — that isn't
-        normalized here, so the same real-world category from two editions
-        can currently surface as two distinct `item` strings downstream. A
-        controlled product-name vocabulary would fix this properly; flagging
-        rather than guessing at one unilaterally.
+        Wording also drifts between editions for what is otherwise the same
+        category — "&" against "AND", hyphen against en-dash, the parenthetical
+        gloss present or absent, and outright typos ("APPREL", "SPORTSWERA").
+        Since `item` is part of `fact_trade_upsert_key`, each variant is a
+        separate identity that inserts instead of updating, silently splitting
+        one series in two. Measured in production 2026-08-30: `APPAREL` held
+        2014-2018 and `APPREL` 2019-2024 — the same series, and the reason the
+        registered apparel model was fitted on 5 rows.
+
+        `canonical_item()` (`data/crosswalk.py`, backed by
+        `reference/item_vocabulary.csv`) now resolves the label before it is
+        written, the same way `market_to_iso3` resolves the market name one
+        line above. It raises on a label it does not know rather than passing
+        it through, because passing through is what created the split.
 
         EDB editions overlap in the years they cover — the 2023 edition's
         tables span 2019-2023, the 2024 edition's span 2020-2024 — so
@@ -319,7 +327,7 @@ class EDBConnector(DataSourceConnector):
                     {
                         "source_id": self.source_id,
                         "sector": "apparel",
-                        "item": r["product"],
+                        "item": canonical_item(r["product"]),
                         "hs_code": None,
                         "reporter_iso3": "LKA",
                         "reporter_m49": 144,

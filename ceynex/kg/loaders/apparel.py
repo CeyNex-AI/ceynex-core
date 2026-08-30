@@ -53,8 +53,20 @@ from ceynex.settings import postgres_dsn
 
 log = logging.getLogger(__name__)
 
-# raw fact_trade.item text (EDB) -> normalized graph item name.
-_EDB_ITEM_MAP = {"APPAREL": "apparel_edb", "APPREL": "apparel_edb"}
+# fact_trade.item (EDB) -> graph item name.
+#
+# `EDBConnector.to_fact_trade` now writes the canonical key via
+# `crosswalk.canonical_item`, so new rows already arrive as `apparel_edb`. Rows
+# ingested before that still carry the raw spellings, and both must resolve
+# while the backfill migration is outstanding — hence the identity entry as
+# well as the two historical ones. The raw keys can be dropped once no
+# `source_id='EDB'` row in fact_trade has an uppercase `item`.
+_EDB_GRAPH_ITEM = "apparel_edb"
+_EDB_ITEM_MAP = {
+    "APPAREL": _EDB_GRAPH_ITEM,
+    "APPREL": _EDB_GRAPH_ITEM,
+    _EDB_GRAPH_ITEM: _EDB_GRAPH_ITEM,
+}
 _JAAF_ITEM = "apparel_textiles"
 
 _SELECT_EDB = """
