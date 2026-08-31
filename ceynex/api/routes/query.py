@@ -10,6 +10,9 @@ and the help content are still M3's and still not pre-empted here. Auth (SRS
 *optional* dependency — a request with no (or an invalid) token still answers
 normally, it just isn't attributed to anyone. The endpoint stays open rather
 than gated, recorded in docs/DEFERRED.md.
+
+Rate limiting (SRS 3.4.6) applies here and only here; `ceynex/api/rate_limit.py`
+explains the store, the window and why it fails open.
 """
 
 from __future__ import annotations
@@ -17,9 +20,10 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ceynex.api import history
+from ceynex import settings
+from ceynex.api import history, rate_limit
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.routes.auth import TokenPayload, get_optional_user
 from ceynex.api.schemas import QueryRequest, QueryResponse
@@ -41,7 +45,64 @@ router = APIRouter(tags=["query"])
 REQUEST_TIMEOUT_S = 25.0
 
 
-@router.post("/api/query", response_model=QueryResponse)
+async def enforce_rate_limit(
+    http_request: Request,
+    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+) -> None:
+    """SRS 3.4.6. A dependency rather than middleware, so it applies to this
+    endpoint alone — logging in, reading your own history and the admin routes
+    are not what the requirement is about, and throttling them would be a
+    different decision needing its own justification.
+
+    Runs before the graph is invoked: the whole point is not to pay for the
+    fan-out. `get_optional_user` is shared with the handler below, and FastAPI
+    resolves a dependency once per request, so the token is not verified twice.
+    """
+    config = settings.load_config("api").get("rate_limit", {})
+    if not config.get("enabled", True):
+        return
+
+    limit = int(config.get("query_per_minute", 30))
+    window_s = int(config.get("window_seconds", 60))
+    identity = rate_limit.identity_of(
+        user.email if user else None,
+        http_request.client.host if http_request.client else None,
+    )
+
+    decision = await _window().check(identity, limit, window_s)
+    if decision.allowed:
+        return
+
+    log.info("rate limit hit by %s (%d/%ds)", identity, limit, window_s)
+    raise HTTPException(
+        status_code=429,
+        detail=(
+            f"rate limit exceeded: at most {limit} queries per {window_s} seconds. "
+            f"Try again in {decision.retry_after_s}s."
+        ),
+        headers={"Retry-After": str(decision.retry_after_s)},
+    )
+
+
+_window_singleton: rate_limit.Window | None = None
+
+
+def _window() -> rate_limit.Window:
+    """Built on first use, not at import: `build_window` reads REDIS_URL, and
+    at import time the app may not have loaded its environment yet."""
+    global _window_singleton  # noqa: PLW0603 - one process-lifetime object
+    if _window_singleton is None:
+        _window_singleton = rate_limit.build_window()
+    return _window_singleton
+
+
+def set_window(window: rate_limit.Window | None) -> None:
+    """Test seam. Production never calls this."""
+    global _window_singleton  # noqa: PLW0603
+    _window_singleton = window
+
+
+@router.post("/api/query", response_model=QueryResponse, dependencies=[Depends(enforce_rate_limit)])
 async def submit_query(
     request: QueryRequest,
     runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom

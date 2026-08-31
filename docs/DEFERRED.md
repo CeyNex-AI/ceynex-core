@@ -123,12 +123,21 @@ their loads add to mine rather than colliding with them. M2 seeds only
 **SRS 3.4.2 wants 50 concurrent users. Nothing has tested that.** The latency
 figures in [EVALUATION.md](EVALUATION.md) are single-user, sequential by design
 so the numbers mean something per query. They pass their budgets with 5–15x
-headroom, and that headroom is partly because no LLM key is configured, so the
-system never pays for a model call.
+headroom, and that headroom is partly because no LLM key was configured when
+they were taken, so the system never paid for a model call.
 
-Two separate things are therefore unverified: throughput at 50 concurrent users,
-and latency with prose generation switched on. Both need re-measuring before any
-claim about SRS 3.4.1/3.4.2 is made in the final report.
+**Retaken on 2026-08-28 with a key configured, and one budget now fails.**
+Single-sector p95 came out at 14.6 s against a 10 s budget (SRS 3.4.1), where
+the keyless run had posted 2.7 s. That headroom was never real — it was the
+degraded path being reported as the system. See EVALUATION.md §1.
+
+**Throughput at 50 concurrent users (SRS 3.4.2) is still untested**, and is now
+the more important of the two: the single-user numbers no longer have headroom
+to spare.
+
+One thing that *does* now exist between a load test and a real outage: the SRS
+3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
+50-concurrent-user figure is about 50 distinct users, not one script.
 
 ## Merge coherence not yet rated
 
@@ -137,12 +146,65 @@ three human raters and the session has not happened, so SRS 3.1.2's "one
 coherent answer, not a list of per-agent responses" is currently supported by
 the merger's design and its unit tests, not by a measurement.
 
+**Now unblocked and now the longest-lead item.** It was waiting on the two
+sector agents (landed 26 Aug) and on prose generation being on (it is). Rating
+prose the LLM never wrote would have measured the deterministic composer, which
+is not what SRS 3.1.2 is about. Everything else outstanding is a command; this
+one needs three people's calendars, so book it before writing anything else.
+
+## Audit logging (SRS 3.4.7) — not built
+
+**Found 2026-08-28 while implementing the rate limiter, and not previously
+recorded anywhere — which is the failure this file exists to prevent.**
+
+SRS 3.4.7 requires "an audit log of all user queries and all administrative
+actions, such as changes to user accounts or manual interventions in the data
+pipeline". Half of that exists by accident rather than by design:
+
+- **User queries** are recorded, for signed-in callers only, by
+  `ceynex/api/history.py`. That table was built for SRS 3.5.2 (the user's own
+  history), so it is scoped to the caller and has no retention or tamper
+  story. It is a feature that happens to leave a trail, not an audit log.
+- **Administrative actions are not recorded at all.** `POST /api/admin/retrain`,
+  `POST /api/admin/pipeline/ingest` and `POST /api/admin/dq-flags/{id}/resolve`
+  all mutate real state, all require the `admin` role — and none of them write
+  down who did it or when. After the fact there is no way to tell which admin
+  retrained a model or resolved a discrepancy flag.
+
+The second half is the one that matters and the one to build: an append-only
+table written by `require_admin`'s callers, recording actor, action, target and
+timestamp. Left undone deliberately rather than half-built under time pressure,
+because an audit log that misses some actions is worse than none — it invites
+the reader to trust a record that is not complete.
+
+## Rate limiting (SRS 3.4.6) — built, with one stated exposure
+
+`ceynex/api/rate_limit.py`, wired onto `POST /api/query` only. Redis-backed
+when `REDIS_URL` is set (the deployed image runs two uvicorn workers, so a
+per-process counter would permit double the configured limit), per-process
+otherwise.
+
+**It fails open.** If Redis is unreachable the request is allowed and a warning
+is logged, so a Redis outage means abuse is unthrottled until it is restored.
+That is the deliberate direction — the alternative is a rate-limit store outage
+taking down query submission entirely, which causes the unavailability the
+limiter exists to prevent — but it is an exposure and is recorded here rather
+than left to be discovered.
+
+Also unlimited by design, each needing its own justification before being
+throttled: login, a user reading their own history, and the admin routes.
+
 ## Operational
 
-- **`OPENAI_API_KEY` and `COMTRADE_API_KEY` are unset.** The system runs
-  degraded by design (SRS 3.4.3): figures and evidence, no generated prose.
-  Comtrade uses the keyless public preview endpoint, which returns real data at
-  a lower rate limit.
+- **`OPENAI_API_KEY` is now set** (and an OpenRouter free-tier failsafe sits
+  behind it), so the system no longer runs the SRS 3.4.3 degraded path by
+  default on a machine that has the `.env`. Degraded mode is still reachable
+  deliberately — `--no-llm`, or `make eval-degraded` — and still tested. Both
+  paths are now measured side by side in EVALUATION.md §1. Whether the deployed
+  VM's own `.env` carries the key is not visible from a checkout and should be
+  confirmed on the box, not assumed from this file.
+- **`COMTRADE_API_KEY` is unset.** Comtrade uses the keyless public preview
+  endpoint, which returns real data at a lower rate limit.
 - **SSH (22) and RDP (3389) are open to `0.0.0.0/0`** on the `ceynex-dev` VPC.
   Not closed unilaterally because restricting SSH to a single address could lock
   out two teammates. RDP serves no purpose on these Linux VMs and can be deleted
