@@ -1,21 +1,43 @@
 # Evaluation — M2, Core Systems and Orchestration
 
-Measured on 2026-08-19 against the deployed stack: PostgreSQL 18 and Neo4j 5.26
-on the database VM, 4,625 `fact_trade` rows of live UN Comtrade data covering
+Measured on **2026-08-28** against PostgreSQL 18 and Neo4j 5.26 holding 4,625
+`fact_trade` rows and 4,625 `EXPORTS_TO` edges of live UN Comtrade data covering
 2015–2024 for HS 0902, 0906, 4001, 61 and 62.
+
+**This supersedes the 2026-08-19 run**, which is not comparable to it. Three
+things changed in between, and the differences below are mostly attributable to
+them rather than to the orchestrator:
+
+1. **Both sector agents were stubs on 19 Aug.** M1's `agriculture_commodity` and
+   M3's `apparel_manufacturing` landed 26 Aug. The old run measured a system two
+   agents smaller.
+2. **No LLM key was configured on 19 Aug; one is now**, plus an OpenRouter
+   free-tier failsafe. Every latency figure in the old run was the SRS 3.4.3
+   degraded path, which is why it posted 1.36 s single-sector p50 and this run
+   posts 8.4 s.
+3. **A refusal metric was wrong.** See §2.
 
 Reproduce with:
 
 ```bash
-python -m eval.harness --json results.json          # the 30-question set
-python -m eval.harness --degraded --json degraded.json
-python -m eval.backtest --sector agriculture --item cinnamon
+make eval            # 30 questions, LLM live
+make eval-degraded   # the same set, SRS 3.4.3 path
+make backtest SECTOR=agriculture ITEM=cinnamon
 ```
 
 **Read the denominators.** Several rates here rest on 3 observations. They are
 reported with their `of` counts throughout because "100% correct" out of three
 is a weaker claim than the percentage implies, and rounding that away would be
 the most misleading thing in this document.
+
+> **Clear `.cache/llm` before any run whose latency you intend to quote.**
+> `LLMReasoningClient` keeps a content-addressed prompt cache on disk with a
+> 168-hour TTL, so a second run of the same 30 questions serves them from disk.
+> Measured 2026-08-28: the cached re-run returned fluent prose at a p50 of
+> **65 ms** and reported `within_budget: true` everywhere. Those are cache-hit
+> times, not response times, and they would have been the most flattering and
+> most wrong numbers in this document. Every latency figure below is from a
+> cold cache.
 
 ---
 
@@ -30,46 +52,64 @@ test it.
 
 ### Headline
 
-| Metric | Result | Denominator |
-|---|---|---|
-| Questions completed without crashing | **100%** | 30 |
-| Routing — exact agent-set match | **40%** | 30 |
-| Routing — recall of expected agents | **0.88** | 30 |
-| Routing — never returned an empty route | **100%** | 30 |
-| Answers with every figure traceable to evidence | **92.6%** | 27 answerable |
-| Ungrounded figures across the whole run | **2** | — |
-| Mean evidence entries per answer | **3.67** | 27 |
-| Answers with no evidence at all | **0** | 27 |
-| Unanswerable questions correctly refused | **100%** | 3 |
-| Answerable questions returning no content | **0%** | 27 |
+| Metric | LLM live | Degraded (SRS 3.4.3) | Denominator | 19 Aug |
+|---|---|---|---|---|
+| Questions completed without crashing | **100%** | 100% | 30 | 100% |
+| Routing — exact agent-set match | **53.3%** | 40% | 30 | 40% |
+| Routing — recall of expected agents | **0.856** | 0.881 | 30 | 0.88 |
+| Routing — never returned an empty route | **100%** | 100% | 30 | 100% |
+| Answers with every figure traceable to evidence | **77.8%** | 92.6% | 27 answerable | 92.6% |
+| Ungrounded figures across the whole run | **6** | 2 | — | 2 |
+| Mean evidence entries per answer | **3.67** | 4.48 | 27 | 3.67 |
+| Answers with no evidence at all | **2** | 3 | 27 | 0 |
+| Unanswerable questions correctly refused | **100%** | 100% | 3 | 100% |
+| Answerable questions returning no content | **0%** | 0% | 27 | 0% |
 
-### Latency (SRS 3.4.1)
+The degraded column is not a worse version of the live one. It is better on
+grounding and evidence density and worse on routing, and both differences have
+the same cause: the deterministic composer restates agent summaries verbatim,
+so every figure it prints is by construction one an agent produced, while the
+keyword router alone cannot resolve the queries §1's routing discussion covers.
+
+### Latency (SRS 3.4.1) — one budget is breached
 
 | Query type | p50 | p95 | Budget | Within budget |
 |---|---:|---:|---:|---|
-| Single-sector | 1,360 ms | 2,662 ms | 10,000 ms | yes |
-| Cross-sector | 1,319 ms | 3,938 ms | 20,000 ms | yes |
-| Simulation | 1,090 ms | 1,285 ms | 20,000 ms | yes |
+| Single-sector | 8,397 ms | **14,638 ms** | 10,000 ms | **no** |
+| Cross-sector | 6,076 ms | 17,394 ms | 20,000 ms | yes |
+| Simulation | 7,658 ms | 9,557 ms | 20,000 ms | yes |
 
-Every query finished inside its budget with 5–15× headroom. This is a
-single-user measurement; the 50-concurrent-user requirement (SRS 3.4.2) has not
-been load-tested and is recorded as outstanding in [DEFERRED.md](DEFERRED.md).
+**Single-sector p95 is 46% over its budget.** The 19 Aug run passed every budget
+with 5–15× headroom for one reason: no LLM key was configured, so it never paid
+for a model call. That headroom was never real; it was the degraded path being
+measured and reported as though it were the system.
 
-The headroom has an unglamorous explanation: **no LLM key is configured, so the
-system runs the SRS 3.4.3 degraded path** and never pays for a model call. These
-are honest numbers for the system as it currently runs, and they are not the
-numbers it will post once prose generation is switched on. Expect single-sector
-to land in the 3–8 s range then, still inside budget, and re-measure rather than
-assuming.
+Two consequences worth stating plainly:
 
-### Routing: why exact match is 40% and why that is not the whole story
+- **The API would not merely be slow on these queries, it would fail.**
+  `ceynex/api/routes/query.py` sets `REQUEST_TIMEOUT_S = 25.0`. The slowest
+  query in the earlier of the two cold runs took 29.0 s, which is past that
+  wall. Latency variance between the two cold runs was substantial (single-sector
+  p95 of 29.0 s and 14.6 s on the same 30 questions), so the tail is not stable
+  and one run is not enough to characterise it.
+- **The budget is the requirement, not the p50.** Single-sector p50 (8.4 s) is
+  inside 10 s, and quoting only that would pass a requirement the system fails.
+
+This is a single-user measurement. SRS 3.4.2's 50 concurrent users remains
+untested and is recorded in [DEFERRED.md](DEFERRED.md); rate limiting (SRS
+3.4.6) now caps any one caller at 30 queries/minute, so that figure means 50
+distinct users rather than one script.
+
+### Routing: 53.3% exact, and why that is not the whole story
 
 Exact match counts a route as correct only if the agent set matches the
 pre-written label exactly. Recall — did the router include every agent that was
-needed — is **0.88**. The gap between the two is almost entirely the router
-adding one *more* agent than the label listed, not missing one.
+needed — is **0.856**. The two move in opposite directions from 19 Aug (exact
+40% → 53.3%, recall 0.881 → 0.856), and that is the LLM router doing what a
+sharper router should: fanning out less.
 
-Fifteen of the eighteen non-matches are of this shape:
+Eight of the fourteen non-matches are still the router adding one *more* agent
+than the label listed:
 
 ```
 S07  expected [export_analytics]  ->  [apparel_manufacturing, export_analytics]
@@ -78,54 +118,111 @@ S08  expected [export_analytics]  ->  [apparel_manufacturing, export_analytics]
 
 "Which markets buy the most Sri Lankan knitted apparel?" is labelled as pure
 export analytics; the router also sends it to the apparel agent. That is
-defensible behaviour and arguably better than the label. **The labels were not
-edited to match** — doing so after seeing the results is precisely the failure
-the pre-commit was meant to prevent. The honest reading is that exact match
-penalises defensible over-fanning as harshly as a genuine miss, which is why
-both numbers are reported.
+defensible and arguably better than the label. **The labels were not edited to
+match** — doing so after seeing the results is precisely the failure the
+pre-commit was meant to prevent.
 
-Three genuine routing misses remain, and they are real defects, not labelling
-disagreements:
+The remaining six are misses, and the shape of them has changed. On 19 Aug the
+misses were shocks the keyword list could not name. Now they are the opposite —
+the router **drops** agents a broad comparison needs:
 
-| Id | Question | Missed |
+| Id | Question | Dropped |
 |---|---|---|
-| X09 | "Which sector would be hurt more by losing access to the United States market?" | `trade_economics` — reads as a loss scenario but uses none of the simulation vocabulary |
-| M05 | "If global demand for knitted apparel fell 15%…" | `trade_economics` — a demand shock, but the keyword list only knows FX, tariff and agreement shocks |
-| M06 | "Which sector should Sri Lanka prioritise… and by how much will that raise GDP?" | routed to `forecast` alone on "next decade" |
+| X04, X06 | cross-sector comparisons labelled for all three of `agriculture_commodity`, `apparel_manufacturing`, `export_analytics` | routed to `export_analytics` alone |
+| X09 | "Which sector would be hurt more by losing access to the United States market?" | `agriculture_commodity`, `trade_economics` |
+| M01, M06 | multi-agent simulation questions | `export_analytics` |
+| S12 | "What were Sri Lanka's tea exports in 2035?" | routed to `forecast`, which is arguably right for a future year |
 
-All three are limitations of keyword routing on queries that describe a shock
-without naming one. The LLM router (`llm_route`) exists and falls back to
-keywords, but with no API key configured the keyword router *is* the system, so
-these are the numbers that matter today.
+X09 was a miss on 19 Aug too and remains one. **Under-fanning is the more
+dangerous error**: an extra agent costs latency and produces a defensible
+answer, while a dropped one produces a confident answer to half the question.
+X04 and X06 are the cases to fix first.
 
-### Evidence grounding
+### Evidence grounding — the number that got worse
 
 Every figure appearing in a merged answer is checked against the claims and
-Cypher of the `Evidence` entries attached to it. **92.6% of answers are fully
-grounded, with 2 ungrounded figures in the entire run.** Both are the shock
-magnitude quoted back from the question itself ("a 10% tariff"), which appears
-in the assumptions rather than in evidence. That is arguably correct behaviour
-and is left as reported rather than special-cased away.
+Cypher of the `Evidence` entries attached to it. **77.8% of answers are fully
+grounded, with 6 ungrounded figures**, against 92.6% and 2 on the degraded path.
+Switching prose generation on is what cost the 15 points, and the two failure
+classes behind it are different problems needing different fixes:
+
+**1. A computed figure the agent never put in its evidence (M01–M05).** M02
+answers "apparel export revenue is expected to decrease by approximately USD
+161,815,198", and that number appears in no evidence entry — it is a
+`trade_economics` simulation output living in the agent's `figures` dict. This
+is the same defect fixed for the forecast agent in `e0ed5ac`, recurring in the
+simulation agents. **The fix is in the agents, not the merger:** an agent that
+computes a figure must restate it in an `Evidence` entry, or the answer cannot
+be checked.
+
+**2. A sourced number attached to a wrong claim (S06).** The answer says
+cinnamon prices show "a 12.5% rise over this period" and then "an increase of
+106.8 USD/kg over nine years" — against a series whose 2024 value is 6.81
+USD/kg. The two sentences contradict each other and the second is not a price
+movement at all. This one matters more than its single-figure weight suggests,
+because it is the limitation §5 has always claimed and never demonstrated: the
+runtime guard (`ceynex/orchestrator/grounding.py`) compares digit strings and
+**cannot** see that a plausible number has been given the wrong unit and the
+wrong claim. Verify S06 by hand before quoting anything from it.
 
 The check is deliberately crude and over-reports: it compares digit strings, so
 a figure rounded differently in prose than in evidence is flagged. For a metric
 whose job is catching hallucinated numbers, a false alarm costs a manual check
 and a miss costs the claim.
 
+**Two answers carried no evidence at all** (X03, M06), against 0 on 19 Aug.
+X03 is the one answer in the run that fell back to degraded mode mid-flight;
+M06 is the routing miss above. Both are regressions worth chasing before the
+Testing and Evaluation Document.
+
 ### Degraded mode (SRS 3.4.3)
 
-The same 30 questions with the LLM forced unavailable: **0 crashes, 0 answers
-without evidence, all 30 flagged `degraded=True`.** Grounding drops to 81.5%
-because the deterministic composer restates forecast figures in prose that the
-LLM-composed version phrases differently; no answer loses its evidence.
+The same 30 questions with the LLM forced unavailable: **0 crashes, all 30
+flagged `degraded=True`, 100% of unanswerable questions refused, and grounding
+*higher* at 92.6%.** Three answers carry no evidence.
+
+The degraded path is not a fallback that limps. On every metric except routing
+it is the equal or better of the live path, because a deterministic composer
+cannot invent a figure and cannot misattribute one. What it loses is fluency and
+the LLM router's precision.
 
 ---
 
 ## 2. What the evaluation changed
 
-The harness found four defects on its first run. All four are fixed, and the
-before/after is the clearest evidence that the evaluation did work rather than
-just describing a system that already passed.
+### 2026-08-28: the harness was measuring its own vocabulary
+
+The 28 Aug run scored refusals at **100% in degraded mode and 33% with the LLM
+composing** — the same system, the same 30 questions, the same three
+unanswerable ones. Nothing about the behaviour differed. `is_refusal` grepped
+the answer for decline phrasing against a fixed marker list, and that list had
+been written from the deterministic composer's wording. X11 answered:
+
+> "…data for the fisheries sector is not available for comparison, so a direct
+> comparison between the tea and fisheries sectors cannot be made."
+
+That is a textbook correct refusal and it matched no marker. The metric was
+punishing paraphrase.
+
+`merger._gap_already_stated` records the identical lesson from the other side,
+twice, on 26 and 27 Aug — a fixed vocabulary cannot keep up with open-ended LLM
+paraphrasing. The harness had the same bug and nobody had looked, because with
+no LLM configured the deterministic composer was the only thing it ever scored.
+
+**Fixed by asking the orchestrator instead of the prose.** `merge()` already
+computes what it could not cover; `demo.answer` now returns that `unanswered`
+list through the same helper the API route uses, and `is_refusal` reads it. The
+marker list survives only as a fallback for older `--json` dumps. Refusal is
+**100% (3 of 3)** on both paths once measured this way.
+
+The general point is worth keeping for the report: **a metric written against
+one implementation of a component silently becomes a measurement of that
+implementation.** The fix was not a better keyword list.
+
+### 2026-08-19: four defects on the harness's first run
+
+All four are fixed, and the before/after is the clearest evidence that the
+evaluation did work rather than just describing a system that already passed.
 
 | | v1 baseline | after fixes |
 |---|---:|---:|
@@ -288,7 +385,13 @@ python -m eval.coherence sheet --results results.json --out coherence_sheet.csv
 python -m eval.coherence score r1.csv r2.csv r3.csv --key coherence_sheet.key.json
 ```
 
-**This requires three human raters and has not been run.** The scoring reports
+**This requires three human raters and has not been run. It is now unblocked** —
+it was waiting on the two sector agents, which landed 26 Aug, and on prose
+generation, which is on. It is the longest-lead item left before the Testing and
+Evaluation Document (activity 084, due 20 Sept), because it needs three people's
+calendars rather than a command. Book it first and score it later.
+
+The scoring reports
 inter-rater spread alongside the mean, because three raters agreeing on 4 and
 three splitting 2/4/5 produce nearly the same average and mean entirely
 different things. If it is run with fewer than three raters the tool warns, and
@@ -305,13 +408,18 @@ different conversation from finding them hidden.
   average of three errors. The ranking between families is consistent enough
   across five items to be worth reporting; any individual figure is not precise
   to the decimal place shown.
-- **Two of five agents are stubs.** M1's `agriculture_commodity` and M3's
-  `apparel_manufacturing` return "not implemented yet". Routing to them is
-  scored correct, content is scored unanswered — deliberately separate metrics,
-  because a working router pointing at an unbuilt agent is a different situation
-  from a broken router. Cross-sector answers are consequently thinner than they
-  will be, and coherence cannot be fairly rated until those agents land.
-- **Latency was measured with no LLM configured.** See §1.
+- **All five agents are now built**, so this run measures the whole system for
+  the first time. The 19 Aug figures do not describe the same software and
+  should not be presented as a trend against these.
+- **Latency rests on two cold runs that disagree.** Single-sector p95 came out
+  at 29.0 s and 14.6 s on the same 30 questions. Both breach the 10 s budget, so
+  the conclusion is stable, but the magnitude is not — quote it as "breaches,
+  p95 15–29 s across two runs", not as a single number. LLM latency is the
+  dominant term and it is not under our control.
+- **Every latency figure requires a cold `.cache/llm`.** A cached re-run posts a
+  65 ms p50 and passes every budget. See the note at the top.
+- **One run, one machine, one user.** These were taken against a local
+  `make up` stack, not the deployed VMs, so they include no VPC hop.
 - **The expected routes are one person's judgement**, written in advance but not
   reviewed by the other two members. Several disagreements in §1 are arguably
   the label being wrong rather than the router.
@@ -333,5 +441,23 @@ structurally — five nodes, all present, all reachable — rather than by
 inspection.
 
 Outstanding and named in [DEFERRED.md](DEFERRED.md): the 50-concurrent-user
-load test, WITS tariff ingestion (cut, deviation D9), and the coherence rating
-session.
+load test, WITS tariff ingestion (cut, deviation D9), the coherence rating
+session, and the SRS 3.4.7 admin audit log.
+
+### What this run leaves to fix, in priority order
+
+Ranked by what a marker would ask about first, not by effort:
+
+1. **Single-sector latency breaches SRS 3.4.1** (§1). A stated requirement the
+   system does not meet, and the queries that breach it also pass the API's own
+   25 s timeout. Needs a decision as much as a fix: cache the merge call, cut a
+   model hop, or raise the budget in the SRS with a written justification.
+2. **Agents must restate computed figures in their evidence** (§1, grounding
+   class 1). Five of six ungrounded figures are one bug in `trade_economics`
+   and the sector agents, and it is the traceability claim the whole project
+   rests on.
+3. **The router drops agents on broad cross-sector comparisons** (X04, X06, M06).
+   Under-fanning yields a confident answer to half a question.
+4. **S06's contradictory price sentence** — verify by hand, then decide whether
+   anything can catch a right number on a wrong claim.
+5. **The coherence rating session** — longest lead time, needs three people.

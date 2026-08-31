@@ -1,0 +1,20 @@
+# API-surface decisions that a marker may ask us to justify, kept out of code
+# so a diff shows who changed what (see ceynex/settings.py's module docstring).
+
+# SRS 3.4.6 — rate limiting on POST /api/query, per signed-in user, or per
+# client address for the anonymous callers the endpoint still answers.
+rate_limit:
+  enabled: true
+
+  # 30/minute is one query every two seconds, sustained. Chosen against what a
+  # real session looks like rather than against what the server can take: the
+  # measured p95 for a cross-sector answer is 3.9 s (docs/EVALUATION.md), and a
+  # person reading an evidence panel does not submit again inside that. A demo
+  # clicking through the 30-question set as fast as it loads stays under it;
+  # a script in a loop does not.
+  query_per_minute: 30
+
+  # The window the count resets on. Kept equal to the rate's own denominator —
+  # a longer window with the same limit would allow the whole allowance to be
+  # spent in one burst and then nothing for minutes.
+  window_seconds: 60

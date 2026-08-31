@@ -54,6 +54,14 @@ docs/_text/
 # Notebooks are exploratory/local-only — we don't put them on GitHub.
 notebooks/
 
+# Blind coherence rating material. The sheet is generated per session from
+# eval_results.json, and the key must never travel with it — a rater who can
+# see the key is scoring the machinery, which is the one thing the blinding
+# exists to prevent. Regenerate with `make coherence`.
+coherence_sheet.csv
+coherence_sheet.key.json
+coherence_sheet.rubric.txt
+
 # EDB permission/contact documents — personal/admin material, never committed.
 /Contact Export Development Board*.html
 /Contact Export Development Board*_files/
