@@ -461,3 +461,200 @@ Ranked by what a marker would ask about first, not by effort:
 4. **S06's contradictory price sentence** — verify by hand, then decide whether
    anything can catch a right number on a wrong claim.
 5. **The coherence rating session** — longest lead time, needs three people.
+
+---
+
+---
+
+## 7. Policy retrieval — the 15-question set (D10)
+
+Measured on **2026-08-28**, `eval/policy_questions.yaml`, against a Qdrant
+collection of **901 chunks from 6 documents** (Sri Lanka, UK, Canada, US, India,
+Italy). Reproduce with:
+
+```bash
+make eval-policy-baseline   # CEYNEX_POLICY_RETRIEVAL=off — the system before D10
+make eval-policy            # with retrieval
+```
+
+The 15 questions were committed in `dc70aa3`, **before** `ceynex/retrieval/`
+existed, for the reason `questions.yaml` was: questions written after watching
+the system answer them describe it instead of testing it.
+
+### Headline
+
+The middle column is the system with retrieval switched off *after* the routing
+fix, so the last two columns isolate retrieval and the first two isolate routing.
+
+| Metric | Before routing fix | Routing fixed, retrieval off | Retrieval on |
+|---|---|---|---|
+| Routing — exact agent-set match | 53.3% | **73.3%** | **73.3%** |
+| Routing — recall of expected agents | 0.678 | **0.872** | **0.872** |
+| Answers fully grounded | 33.3% | 41.7% | **50.0%** |
+| Ungrounded figures | 9 | 8 | **7** |
+| Mean evidence per answer | 2.42 | 2.25 | **2.92** |
+| **Answers with no evidence at all** | **3** | 2 | **0** |
+| Unanswerable correctly refused | 33.3% | 33.3% | 33.3% |
+
+Denominators: 15 for routing, 12 answerable for evidence, 3 for refusal.
+
+Every category stayed inside its SRS 3.4.1 budget: single-sector p95 8,399 ms
+against 10,000 ms. Retrieval costs 300–900 ms on the paths that use it and is
+skipped entirely for FX shocks, which is most simulation traffic.
+
+### The routing fix was the unlock, and it needed three changes
+
+The first run of this set produced **no movement at all** — 33.3% grounding on
+both paths and three answers with no evidence. The cause was not the retriever:
+P03, P04 and P05 ("what does India's Foreign Trade Policy say", "what non-tariff
+measures does the EU apply", "does the Netherlands identify Sri Lanka as a
+priority market") routed to `export_analytics` **alone**, which holds only Sri
+Lanka's own trade flows. They scored 0 evidence and 0.15 confidence. Retrieval
+lives in `trade_economics`, so a question that never reaches it cannot benefit
+from it however good the corpus is.
+
+**Routing them there without the other two changes made the system worse, and
+this was measured rather than reasoned about.** `_classify_shock` fell through to
+its `fx` default for anything it did not recognise, so "What does India's
+Foreign Trade Policy say about imports from Sri Lanka?" was answered with a 5%
+rupee depreciation and a figure of **USD −8,240,802** — a confident number about
+a currency move nobody mentioned, in reply to a question about a document.
+
+1. **`_classify_shock` gained a `policy` class.** A question is descriptive when
+   it names a policy instrument and nothing in it posits a change. Checked
+   against all 45 questions in both sets: every simulation stays a simulation.
+2. **`_describe_policy` answers from documents and reports no impact figure at
+   all.** Where the graph knows part of the answer it still leads with it — "does
+   the UK keep preferential access for Sri Lankan tea" is answered from
+   `agreement_coverage` (DCTS, GSP+, ISFTA, SAFTA, APTA cover HS 09), with
+   documents as corroboration rather than as the source of record.
+3. **Both routers send foreign trade-policy questions to `trade_economics`.**
+
+Two defects surfaced only because the fix was measured at each step:
+
+- **The first prompt edit routed correctly and then marked the same questions
+  `out_of_scope`.** The merger treats an out-of-scope route's findings as noise,
+  so P03 and P04 came back as *"Part of the question names a sector CeyNex does
+  not cover"* — about questions it does cover. The scope rule needed an explicit
+  carve-out: a destination market's trade policy is in scope even when the
+  question names no commodity.
+- **`parse_intent` resolved the wrong country.** It matches the *longest* country
+  name, and "Sri Lanka" is longer than "India", so the India question anchored on
+  LKA and answered about Indian policy with four confident passages from Sri
+  Lanka's own export strategy. `_destination()` now excludes the reporter
+  outright — Sri Lanka is never one of its own export destinations.
+
+### What retrieval itself contributes
+
+With routing fixed, the retrieval delta is real rather than noise: **+8.3 points
+of grounding, +0.67 evidence per answer, and the last two empty answers
+eliminated.** Per question, the gains are P03 0→1, P05 0→1, P08 1→3, P15 2→4,
+P01/P02/P04/P06/P07 each +1.
+
+Measured directly, outside the orchestrator:
+
+| Query | Top hit | Score |
+|---|---|---|
+| "Does the UK trade strategy keep preferential access for developing countries?" | UK Trade Strategy — Economic Partnership Agreements | **+5.95** |
+| "What are Canada's trade priorities and market access negotiations?" | Canada briefing book — Trade Policy / Market Access | **+6.24** |
+| "What does India's foreign trade policy say about imports and exports?" | India FTP 2023 — DGFT scheme administration | **+3.65** |
+
+Country anchoring holds: the India query's second-ranked hit is the Sri Lankan
+strategy at **+0.22**, far below the Indian document rather than winning on
+general trade vocabulary.
+
+### The refusals are the result worth keeping
+
+Three of the four questions with no answerable content now produce a *precise*
+refusal instead of silence or a fabrication:
+
+- **P05 (Netherlands)** — "The knowledge graph's indexed policy documents for NLD
+  are: none", citing the Cypher that established it. 60 ms.
+- **P03 (India)** — anchors on IND, finds `IND-DGFT-FTP-2023`, and reports that
+  none of its passages answer the question. The India page is DGFT scheme
+  administration and genuinely says nothing about imports from Sri Lanka.
+- **The US tariff question** — the USTR page is a link index ("to read the tariff
+  schedule, click here"). Its best chunk scores **−7.91** and the retriever
+  returns nothing.
+
+That last one is why `MIN_RERANK_SCORE` exists. Before it, the same question
+cited the corpus's ABBREVIATIONS page — which matched only because it contains
+the words "United States dollars" — as evidence about US apparel tariffs. A real
+citation, a real URL, a real page number, attached to a claim the page does not
+support: exactly the failure §5 says `orchestrator/grounding.py` cannot catch.
+
+The floor was left strict after a deliberate check. The **same** UK chunk scores
+**+5.36** for "preferential access for developing countries" and **−3.36** for
+"preferential access for Sri Lankan tea". The UK strategy does not mention Sri
+Lanka, and presenting a passage about Economic Partnership Agreements as an
+answer about Sri Lankan tea would be the misattribution above.
+
+### Regression check on the 30-question set
+
+Re-run cold against the same stack. Compared with §1's 2026-08-28 figures:
+
+| Metric | §1 (before D10) | After D10 + routing fix | Degraded path |
+|---|---|---|---|
+| Routing — exact match | 53.3% | 50.0% | 40.0% |
+| Routing — recall | 0.856 | 0.825 | 0.881 |
+| Answers fully grounded | 77.8% | **81.5%** | 92.6% |
+| Ungrounded figures | 6 | **5** | 2 |
+| Mean evidence per answer | 3.67 | **3.85** | 4.52 |
+| Answers with no evidence at all | 2 | **1** | 3 |
+| Unanswerable correctly refused | 100% (3) | 100% (3) | 100% (3) |
+| Crashes | 0 | 0 | 0 |
+
+**Grounding improved and routing moved down by one question.** The routing change
+is S03 and X03 drifting under LLM non-determinism, not a systematic effect — the
+same set re-routed differently on two runs of unchanged code, which §1 already
+warns about for latency and applies equally here. Read 50.0% and 53.3% as the
+same number until someone runs it three times.
+
+**One real regression was found and closed.** X09 ("Which sector would be hurt
+more by losing access to the United States market?") began routing to
+`trade_economics` once the router learned to send access questions there — which
+the pre-written label says is correct. `_classify_shock` then read it as an FX
+shock, because "access" was in none of its keyword lists, and produced the same
+phantom −8,240,802. Market-access loss is now an agreement shock; X09 returns 4
+evidence entries and no ungrounded figure.
+
+**All three latency budgets passed on this run**, single-sector p95 at 8,117 ms
+against 10,000 ms, where §1 recorded 14,638 ms breaching it. **Do not read that
+as a fix.** §1 records p95 swinging between 14.6 s and 29.0 s across two cold
+runs of the same questions; one run below the budget does not characterise a tail
+that unstable, and nothing in D10 targeted latency.
+
+### What to fix next, in priority order
+
+1. **Replace the five JavaScript-shell URLs with the PDFs they link to.** No code
+   change — the manifest header names each one. Germany, the Netherlands and the
+   UAE are unrepresented purely because of this.
+2. **Replace the USTR landing page with the actual HTS schedule**, and fix the
+   three 404s (India MoC, EU DG TRADE, Canada State of Trade). The EU one matters
+   most: several questions in this set are EU-focused.
+3. **Add the per-country WTO Trade Policy Reviews.** Still the most tariff-dense
+   documents available for these markets, and still not collected.
+4. **The router still under-fans on broad comparisons** (P07, P08, P09, P15 drop
+   `export_analytics`). Same defect §1 records for X04/X06; not made worse by D10.
+
+### Threats specific to this section
+
+- **Six documents, one of them 60% of the corpus.** The Sri Lankan strategy is
+  544 of 901 chunks, so any unfiltered retrieval is biased toward it. The country
+  filter is what holds that in check, which makes the anchoring test above
+  load-bearing rather than decorative.
+- **Every retrieved figure is `unverified`**, the same status as
+  `trade_agreements.csv`. No rate lifted from a document has been checked against
+  an official schedule by a human.
+- **The relevance floor is calibrated on one corpus.** `MIN_RERANK_SCORE = 0.0`
+  is the cross-encoder's own boundary rather than a tuned constant, but the
+  evidence that it separates useful from useless here is 15 questions on 6
+  documents.
+- **Refusal is unchanged at 33.3% (1 of 3)** and is the weakest number in the
+  table. D10 did not target it. The three unanswerable questions here are harder
+  than the 30-set's — P06 wants a 2030 tariff and P10 a country with no document —
+  and this needs the by-hand check §2 describes before it is quoted anywhere.
+- **The retrieval-on/off comparison is one run each.** The routing columns are
+  stable across runs because routing does not depend on the switch; the evidence
+  columns are not, and a second pair of runs would be worth taking before these
+  land in the Testing and Evaluation Document.

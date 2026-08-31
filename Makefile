@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded coherence docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -21,9 +21,10 @@ up:
 	docker compose up -d
 	@echo "waiting for services to report healthy..."
 	@until [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-postgres)" = "healthy" ] && \
-	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-neo4j)" = "healthy" ]; do \
+	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-neo4j)" = "healthy" ] && \
+	       [ "$$(docker inspect -f '{{.State.Health.Status}}' ceynex-qdrant)" = "healthy" ]; do \
 	  sleep 2; done
-	@echo "postgres + neo4j healthy. adminer on http://localhost:$${ADMINER_PORT:-8080}"
+	@echo "postgres + neo4j + qdrant healthy. adminer on http://localhost:$${ADMINER_PORT:-8080}"
 
 down:
 	docker compose down
@@ -53,7 +54,7 @@ ingest:
 	$(PYTHON) -m ceynex.data.pipeline --sources all
 
 kg-load:
-	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows
+	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows --policy
 
 # usage: make backtest SECTOR=agriculture ITEM=cinnamon
 backtest:
@@ -66,6 +67,17 @@ eval:
 
 eval-degraded:
 	$(PYTHON) -m eval.harness --degraded --json eval_degraded.json
+
+# The 15-question policy-retrieval set (eval/policy_questions.yaml), separate
+# from the 30 so that baseline stays comparable. Run both of these: the delta
+# between them is the whole accuracy claim for policy retrieval.
+eval-policy-baseline:
+	CEYNEX_POLICY_RETRIEVAL=off $(PYTHON) -m eval.harness \
+	  --questions eval/policy_questions.yaml --json eval_policy_baseline.json
+
+eval-policy:
+	$(PYTHON) -m eval.harness \
+	  --questions eval/policy_questions.yaml --json eval_policy.json
 
 # Blind merge-coherence sheets for three human raters. Needs `make eval` first.
 coherence:

@@ -1,0 +1,221 @@
+# CeyNex policy-retrieval evaluation set — 15 questions with expected routes.
+#
+# WRITTEN AND COMMITTED BEFORE THE RETRIEVER EXISTED, for the same reason
+# `questions.yaml` was: questions written after watching the system answer them
+# stop being an evaluation and become a description of whatever the system
+# happens to do. The git history is the evidence that did not happen here — this
+# file lands in its own commit, ahead of `ceynex/retrieval/` and ahead of the
+# `trade_economics` change that consumes it.
+#
+# WHAT THIS SET IS FOR, and why it is separate from `questions.yaml`:
+#
+# The 30-question set measures the orchestrator over Sri Lanka's own trade flows.
+# It contains no question about what a *destination market* does, because until
+# now nothing in the system knew. These 15 ask exactly that. Keeping them in a
+# second file leaves the 30-question baseline in `docs/EVALUATION.md` comparable
+# across runs — editing that file would destroy the only before/after this
+# project has.
+#
+# Composition: 6 single-sector · 4 cross-sector · 5 simulation.
+#   3 of the 15 are unanswerable, where the correct behaviour is to say so.
+#   1 (P10) is a deliberate CONTROL: it is fully answerable today, without any
+#   retrieval, because the tariff rate comes from the question itself. If adding
+#   the retriever changes P10's answer, the retriever is interfering where it has
+#   no business, and that is a regression this file is here to catch.
+#
+# CATEGORIES ARE THE EXISTING THREE ON PURPOSE. `eval/harness.py::_latency`
+# looks its budget up by category name, so a new "policy" category would report
+# `budget_ms: null` and quietly exempt this whole set from SRS 3.4.1. Retrieval
+# is being added to a path whose p95 already breaches its budget
+# (docs/EVALUATION.md §1); exempting it from the check would hide the cost.
+#
+# EXPECTED ROUTES ARE THE CORRECT ROUTE, NOT THE CURRENT ROUTER'S BEHAVIOUR.
+# `trade_economics` owns tariffs, agreements and preferences (SRS 3.1.5, 3.1.9),
+# so it appears wherever the question turns on one, alongside the sector agent
+# for the goods named. Where the label and the router disagree, do not edit the
+# label — record the disagreement, the way EVALUATION.md §1 does for S07/S08.
+
+questions:
+
+  # --- single-sector: what a destination market's policy says ------------
+  #
+  # None of these are answerable from trade flows. They are answerable only if
+  # the destination's own policy document is in the corpus and retrieval finds
+  # the right part of it.
+
+  - id: P01
+    category: single_sector
+    question: Which trade agreement gives Sri Lankan cinnamon preferential access to the European Union?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+    note: >
+      Resolvable from the graph alone via agreement_coverage() — GSP+ covers
+      HS 0906. Included as the bridge case: the graph answers *which* agreement,
+      and the policy corpus should corroborate it with the EU regulation rather
+      than contradict it. A retrieved chunk that names a different instrument is
+      a corpus problem, not an answer.
+
+  - id: P02
+    category: single_sector
+    question: Does the United Kingdom's trade strategy keep preferential access for Sri Lankan tea?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+    note: >
+      The graph holds a `UK DCTS` TradeAgreement node but nothing about the 2025
+      strategy that governs it. A correct answer cites the UK document.
+
+  - id: P03
+    category: single_sector
+    question: What does India's Foreign Trade Policy say about imports from Sri Lanka?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+    note: >
+      Names no commodity, so no sector agent is expected. Tests that a purely
+      policy-shaped question still routes somewhere useful rather than defaulting
+      to export_analytics, which has nothing to say about it.
+
+  - id: P04
+    category: single_sector
+    question: What non-tariff measures does the European Union apply to imported spices?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+    note: >
+      Non-tariff measures are the category the system has never had any source
+      for — no tariff table would have helped. Purely a retrieval question.
+
+  - id: P05
+    category: single_sector
+    question: Does the Netherlands' foreign trade policy identify Sri Lanka as a priority market?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+    note: >
+      A yes/no with no figure in it. Deliberate — an answer here is graded on
+      whether it cites the document, and the grounding check has no digits to
+      score. Catches a retriever that returns plausible text nobody attributes.
+
+  - id: P06
+    category: single_sector
+    question: What tariff will the United States apply to Sri Lankan tea in 2030?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    unanswerable_because: >
+      No document states a 2030 rate, because none exists to state. The correct
+      behaviour is to say the period is not covered by anything in the corpus.
+      The dangerous failure is retrieving today's schedule and presenting it as
+      the 2030 rate — a correctly-sourced figure attached to a wrong claim, which
+      `orchestrator/grounding.py` cannot catch (EVALUATION.md §5).
+
+  # --- cross-sector: comparing destination markets -----------------------
+
+  - id: P07
+    category: cross_sector
+    question: Compare the preferential access Sri Lankan apparel receives in the United Kingdom and the European Union.
+    expected_route: [trade_economics, apparel_manufacturing, export_analytics]
+    expected_sectors: [apparel, macro]
+    answerable: true
+    note: >
+      Two documents, two agreements (UK DCTS, GSP+), one answer. Tests that
+      retrieval filtered per country does not collapse into one country's text.
+
+  - id: P08
+    category: cross_sector
+    question: Which of Sri Lanka's largest apparel markets has the most restrictive import tariffs?
+    expected_route: [trade_economics, apparel_manufacturing, export_analytics]
+    expected_sectors: [apparel, macro]
+    answerable: true
+    note: >
+      Needs the graph (which markets are largest) and the corpus (what each one
+      charges) in the same answer. This is the question the whole graph-anchored
+      design exists for; if any single question justifies the work, it is this.
+
+  - id: P09
+    category: cross_sector
+    question: Which sector, agriculture or apparel, is more exposed to losing European Union preferences?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing, export_analytics]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+    note: >
+      The broad cross-sector shape the router already under-fans on (X04, X06 in
+      EVALUATION.md §1). Expected to be a routing miss at first. Recorded, not
+      relabelled.
+
+  - id: P10
+    category: cross_sector
+    question: How do Japan's tariffs on Sri Lankan tea compare with Germany's?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    unanswerable_because: >
+      Japan is not among the top 10 destinations, so no Japanese policy document
+      is in the corpus. The correct behaviour is to answer for Germany and say
+      plainly that nothing is held for Japan — the same shape as X11's tea/
+      fisheries case, but failing on corpus coverage rather than on sector scope.
+      Answering both would mean the retriever returned Germany's text under a
+      question about Japan, which is the precise failure mode filtered retrieval
+      is meant to make impossible.
+
+  # --- simulation: policy shocks with a sourced magnitude ----------------
+
+  - id: P11
+    category: simulation
+    question: If the United States withdrew duty-free access for Sri Lankan knitted apparel, what tariff would apply?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+    note: >
+      The headline case for this work. Today the magnitude comes from
+      `agreement_loss_mfn_tariff` (9.5%), a literature constant standing in for
+      the WITS ingestion that was cut (D9). A correct answer after this change
+      cites a rate from the US schedule, or states that it fell back to the
+      constant. Either is acceptable; silently using the constant while implying
+      a source is not.
+
+  - id: P12
+    category: simulation
+    question: What happens to tea export revenue if the European Union suspends GSP+?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+    note: >
+      M02 asks this for apparel and is one of the answers EVALUATION.md §1 flags
+      for an ungrounded figure. The agriculture twin is here so the grounding fix
+      is measured on a question that was not part of the run that found the bug.
+
+  - id: P13
+    category: simulation
+    question: How much would apparel export revenue fall if the United Kingdom ended DCTS preferences?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+
+  - id: P14
+    category: simulation
+    question: If the United States raised tariffs on Sri Lankan apparel by 15%, what is the revenue impact?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+    note: >
+      CONTROL. Fully answerable before this change and after it: the rate is
+      given in the question, so no retrieval is needed and none should alter the
+      figure. Compare the computed impact across the retriever-off and
+      retriever-on runs — if it moves, retrieval is overriding a number the user
+      supplied, and that is a bug, not an improvement.
+
+  - id: P15
+    category: simulation
+    question: By how much would Sri Lanka's GDP grow if every top-10 destination removed all tariffs?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing, export_analytics]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: false
+    unanswerable_because: >
+      Nothing here models national accounts — the same gap M06 has. Export
+      revenue effects are computable per sector; GDP is not. The correct
+      behaviour is a partial answer that gives the export effects and states
+      plainly that the GDP figure cannot be estimated. Scored as unanswerable
+      because the figure the question actually asks for is the GDP one.
