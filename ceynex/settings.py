@@ -136,6 +136,48 @@ def redis_url() -> str | None:
     return _env("REDIS_URL") or None
 
 
+def qdrant_url() -> str | None:
+    """Where the policy-document vector store lives (SRS 3.1.9, deviation D10).
+
+    None is a supported state, same posture as `redis_url()` and
+    `openai_api_key()`: with no Qdrant configured the Trade Economics agent
+    simply does not retrieve policy text and answers exactly as it did before
+    retrieval existed. A missing datastore must never be the thing that fails a
+    query.
+    """
+    url = _env("QDRANT_URL")
+    if url:
+        return url
+    host = _env("QDRANT_HOST")
+    port = _env("QDRANT_PORT")
+    if host or port:
+        return f"http://{host or 'localhost'}:{port or '6333'}"
+    return None
+
+
+def qdrant_collection() -> str:
+    """The collection the offline pipeline indexes into.
+
+    Deliberately not `ceynex`, which is the prototype's 384-dimension
+    page-per-vector collection. A collection's vector size cannot be changed in
+    place, so the new embedding model needs a new collection rather than a
+    migration.
+    """
+    return _env("QDRANT_COLLECTION", "ceynex_policy") or "ceynex_policy"
+
+
+def policy_retrieval_enabled() -> bool:
+    """Kill switch for the retrieval path, so the evaluation can measure without it.
+
+    `make eval-policy-baseline` sets CEYNEX_POLICY_RETRIEVAL=off to produce the
+    before-figures that the after-figures are only meaningful against. Any value
+    other than "off"/"0"/"false" leaves it on, because a typo in an env var must
+    not silently disable a feature.
+    """
+    value = (_env("CEYNEX_POLICY_RETRIEVAL", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
 def data_dir() -> Path:
     return Path(_env("CEYNEX_DATA_DIR", str(REPO_ROOT / "data")) or "data")
 

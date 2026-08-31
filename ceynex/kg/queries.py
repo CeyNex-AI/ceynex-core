@@ -127,7 +127,7 @@ def agreement_coverage(hs_code: str) -> Query:
     while the query asks about 610910. Checking only the exact string is how
     "does GSP+ cover 6109?" wrongly answers no.
     """
-    prefixes = _hs_prefixes(hs_code)
+    prefixes = hs_hierarchy(hs_code)
     if not prefixes:
         raise CrosswalkError(f"{hs_code!r} is not an HS code")
     normalized = prefixes[0]  # the most specific level the caller actually gave us
@@ -145,6 +145,56 @@ def agreement_coverage(hs_code: str) -> Query:
     ORDER BY size(h.code) DESC, t.name
     """
     return cypher, {"hs_prefixes": prefixes, "hs_code": normalized}
+
+
+def policy_documents_for(iso3: str | None = None, hs_code: str | None = None) -> Query:
+    """Which policy documents could answer a question about this country and code.
+
+    **The graph-anchoring step (deviation D10).** The vector search is never run
+    unfiltered: this query decides which documents are eligible, and the caller
+    passes the resulting `doc_id` list to Qdrant as a filter. Trade-policy
+    documents all read alike — objectives, market access, competitiveness — so an
+    unanchored search will happily answer a question about Germany with Canadian
+    text that scores marginally higher. Restricting the candidate set first is
+    what makes the retrieval about the right country rather than merely about the
+    right topic.
+
+    Both filters are optional and are `OR`-ed against the document's own scope,
+    not `AND`-ed: a general trade strategy carries no `APPLIES_TO` edge at all,
+    and requiring one would exclude exactly the documents that discuss policy
+    broadly. A document qualifies if it was issued by the country **or** covers
+    the code; with neither argument, every indexed document qualifies.
+
+    Only `indexed` documents come back. A row that was fetched but not embedded —
+    the German AWG, which the English-only model cannot represent — is in the
+    graph as a record that it was found and skipped, and citing it would point a
+    reader at text no search can reach.
+    """
+    cypher = """
+    MATCH (p:PolicyDocument)
+    WHERE p.indexed = true
+      AND (
+        $iso3 IS NULL AND $hs_prefixes IS NULL
+        OR ($iso3 IS NOT NULL AND $iso3 IN p.iso3)
+        OR ($hs_prefixes IS NOT NULL AND EXISTS {
+              MATCH (p)-[:APPLIES_TO]->(h:HSCode) WHERE h.code IN $hs_prefixes
+           })
+      )
+    RETURN p.doc_id      AS doc_id,
+           p.title       AS title,
+           p.publisher   AS publisher,
+           p.url         AS url,
+           p.iso3        AS iso3,
+           p.verified    AS verified,
+           p.chunk_count AS chunk_count
+    ORDER BY p.doc_id
+    """
+    params: dict[str, Any] = {"iso3": None, "hs_prefixes": None}
+    if iso3:
+        params["iso3"] = to_iso3(iso3)
+    if hs_code:
+        params["hs_prefixes"] = hs_hierarchy(hs_code)
+    return cypher, params
 
 
 def competing_exporters(item: str, year: int, limit: int = 5) -> Query:
@@ -222,7 +272,7 @@ def latest_observation_year(item: str | None = None) -> Query:
     return cypher, {"item": item} if item is not None else {}
 
 
-def _hs_prefixes(hs_code: str | int) -> list[str]:
+def hs_hierarchy(hs_code: str | int) -> list[str]:
     """Every level of the HS hierarchy for a code, longest first.
 
     `610910` -> `["610910", "6109", "61"]`. Coverage declared at any of these

@@ -250,3 +250,35 @@ async def test_llm_route_does_not_flag_no_topic_for_a_mixed_question():
     decision = await llm_route("how does tea compare with fisheries?", llm)
     assert decision.out_of_scope
     assert not decision.no_topic_recognized
+
+
+# --- policy questions reach the agent that holds the corpus (D10) --------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What does India's Foreign Trade Policy say about imports from Sri Lanka?",
+        "What non-tariff measures does the European Union apply to imported spices?",
+        "Does the Netherlands' foreign trade policy identify Sri Lanka as a priority market?",
+        "Does the United Kingdom's trade strategy keep preferential access for Sri Lankan tea?",
+        "Compare the preferential access Sri Lankan apparel receives in the UK and the EU.",
+    ],
+)
+def test_a_foreign_policy_question_routes_to_trade_economics(query):
+    """`export_analytics` holds only Sri Lanka's own trade flows.
+
+    Measured on the policy set before this: these questions routed to
+    `export_analytics` alone and returned 0 evidence at 0.15 confidence, because
+    the agent they reached has nothing to say about another government's policy
+    (EVALUATION.md §7).
+    """
+    assert "trade_economics" in keyword_route(query).route
+
+
+def test_an_ordinary_analytics_question_still_does_not_get_trade_economics():
+    """The policy words must not drag the simulation agent into every query."""
+    route = keyword_route("Which country takes the largest share of Sri Lanka's tea exports?").route
+
+    assert "trade_economics" not in route
+    assert "export_analytics" in route

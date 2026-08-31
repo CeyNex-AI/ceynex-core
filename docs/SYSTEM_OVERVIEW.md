@@ -37,7 +37,7 @@ browser -> ceynex-web (frontend VM, :80)
         -> rendered in Query.tsx with EvidencePanel + ForecastChart
 ```
 
-Backend only talks to the database VM (Postgres, Neo4j, Redis). Never the
+Backend only talks to the database VM (Postgres, Neo4j, Redis, Qdrant). Never the
 reverse.
 
 ## Agents — 5 of 5 implemented
@@ -115,6 +115,23 @@ agreements). `ceynex/data/writer.py` is the only writer (idempotent upsert on
 `fact_trade_upsert_key`), `ceynex/data/reader.py` is the only reader. No agent
 opens a Postgres connection itself.
 
+## What Qdrant is for
+
+The newest datastore (deviation D10), and the only one that is optional. It
+holds trade-policy documents from Sri Lanka's biggest export markets, cut into
+searchable passages, so the system can say what the US or the UK actually does
+rather than only what Sri Lanka ships them.
+
+Reached only through `ceynex/retrieval/client.py`, and only by
+`trade_economics`. Which documents are searchable is decided in Cypher first
+(`kg/queries.py::policy_documents_for`), so a search cannot return the wrong
+country's policy. Passages become `Evidence` entries with `source_id: POLICY`
+and a link to the source page.
+
+If Qdrant is down, not installed, or switched off with
+`CEYNEX_POLICY_RETRIEVAL=off`, the system answers exactly as it did before it
+existed. Plain guide: [POLICY_RETRIEVAL.md](POLICY_RETRIEVAL.md).
+
 ## Forecasting models
 
 Five registered models under `models/`, all `GradientBoostedModel` (LightGBM,
@@ -185,7 +202,7 @@ python -m ceynex.orchestrator.demo --no-llm "..."   # force degraded mode
 python -m ceynex.orchestrator.demo --json "..."
 ```
 
-Needs `make up` (Postgres + Neo4j + Redis via docker-compose) locally, or
+Needs `make up` (Postgres + Neo4j + Redis + Qdrant via docker-compose) locally, or
 point `ceynex/settings.py`'s connection env vars at the GCP database VM.
 
 Good demo questions are in `eval/questions.yaml` (30 pre-written, graded

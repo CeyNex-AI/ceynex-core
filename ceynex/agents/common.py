@@ -257,6 +257,32 @@ def evidence_from_dataset(claim: str, detail: str, source_id: str, period: str |
     return evidence
 
 
+def evidence_from_policy(
+    claim: str,
+    detail: str,
+    url: str = "",
+    period: str | None = None,
+) -> Evidence:
+    """Evidence for a claim read out of a retrieved policy document (D10).
+
+    `source_id` is `"POLICY"`. `SourceId` is a plain `str` in the contract
+    precisely so a member can add a source without a contract change — M1 already
+    ships `FAOSTAT`, `TEA_BOARD` and `DQ_FLAG` the same way.
+
+    `detail` should name the document and page (`PolicyChunk.citation`) followed
+    by the search filter the retriever ran under, and `url` should resolve to the
+    document. A policy claim is only checkable if a reader can open the source
+    and find the sentence; without both, this is the one evidence type in the
+    system that would amount to "trust me".
+    """
+    evidence = Evidence(source_id="POLICY", claim=_as_sentence(claim), detail=detail)
+    if url:
+        evidence["url"] = url
+    if period:
+        evidence["period"] = period
+    return evidence
+
+
 def evidence_from_model(claim: str, model_id: str, period: str | None = None) -> Evidence:
     evidence = Evidence(source_id="MODEL", claim=_as_sentence(claim), detail=model_id)
     if period:
@@ -364,6 +390,7 @@ __all__ = [
     "Intent",
     "evidence_from_dataset",
     "evidence_from_model",
+    "evidence_from_policy",
     "evidence_from_query",
     "figures_evidence",
     "find_region",

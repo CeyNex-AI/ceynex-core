@@ -47,6 +47,19 @@ dev = [
     "ruff>=0.5",
     "pre-commit>=3.7",
 ]
+# Policy-document retrieval (D10). Deliberately optional, and deliberately NOT
+# sentence-transformers: that pulls torch, and this package is installed by all
+# three members, so its dependency list is a tax on everyone (the same rule
+# ceynex-contracts states for its own). `qdrant-client[fastembed]` is ONNX and
+# about 200 MB against torch's 2+ GB, and it serves the dense model, the BM25
+# sparse model and the cross-encoder reranker from one dependency.
+#
+# The backend image installs `.[policy]`. Anyone who does not need retrieval
+# does not install it, and the agent degrades to its pre-retrieval behaviour
+# when the import fails — same posture as an absent OPENAI_API_KEY.
+policy = [
+    "qdrant-client[fastembed]>=1.11",
+]
 eda = [
     "matplotlib>=3.9",
     "seaborn>=0.13",
