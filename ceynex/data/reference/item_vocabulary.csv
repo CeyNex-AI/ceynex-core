@@ -1,0 +1,60 @@
+# Controlled product vocabulary for EDB's free-text table labels.
+#
+# EDB is the only connector that writes `item` from free text: the `Product :`
+# line of each EPI table page (`connectors/edb.py`). Comtrade emits fixed slugs
+# from ITEM_BY_HS, JAAF a single constant. So every unnormalized `item` in
+# fact_trade came from here.
+#
+# `item` is column 2 of the 7-column `fact_trade_upsert_key`, so a spelling
+# variant is a *different identity* and inserts a new row rather than updating
+# the existing one. Measured in production 2026-08-30: `APPAREL` covered
+# 2014-2018 and `APPREL` 2019-2024, i.e. one 11-year series split in half by a
+# typo in a later edition, which is why the registered apparel model was fitted
+# on 5 rows and forecast a year already in the past.
+#
+# The key is the NORMALIZED label (see `canonical_item()`): casefolded, with
+# parentheticals stripped, '&' read as 'and', hyphens/en-dashes/slashes read as
+# spaces, remaining punctuation dropped and whitespace collapsed. That absorbs
+# every punctuation-only variant, so only genuine misspellings need their own
+# row here (`apprel`, `activewear sportswera`).
+#
+# granularity: PROPOSED, pending the contract PR and human verification against
+# the source PDFs. EDB's labels describe a three-level tree, and the
+# parentheticals name the children:
+#   total     "APPAREL & TEXTILES (Made-Up Textile Article, Apparel, Woven
+#              Fabrics & Other Textile Articles)"
+#   group     "APPAREL", "TEXTILES (Knitted Fabrics, Woven Fabrics, Yarn, ...)"
+#   component the leaf tables
+# Do not treat these as verified: nobody has yet checked, against a real EPI
+# PDF, that the group figures sum to the total. Until that check happens the
+# only safe read is "not a component" vs "a component".
+#
+# Deliberately NOT merged across sources. EDB's "Knitted Apparel" plausibly
+# describes the same goods as Comtrade's `apparel_knit` (HS 61), and EDB's
+# "APPAREL & TEXTILES" plausibly the same aggregate as JAAF's
+# `apparel_textiles` — but "plausibly" is not a verified claim, and
+# kg/loaders/apparel.py's docstring depends on EDB item keys staying distinct
+# from Comtrade's and JAAF's so the graph merge key cannot collide across
+# sources. If someone verifies an equivalence against the source publications,
+# merging the keys here is what makes cross-source dq_flag checks possible.
+normalized_label,canonical_item,granularity
+apparel and textiles,apparel_textiles_edb,total
+apparel,apparel_edb,group
+apprel,apparel_edb,group
+textiles,textiles_edb,group
+t shirts,t_shirts,component
+hosiery,hosiery,component
+mens outerwear,mens_outerwear,component
+womens outerwear,womens_outerwear,component
+mens and womens under garments,under_garments,component
+babies garments,babies_garments,component
+warm cloths,warm_clothing,component
+gloves mitts and mittens of textile,gloves_mitts_mittens,component
+activewear sportswera,activewear_sportswear,component
+woven fabrics,woven_fabrics,component
+knitted fabrics,knitted_fabrics,component
+knitted apparel,knitted_apparel,component
+yarn,yarn,component
+made up textile articles,made_up_textile_articles,component
+made up clothing accessories,made_up_clothing_accessories,component
+textile floor covering,textile_floor_covering,component
