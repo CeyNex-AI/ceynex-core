@@ -10,6 +10,7 @@ venv/
 *.egg-info/
 dist/
 build/
+*.txt
 
 # Data and artefacts — never committed, except reference tables, fixtures,
 # and each connector's PROFILE.md (per .claude/commands/new-connector.md).
