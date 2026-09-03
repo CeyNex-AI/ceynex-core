@@ -158,6 +158,15 @@ class RouteDecision:
     # merger.py uses this to decide whether a routed agent's output is a real
     # finding or noise that happens to have run.
     no_topic_recognized: bool = False
+    # Whether the question left an in-scope half worth answering. `no_topic` is
+    # one way to have none ("who is Euler"); naming *only* an excluded topic is
+    # the other ("what is the outlook for gem exports"), and the merger has to
+    # treat them the same. It did not: the suppression keyed on `no_topic`
+    # alone, so a pure gems question was answered with a confident tea forecast
+    # -- the same failure the suppression exists to prevent, one branch over.
+    # True whenever `out_of_scope` is and nothing in scope was named, so it is a
+    # superset of `no_topic_recognized`.
+    nothing_in_scope: bool = False
     reason: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -287,6 +296,11 @@ def keyword_route(query: str) -> RouteDecision:
         method="keyword",
         out_of_scope=out_of_scope,
         no_topic_recognized=no_topic_recognized,
+        # `partly_in_scope` is the same test one level up: an excluded topic
+        # alongside tea or apparel leaves a half to answer, an excluded topic
+        # alone does not.
+        nothing_in_scope=out_of_scope
+        and not (hits_agriculture or hits_apparel or hits_cross_sector),
         reason=reason,
     )
     if named_out_of_scope:
@@ -433,6 +447,11 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         method="llm",
         out_of_scope=out_of_scope,
         no_topic_recognized=no_topic_recognized,
+        # Identical here: `no_topic_recognized` above is already derived as
+        # "out of scope and no in-scope sector named", which is what
+        # `nothing_in_scope` means. The two only diverge in `keyword_route`,
+        # which can additionally see that an excluded *word* matched.
+        nothing_in_scope=no_topic_recognized,
         reason=str(parsed.get("reason", ""))[:200],
         notes=notes,
     )
