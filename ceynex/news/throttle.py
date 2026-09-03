@@ -62,8 +62,18 @@ GATE_KEY = "ceynex:news:gdelt:gate"
 _POLL_INTERVAL_S = 0.25
 
 
+#: How long to hold the gate shut after GDELT answers 429.
+#:
+#: A 429 means the interval we chose is wrong for the conditions, and the only
+#: useful response is to stop for longer than we think we need to. Applied to the
+#: *gate*, not to the caller who happened to see it: every process sharing this
+#: Redis key backs off together, which is the whole point of the key existing.
+RATE_LIMIT_PENALTY_S = 60.0
+
+
 class Throttle(Protocol):
     async def acquire(self, *, max_wait_s: float) -> bool: ...
+    async def penalise(self, seconds: float) -> None: ...
 
 
 class NoThrottle:
@@ -71,6 +81,9 @@ class NoThrottle:
 
     async def acquire(self, *, max_wait_s: float) -> bool:  # noqa: ARG002 - protocol shape
         return True
+
+    async def penalise(self, seconds: float) -> None:
+        return None
 
 
 class InProcessThrottle:
@@ -111,6 +124,10 @@ class InProcessThrottle:
         finally:
             self._lock.release()
 
+    async def penalise(self, seconds: float) -> None:
+        async with self._lock:
+            self._next_allowed = max(self._next_allowed, time.monotonic() + seconds)
+
 
 class RedisThrottle:
     """One slot every `interval_s`, shared across workers.
@@ -145,6 +162,20 @@ class RedisThrottle:
             if remaining <= 0:
                 return False
             await asyncio.sleep(min(_POLL_INTERVAL_S, remaining))
+
+    async def penalise(self, seconds: float) -> None:
+        """Hold the gate shut for everyone, not just whoever saw the 429.
+
+        Written without NX on purpose: this must overwrite a live gate rather
+        than wait politely for it, or the process that got rate limited would
+        keep queueing behind its own five-second key while the far end is
+        already refusing us.
+        """
+        try:
+            await self._client.set(GATE_KEY, self._token, px=max(1, int(seconds * 1000)))
+            log.warning("GDELT rate limited us; gate held shut for %.0fs", seconds)
+        except Exception:  # noqa: BLE001 - a penalty we cannot record is not fatal
+            log.debug("could not apply the GDELT rate-limit penalty", exc_info=True)
 
 
 def build_throttle(interval_s: float = MIN_INTERVAL_S) -> Throttle:
