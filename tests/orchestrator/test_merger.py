@@ -402,6 +402,20 @@ async def test_a_mixed_out_of_scope_question_still_gets_its_real_answer():
     assert result.agents_used == ["agriculture_commodity"]
 
 
+async def test_an_empty_out_of_scope_note_no_longer_claims_a_sector_was_named():
+    """Belt to the router's braces (both routers now populate `notes`). When the
+    fallback does fire it must not invent a reason: found live 2026-09-03, an
+    empty note made "who was Leonhard Euler?" and "how are shipping costs
+    affecting exporters?" both answer "part of the question names a sector CeyNex
+    does not cover" -- neither names any sector.
+    """
+    llm = FakeLLMClient(response="")
+    result = await merge(state(outputs={}, route=[], errors=[OUT_OF_SCOPE_PREFIX]), llm)
+
+    assert result.unanswered == ["part of the question is outside what CeyNex covers"]
+    assert "names a sector" not in result.answer
+
+
 async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     """Regression: a real "cinnamon exports outlook" question was narrated as
     "uncertain due to conflicting findings" -- one analysis gave a real
