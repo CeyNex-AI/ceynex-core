@@ -28,12 +28,33 @@ would be a mistake rather than a shortcut:
    negative costs an empty panel.
 
 So the floor lives in `config/news.yaml`, where the repo puts numbers that are
-judgement rather than derivation. **It is empirical, not calibrated** — see
-`docs/DEFERRED.md`. Measured over the first live sweep of ten real questions
-against the watchlist topics, responsive headlines score roughly -4 to +3 while
-plainly unrelated ones sit below -8; -6.0 sits in the gap and is deliberately
-generous, because this panel is allowed to be loose in a way policy evidence is
-not.
+judgement rather than derivation.
+
+The measurement
+---------------
+Run against the deployed index: 150 real indexed headlines scored against 11
+real questions, 1500 pairs. **Every score was negative.** Best pair in the whole
+matrix -1.78; median -11.35; p99 -8.74.
+
+    apparel   -1.78   tariffs  -4.86   shipping -6.66   gsp   -7.08
+    tea       -7.76   commodities -8.75   cinnamon -9.06   rupee -9.54
+    out of scope:  weather -8.14   cricket -9.58   cake -10.58
+
+`min_score: -8.0` is the highest cut that rejects all three out-of-scope
+questions. The three in-scope questions it also drops are dropped correctly —
+their best matches were "king coconut villages" for cinnamon and "New Zealand
+exporters" for the rupee, i.e. the corpus genuinely had no answer.
+
+**The margin is thin and this is not a clean boundary.** "Will it rain in
+Colombo tomorrow?" reached -8.14 on the word Colombo alone, above three real
+questions and 0.14 from the cut. With 150 mostly-unrelated headlines nothing
+scores well; re-measure as the corpus grows. Recorded in `docs/DEFERRED.md`.
+
+That measurement is also what set the label boundaries in `schema.py`. The first
+version cut on `sigmoid(logit)` at 0.5 and 0.1 — logits 0.0 and -2.2 — which no
+real pair ever reached, so every article would have been labelled "loose"
+forever. A boundary that is principled for the model's training distribution is
+not automatically reachable on ours.
 
 Degrading
 ---------

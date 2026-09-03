@@ -244,12 +244,16 @@ throttled: login, a user reading their own history, and the admin routes.
   sidecar while the main event stays open would be incoherent; both should be
   closed together or not at all. They have their own rate-limit allowance under
   a `news:` identity prefix, so abuse of one cannot exhaust the other.
-- **The relevance floor is empirical, not calibrated.** `relevance.min_score` in
-  `config/news.yaml` is a cut chosen from observed cross-encoder scores over
-  headlines, not a validated boundary. It is deliberately looser than
-  `retrieval/client.py`'s `MIN_RERANK_SCORE`, and the reasoning is in
-  `news/relevance.py`. The UI shows three coarse buckets rather than a number
-  precisely because the number does not support finer claims.
+- **The relevance floor is measured but not a clean boundary.**
+  `relevance.min_score = -8.0` comes from scoring 150 real indexed headlines
+  against 11 real questions on the deployed box (the table is in
+  `news/relevance.py`). It is the highest cut that rejects every out-of-scope
+  question tried. It is *not* a separator: "Will it rain in Colombo tomorrow?"
+  reached -8.14 on the word Colombo alone — above three genuine questions and
+  0.14 from the cut. With a corpus of 150 mostly-unrelated headlines nothing
+  scores well, so this should be re-measured once the collection has run for a
+  few days. The UI shows three coarse buckets rather than a number precisely
+  because the number does not support finer claims.
 - **Cross-outlet story deduplication is not attempted.** One wire story running
   on forty sites is forty points in `ceynex_news`. Near-identical titles are
   collapsed in a *response* only; entity resolution across outlets is not
