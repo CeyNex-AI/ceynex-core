@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
 from ceynex.api.main import app
+from ceynex.orchestrator.merger import NO_TOPIC_MARKER
 
 
 class FakeGraph:
@@ -28,8 +29,37 @@ class FakeGraph:
 
 
 class FakeKG:
+    """Answers the subgraph facets with one triple each.
+
+    `run` exists because `POST /api/query` now draws the graph behind an answer
+    (`_answer_graph`). It is deliberately not a full graph: these tests are about
+    the endpoint's contract, and `tests/kg/test_subgraph.py` owns the assembly.
+    """
+
+    def __init__(self, raises: Exception | None = None):
+        self._raises = raises
+
     async def verify_connectivity(self):
         return True
+
+    async def run(self, cypher, params=None):
+        if self._raises:
+            raise self._raises
+        if "EXPORTS_TO" in cypher:
+            return [
+                {
+                    "source_label": "Commodity", "source_key": "cinnamon",
+                    "source_name": "cinnamon", "rel_type": "EXPORTS_TO",
+                    "rel_props": {"year": 2024}, "target_label": "Country",
+                    "target_key": "DEU", "target_name": "Germany", "weight": 12.0,
+                }
+            ], cypher
+        return [], cypher
+
+    async def run_one(self, cypher, params=None):
+        if self._raises:
+            raise self._raises
+        return {"latest_year": 2024}, cypher
 
     async def close(self):
         return None
@@ -39,8 +69,10 @@ class FakeLLM:
     available = False
 
 
-def runtime(final=None, raises=None):
-    return deps_module.Runtime(kg=FakeKG(), llm=FakeLLM(), deps=None, graph=FakeGraph(final, raises))
+def runtime(final=None, raises=None, kg=None):
+    return deps_module.Runtime(
+        kg=kg or FakeKG(), llm=FakeLLM(), deps=None, graph=FakeGraph(final, raises)
+    )
 
 
 ANSWERED = {
@@ -208,6 +240,106 @@ NO_FORECAST = {**ANSWERED, "agent_outputs": {
 @pytest.mark.parametrize("client", [NO_FORECAST], indirect=True)
 def test_a_query_without_a_forecast_returns_null_not_an_empty_list(client):
     assert post(client).json()["forecast"] is None
+
+
+# --- the drawable graph (SRS 3.1.4) --------------------------------------
+
+
+def test_a_kg_grounded_answer_carries_a_graph(client):
+    graph = post(client).json()["graph"]
+    assert graph is not None
+    assert {node["id"] for node in graph["nodes"]} == {"Commodity:cinnamon", "Country:DEU"}
+    assert graph["edges"][0]["type"] == "EXPORTS_TO"
+    assert graph["focus_id"] == "Commodity:cinnamon"
+
+
+def test_the_graph_carries_the_cypher_that_drew_it(client):
+    """The picture gets the provenance the figures already have (SRS 3.1.4)."""
+    graph = post(client).json()["graph"]
+    assert graph["queries"]
+    assert any("EXPORTS_TO" in text for text in graph["queries"])
+
+
+NO_KG_EVIDENCE = {
+    **ANSWERED,
+    "merged_evidence": [
+        {"source_id": "MODEL", "claim": "The model projects growth.", "detail": "arima:tea:v3"}
+    ],
+}
+
+
+@pytest.mark.parametrize("client", [NO_KG_EVIDENCE], indirect=True)
+def test_an_answer_the_graph_did_not_produce_has_no_graph(client):
+    """A node-link diagram is a claim about where a number came from. Beside a
+    model-derived answer it would assert a provenance that isn't there — the
+    same failure `orchestrator/grounding.py` catches in prose."""
+    assert post(client).json()["graph"] is None
+
+
+NO_TOPIC = {**ANSWERED, "errors": [NO_TOPIC_MARKER]}
+
+
+@pytest.mark.parametrize("client", [NO_TOPIC], indirect=True)
+def test_an_out_of_scope_question_has_no_graph(client):
+    """Same suppression `forecast` already gets — a routed agent's graph is
+    noise, not an answer, for a question that named nothing CeyNex covers.
+
+    Asked with a query that *does* name an item, so this fails if the marker
+    check is removed. A question naming nothing has no graph anyway, via the
+    no-item path below, and would pass either way.
+    """
+    assert post(client, "cinnamon export trend").json()["graph"] is None
+
+
+def test_a_question_naming_no_item_has_no_graph(client):
+    """There is no subject to centre on, and a graph of everything is not an
+    answer to anything."""
+    assert post(client, "how are exports doing").json()["graph"] is None
+
+
+def test_a_dead_graph_still_answers():
+    """The illustration must never fail the answer. This is the assertion that
+    keeps `_answer_graph`'s bare `except` honest."""
+    from ceynex.kg.client import KnowledgeGraphUnavailableError
+
+    deps_module.set_runtime(
+        runtime(ANSWERED, kg=FakeKG(raises=KnowledgeGraphUnavailableError("neo4j down")))
+    )
+    try:
+        response = TestClient(app).post("/api/query", json={"query": "cinnamon export trend"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["answer"] == "Exports grew steadily."
+        assert body["graph"] is None
+    finally:
+        deps_module.set_runtime(None)
+
+
+def test_the_graph_year_follows_the_agents_own_precedence():
+    """`AgentState` has nowhere to record the year an agent settled on, so the
+    route re-derives it. That is only sound if it derives the same one: an
+    explicit year in the question wins, and otherwise it is
+    `latest_observation_year(item)` — scoped to the item, which is the
+    precedence the 2026-08-26 bug in that query's docstring was about."""
+    asked: list[str] = []
+
+    class RecordingKG(FakeKG):
+        async def run(self, cypher, params=None):
+            if "EXPORTS_TO" in cypher:
+                asked.append(str(params.get("year")))
+            return await super().run(cypher, params)
+
+    deps_module.set_runtime(runtime(ANSWERED, kg=RecordingKG()))
+    try:
+        client = TestClient(app)
+        client.post("/api/query", json={"query": "cinnamon exports in 2019"})
+        assert asked == ["2019"], "an explicit year in the question must win"
+
+        asked.clear()
+        client.post("/api/query", json={"query": "cinnamon export trend"})
+        assert asked == ["2024"], "otherwise the item's own latest year"
+    finally:
+        deps_module.set_runtime(None)
 
 
 # --- validation and failure ----------------------------------------------

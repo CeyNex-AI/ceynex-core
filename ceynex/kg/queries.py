@@ -272,6 +272,190 @@ def latest_observation_year(item: str | None = None) -> Query:
     return cypher, {"item": item} if item is not None else {}
 
 
+# --- subgraph projections -------------------------------------------------
+#
+# Every query above returns scalars — `c.iso3 AS partner_iso3` — because a figure
+# is what an agent needs. Drawing the graph needs the shape as well, and that has
+# to be asked for explicitly: `KnowledgeGraphClient.run()` ends in
+# `record.data()`, which flattens a Node to `dict(node)` — its properties, with
+# the labels and the element id gone. A `RETURN n` here would arrive as a bare
+# property bag that no longer knows it was a Country.
+#
+# So each of these projects `labels()`, `properties()` and the relationship type
+# by hand, and every one returns the same nine columns:
+#
+#   source_label, source_key, source_name,
+#   rel_type, rel_props,
+#   target_label, target_key, target_name,
+#   weight
+#
+# One shape means `kg/subgraph.py` has one decoder rather than one per facet, and
+# means a new facet is a query here rather than a query plus a branch there.
+#
+# `*_key` is the label's own uniqueness key from schema.cypher (`Country.iso3`,
+# `HSCode.code`, everything else `.name`) — never `elementId()`, which changes
+# across a reload and so could not survive a click-to-expand round trip.
+
+#: Each constrained label's uniqueness key. `neighbours()` needs this because
+#: Cypher cannot parameterize a label or a property name; keeping the mapping
+#: here, next to the queries it shapes, is what makes the substitution an
+#: allowlist lookup rather than string handling. PolicyDocument is included
+#: even though schema.cypher has no constraint for it yet (deviation D10) —
+#: the loader merges on `doc_id`, so it is the key in practice.
+NODE_KEYS: dict[str, str] = {
+    "Country": "iso3",
+    "HSCode": "code",
+    "Commodity": "name",
+    "ApparelCategory": "name",
+    "District": "name",
+    "TradeAgreement": "name",
+    "PolicyDocument": "doc_id",
+}
+
+
+def export_subgraph(item: str, year: int, limit: int = 8) -> Query:
+    """An item and the markets it went to, as drawable triples (SRS 3.1.4).
+
+    The same `EXPORTS_TO` edges `top_partners` counts, carrying `e.value` as the
+    weight so the drawing can make a big market look like one. Limited for the
+    same reason `top_partners` is: a picture of sixty destinations shows nothing.
+    """
+    cypher = """
+    MATCH (i)-[e:EXPORTS_TO]->(c:Country)
+    WHERE (i:Commodity OR i:ApparelCategory)
+      AND toLower(i.name) = toLower($item)
+      AND e.year = $year
+    RETURN labels(i)[0]  AS source_label,
+           i.name        AS source_key,
+           i.name        AS source_name,
+           'EXPORTS_TO'  AS rel_type,
+           properties(e) AS rel_props,
+           'Country'     AS target_label,
+           c.iso3        AS target_key,
+           c.name        AS target_name,
+           e.value       AS weight
+    ORDER BY e.value DESC
+    LIMIT $limit
+    """
+    return cypher, {"item": item, "year": year, "limit": limit}
+
+
+def classification_subgraph(item: str) -> Query:
+    """An item's HS codes and the agreements covering them, as triples.
+
+    `UNION` rather than `OPTIONAL MATCH` on the second leg. Optional-matching the
+    agreement would return a row per HS code with null agreement columns whenever
+    nothing covers it, and the decoder would need a null branch to avoid emitting
+    a `TradeAgreement:None` node. A union of two whole-triple branches yields
+    only edges that exist, so an uncovered code is simply one row rather than one
+    row plus a special case. The classification leg carries no weight — an HS
+    code is not more or less classified than another.
+    """
+    cypher = """
+    MATCH (i)-[:CLASSIFIED_AS]->(h:HSCode)
+    WHERE (i:Commodity OR i:ApparelCategory)
+      AND toLower(i.name) = toLower($item)
+    RETURN labels(i)[0]     AS source_label,
+           i.name           AS source_key,
+           i.name           AS source_name,
+           'CLASSIFIED_AS'  AS rel_type,
+           {}               AS rel_props,
+           'HSCode'         AS target_label,
+           h.code           AS target_key,
+           h.description    AS target_name,
+           null             AS weight
+    UNION
+    MATCH (i)-[:CLASSIFIED_AS]->(h:HSCode)-[cov:COVERED_BY]->(t:TradeAgreement)
+    WHERE (i:Commodity OR i:ApparelCategory)
+      AND toLower(i.name) = toLower($item)
+    RETURN 'HSCode'         AS source_label,
+           h.code           AS source_key,
+           h.description    AS source_name,
+           'COVERED_BY'     AS rel_type,
+           properties(cov)  AS rel_props,
+           'TradeAgreement' AS target_label,
+           t.name           AS target_key,
+           t.name           AS target_name,
+           null             AS weight
+    """
+    return cypher, {"item": item}
+
+
+def production_subgraph(commodity: str) -> Query:
+    """Where a commodity is grown, as triples — the drawable half of
+    `district_concentration`. Agriculture only; apparel is not modelled by
+    district, so an apparel item correctly returns no rows rather than an error.
+    """
+    cypher = """
+    MATCH (c:Commodity)-[p:PRODUCED_IN]->(d:District)
+    WHERE toLower(c.name) = toLower($commodity)
+    RETURN 'Commodity'    AS source_label,
+           c.name         AS source_key,
+           c.name         AS source_name,
+           'PRODUCED_IN'  AS rel_type,
+           properties(p)  AS rel_props,
+           'District'     AS target_label,
+           d.name         AS target_key,
+           d.name         AS target_name,
+           p.share        AS weight
+    ORDER BY p.share DESC
+    """
+    return cypher, {"commodity": commodity}
+
+
+def neighbours(label: str, key: str, limit: int = 12) -> Query:
+    """One hop out from a node, in both directions — backs click-to-expand.
+
+    `label` and its key property are substituted into the query text because
+    Cypher has no parameter form for either: `MATCH (n:$label)` is a syntax
+    error, not a slow query. That substitution is safe here and only here
+    because both come from `NODE_KEYS` — an unknown label raises below rather
+    than reaching the database, so nothing a caller sends can become query
+    structure. The value itself stays a `$param`, as everywhere else in this
+    module. `cagr` and `agreement_coverage` build their filters the same way.
+
+    Matched undirected (`-[r]-`) so expanding a Country finds the items that
+    export to it, not the nothing that it exports. Direction is then recovered
+    from `startNode`/`endNode` — without it every expanded edge would be drawn
+    pointing away from whatever the user happened to click.
+
+    The neighbour's own key is a `coalesce` over the same seven properties
+    `NODE_KEYS` names: which one applies depends on the neighbour's label, which
+    is not known until the row comes back.
+
+    Ordered newest-first because this is deliberately *not* year-scoped — a
+    click means "what else is this connected to", and filtering to one year
+    would hide a partner that stopped trading. But an `EXPORTS_TO` pair has one
+    edge per year, and the assembler keeps one edge per pair, so without this
+    ordering the edge that survives is whichever year the planner happened to
+    return first: found live, a tea->Iraq edge drawn at $104M next to an answer
+    graph showing $150M for the same pair. Newest-first makes the kept edge the
+    most recent one, and `kg/subgraph.py` puts its year in the label so the two
+    figures are never silently different.
+    """
+    if label not in NODE_KEYS:
+        raise CrosswalkError(
+            f"{label!r} is not a node label in this graph; expected one of {sorted(NODE_KEYS)}"
+        )
+    key_property = NODE_KEYS[label]
+    cypher = f"""
+    MATCH (n:{label} {{{key_property}: $key}})-[r]-()
+    WITH startNode(r) AS s, endNode(r) AS t, r
+    RETURN labels(s)[0] AS source_label,
+           coalesce(s.iso3, s.code, s.doc_id, s.name) AS source_key,
+           coalesce(s.name, s.description, s.title, s.code, s.doc_id) AS source_name,
+           type(r)       AS rel_type,
+           properties(r) AS rel_props,
+           labels(t)[0]  AS target_label,
+           coalesce(t.iso3, t.code, t.doc_id, t.name) AS target_key,
+           coalesce(t.name, t.description, t.title, t.code, t.doc_id) AS target_name,
+           r.value       AS weight
+    ORDER BY coalesce(r.year, 0) DESC, weight DESC
+    LIMIT $limit
+    """
+    return cypher, {"key": key, "limit": limit}
+
+
 def hs_hierarchy(hs_code: str | int) -> list[str]:
     """Every level of the HS hierarchy for a code, longest first.
 
