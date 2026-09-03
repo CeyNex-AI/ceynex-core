@@ -159,6 +159,97 @@ def test_a_wholly_excluded_sector_is_out_of_scope_but_not_topic_less(query):
     assert not decision.no_topic_recognized
 
 
+# --- a sector comparison naming no goods still spans both sectors -------
+
+
+@pytest.mark.parametrize(
+    ("case", "query"),
+    [
+        ("X04", "Which of Sri Lanka's export sectors is most concentrated in a single market?"),
+        ("X06", "Is Sri Lanka's export base becoming more or less diversified across sectors?"),
+    ],
+)
+def test_a_sector_comparison_naming_no_commodity_fans_to_both_sector_agents(case, query):
+    """`eval/questions.yaml` labels both of these
+    [export_analytics, agriculture_commodity, apparel_manufacturing].
+
+    Measured live 2026-09-03: X04 routed to export_analytics alone and answered
+    about tea -- "Iraq accounts for 12.4% … HHI 0.05, relatively diversified" --
+    to a question asking which sector is *most* concentrated, at confidence 0.9.
+    Under-fanning is the dangerous direction: a confident answer to half the
+    question reads exactly like a whole one.
+    """
+    decision = keyword_route(query)
+
+    assert set(decision.route) == {
+        "export_analytics", "agriculture_commodity", "apparel_manufacturing",
+    }, case
+    assert decision.sectors == ["cross_sector", "agriculture", "apparel"]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Which of Sri Lanka's export sectors is most concentrated in a single market?",
+        "Is Sri Lanka's export base becoming more or less diversified across sectors?",
+    ],
+)
+def test_a_sector_comparison_is_in_scope(query):
+    """The half of this bug the live run did not show, because the LLM router was
+    up. `keyword_route` matched no keyword group at all for these -- "concentrated"
+    missed the "concentration" entry and nothing matched "diversified" -- so both
+    were flagged `no_topic_recognized` and the degraded path (SRS 3.4.3) refused an
+    in-scope question at the 0.15 floor.
+    """
+    decision = keyword_route(query)
+
+    assert not decision.out_of_scope
+    assert not decision.no_topic_recognized
+    assert not decision.notes
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("How exposed is Sri Lanka's apparel sector to a single buyer market?", "apparel_manufacturing"),
+        ("How is the tea sector performing?", "agriculture_commodity"),
+    ],
+)
+def test_a_single_sector_question_is_not_dragged_across_both(query, expected):
+    """"sectors" is plural in CROSS_SECTOR_WORDS on purpose. A question about one
+    named sector is answered by that sector's agent, not fanned to both.
+    """
+    decision = keyword_route(query)
+
+    assert expected in decision.route
+    other = (
+        "agriculture_commodity" if expected == "apparel_manufacturing" else "apparel_manufacturing"
+    )
+    assert other not in decision.route
+
+
+def test_a_named_two_sector_comparison_is_unchanged():
+    """X07 already worked -- it names both sectors outright. Guard that the new
+    group did not change its route or its weights.
+    """
+    decision = keyword_route("Which sector recovered faster after 2020, agriculture or apparel?")
+
+    assert set(decision.route) == {
+        "export_analytics", "agriculture_commodity", "apparel_manufacturing",
+    }
+    assert decision.relevance["agriculture_commodity"] == 1.0, "a named sector still outweighs an inferred one"
+
+
+def test_an_inferred_sector_weighs_less_than_a_named_one():
+    """Relevance is a number, not a flag (invariant 3): a question that never
+    named agriculture should not weight its agent as heavily as one that did.
+    """
+    inferred = keyword_route("Which of Sri Lanka's export sectors is most concentrated?")
+    named = keyword_route("How concentrated are Sri Lanka's tea export destinations?")
+
+    assert inferred.relevance["agriculture_commodity"] < named.relevance["agriculture_commodity"]
+
+
 # --- invariant 3: relevance is a weight ---------------------------------
 
 
