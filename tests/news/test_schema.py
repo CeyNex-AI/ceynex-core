@@ -98,22 +98,25 @@ def test_a_malformed_seendate_is_none_rather_than_an_exception():
 
 
 def test_relevance_labels_bucket_on_scores_headlines_actually_reach():
-    """Measured, not assumed. See relevance.py — every real pair scored negative.
+    """Measured against the live collection — see relevance.py for the table.
 
     The first version cut on sigmoid(logit) at 0.5 and 0.1, i.e. logits 0.0 and
-    -2.2. The best of 1500 real pairs was -1.78, so every article would have
-    been labelled "loose" for every question, forever.
+    -2.2, taken from the model's training distribution rather than from anything
+    observed on this corpus.
     """
-    assert relevance_label(-1.78) == "strong"  # best real pair observed
-    assert relevance_label(-4.86) == "strong"  # a good tariffs match
+    assert relevance_label(7.16) == "strong"  # best real match observed
+    assert relevance_label(-3.33) == "strong"  # a good tariffs match
     assert relevance_label(-6.66) == "related"  # a decent shipping match
     assert relevance_label(-7.76) == "loose"  # a real tea match, but a weak one
-    assert relevance_label(-9.06) == "loose"  # below the floor, never shown
+    assert relevance_label(-9.94) == "loose"  # below the floor, never shown
 
 
 def test_no_real_headline_score_lands_in_a_dead_label():
-    """A label nothing can ever reach is a bug, not a spare bucket."""
-    observed = [-1.78, -4.86, -6.66, -7.08, -7.76, -8.14, -8.75, -9.06, -9.54, -10.58]
+    """A label nothing can ever earn is a bug, not a spare bucket.
+
+    These are the eleven top-1 scores measured through the real route path.
+    """
+    observed = [7.16, 0.65, -1.64, -3.33, -6.66, -7.76, -8.92, -8.96, -9.94, -10.72, -10.93]
 
     assert {relevance_label(s) for s in observed} == {"strong", "related", "loose"}
 

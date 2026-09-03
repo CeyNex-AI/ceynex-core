@@ -65,33 +65,33 @@ gdelt:
   response_cache_ttl_s: 900
 
 relevance:
-  # MEASURED, not guessed. 150 indexed headlines x 11 real questions on the
-  # deployed box; ceynex/news/relevance.py records the full table.
+  # MEASURED through the real route path, on the deployed box: eleven questions
+  # against the live ceynex_news collection, scoring the candidates the vector
+  # search actually returns. ceynex/news/relevance.py records the full table.
   #
-  # Headline scores from this cross-encoder are ALL negative — best pair across
-  # the whole matrix was -1.78, median -11.35. The first version of this file
-  # said -6.0, reasoned from nothing, and would have returned an empty panel for
-  # six of the eight in-scope questions.
+  # Measuring the wrong thing first is worth writing down. The initial sweep
+  # scored every indexed title against each question and concluded that all
+  # scores are negative. They are not — the route only ever scores retrieved
+  # candidates, and those reach +7.16. A floor set from the synthetic sweep
+  # returned an empty panel for every question in production.
   #
-  # -8.0 is the highest floor that rejects every out-of-scope question tried:
+  # Sweeping the floor over the real distribution:
   #
-  #     apparel   -1.78  | kept        commodities  -8.75  | dropped
-  #     tariffs   -4.86  | kept        cinnamon     -9.06  | dropped
-  #     shipping  -6.66  | kept        rupee        -9.54  | dropped
-  #     gsp       -7.08  | kept        --- out of scope ---
-  #     tea       -7.76  | kept        weather      -8.14  | dropped
-  #                                    cricket      -9.58  | dropped
-  #                                    cake        -10.58  | dropped
+  #     floor  -6.0 -> keeps 4/8 in-scope, admits 0/3 out-of-scope
+  #     floor  -7.0 -> keeps 5/8 in-scope, admits 0/3 out-of-scope
+  #     floor  -8.0 -> keeps 6/8 in-scope, admits 0/3 out-of-scope   <-- chosen
+  #     floor  -9.0 -> keeps 7/8 in-scope, admits 1/3 out-of-scope
+  #     floor -10.0 -> keeps 7/8 in-scope, admits 2/3 out-of-scope
   #
-  # The three dropped in-scope questions are dropped CORRECTLY: their top hits
-  # were "king coconut villages" for cinnamon and "New Zealand exporters" for
-  # the rupee. No answer is the right answer there.
+  # -8.0 is the loosest cut that still rejects everything out of scope. Going
+  # one step further buys one more question and starts letting "will it rain in
+  # Colombo tomorrow" (-8.96) into a trade-intelligence panel.
   #
-  # Honest caveat: the margin is thin. "Will it rain in Colombo tomorrow?"
-  # scored -8.14 purely on the word Colombo, only 0.14 below the cut, and above
-  # three real questions. This floor separates the cases we tried and is not a
-  # clean boundary. It should be re-measured as the corpus grows — with 150
-  # mostly-unrelated headlines, nothing scores well.
+  # Honest caveat: the in-scope and out-of-scope ranges OVERLAP. "ceylon tea
+  # auction prices" scores -10.72, below every out-of-scope question, because
+  # this 150-headline corpus contains no tea-auction story. No floor can fix
+  # that; only more corpus can. Re-measure once the refresher has run for a few
+  # days — the script is in the commit that set this number.
   min_score: -8.0
   limit: 8
 

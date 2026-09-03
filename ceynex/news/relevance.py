@@ -32,29 +32,41 @@ judgement rather than derivation.
 
 The measurement
 ---------------
-Run against the deployed index: 150 real indexed headlines scored against 11
-real questions, 1500 pairs. **Every score was negative.** Best pair in the whole
-matrix -1.78; median -11.35; p99 -8.74.
+Eleven questions against the live `ceynex_news` collection on the deployed box,
+scoring **the candidates the vector search returns** — the same path a request
+takes, `store.search()` then this function:
 
-    apparel   -1.78   tariffs  -4.86   shipping -6.66   gsp   -7.08
-    tea       -7.76   commodities -8.75   cinnamon -9.06   rupee -9.54
-    out of scope:  weather -8.14   cricket -9.58   cake -10.58
+    sri lanka coconut exports          +7.16      who won the cricket    -9.94
+    sri lanka apparel exports          +0.65      rain in Colombo        -8.96
+    how are apparel exports doing?     -1.64      chocolate cake        -10.93
+    what tariffs do exports face?      -3.33
+    shipping costs for exporters?      -6.66
+    how is Ceylon tea performing?      -7.76
+    global commodity prices            -8.92
+    ceylon tea auction prices         -10.72
 
-`min_score: -8.0` is the highest cut that rejects all three out-of-scope
-questions. The three in-scope questions it also drops are dropped correctly —
-their best matches were "king coconut villages" for cinnamon and "New Zealand
-exporters" for the rupee, i.e. the corpus genuinely had no answer.
+`min_score: -8.0` is the loosest cut that still rejects every out-of-scope
+question: it keeps 6 of 8 in-scope and admits 0 of 3 out. -9.0 would keep 7 but
+let "will it rain in Colombo tomorrow" into a trade panel.
 
-**The margin is thin and this is not a clean boundary.** "Will it rain in
-Colombo tomorrow?" reached -8.14 on the word Colombo alone, above three real
-questions and 0.14 from the cut. With 150 mostly-unrelated headlines nothing
-scores well; re-measure as the corpus grows. Recorded in `docs/DEFERRED.md`.
+**Measure the path that runs, not the one that is easy to measure.** The first
+attempt scored every indexed title against each question and concluded that all
+scores are negative, best -1.78. That is true of the corpus and false of the
+route, which never sees a title the vector search did not retrieve. A floor set
+from it emptied the panel for every question in production. The difference is
+not subtle — +7.16 against -1.78 — and it was only visible from the deployed
+box, because it depends on what is in the collection.
 
-That measurement is also what set the label boundaries in `schema.py`. The first
-version cut on `sigmoid(logit)` at 0.5 and 0.1 — logits 0.0 and -2.2 — which no
-real pair ever reached, so every article would have been labelled "loose"
-forever. A boundary that is principled for the model's training distribution is
-not automatically reachable on ours.
+**The ranges overlap, and no floor fixes that.** "ceylon tea auction prices"
+scores -10.72 — below every out-of-scope question — because this 150-headline
+corpus has no tea-auction story in it. That is a corpus problem, not a threshold
+problem. Re-measure once the refresher has run for a few days.
+Recorded in `docs/DEFERRED.md`.
+
+The same run set the label boundaries in `schema.py`, which had the same bug in
+reverse: they cut on `sigmoid(logit)` at 0.5 and 0.1 — logits 0.0 and -2.2 —
+picked from the model's training distribution rather than from anything
+observed here.
 
 Degrading
 ---------
