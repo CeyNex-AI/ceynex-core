@@ -30,3 +30,18 @@ news_rate_limit:
   enabled: true
   search_per_minute: 20
   window_seconds: 60
+
+# GET /api/graph/expand — clicking a node in the answer's knowledge graph. A
+# third block and a third identity namespace, for the same reason news has its
+# own: they share Redis keys otherwise, and exploring a graph would spend the
+# allowance for asking questions.
+graph_rate_limit:
+  enabled: true
+
+  # Higher than either of the above, because the unit is different. A query is a
+  # question someone composed; an expansion is a click, and following a chain of
+  # trading partners is four or five of them in the time one query takes to
+  # answer. The cost matches: one bounded single-hop read, no LLM, no fan-out,
+  # no outbound call on anyone else's API.
+  expand_per_minute: 120
+  window_seconds: 60

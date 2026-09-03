@@ -25,6 +25,19 @@ ALL_QUERIES = [
     ("graph_summary", lambda: q.graph_summary()),
     ("latest_observation_year", lambda: q.latest_observation_year()),
     ("latest_observation_year_scoped", lambda: q.latest_observation_year("tea")),
+    ("export_subgraph", lambda: q.export_subgraph("tea", 2024)),
+    ("classification_subgraph", lambda: q.classification_subgraph("tea")),
+    ("production_subgraph", lambda: q.production_subgraph("cinnamon")),
+    ("neighbours", lambda: q.neighbours("Country", "USA")),
+]
+
+#: The subset that must project a drawable triple. Kept separate from
+#: ALL_QUERIES because the scalar queries above deliberately do not.
+SUBGRAPH_QUERIES = [
+    ("export_subgraph", lambda: q.export_subgraph("tea", 2024)),
+    ("classification_subgraph", lambda: q.classification_subgraph("tea")),
+    ("production_subgraph", lambda: q.production_subgraph("cinnamon")),
+    ("neighbours", lambda: q.neighbours("Country", "USA")),
 ]
 
 
@@ -138,3 +151,117 @@ def test_item_matching_is_case_insensitive():
         cypher, params = build()
         if "item" in params or "commodity" in params:
             assert "toLower" in cypher
+
+
+# --- the subgraph projections --------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "build"), SUBGRAPH_QUERIES, ids=[n for n, _ in SUBGRAPH_QUERIES])
+def test_subgraph_queries_project_the_full_triple(name, build):
+    """All nine columns, or `kg/subgraph.py` skips the row as malformed.
+
+    This is the assertion that matters most in this file. `record.data()`
+    flattens a Node to its properties alone, so a projection that drops an `AS`
+    alias does not fail — it returns rows that quietly decode to a node labelled
+    `None`, joined to the real graph.
+    """
+    cypher, _ = build()
+    for column in (
+        "source_label",
+        "source_key",
+        "source_name",
+        "rel_type",
+        "rel_props",
+        "target_label",
+        "target_key",
+        "target_name",
+        "weight",
+    ):
+        assert f"AS {column}" in cypher, f"{name}: no `AS {column}` in the projection"
+
+
+@pytest.mark.parametrize(("name", "build"), SUBGRAPH_QUERIES, ids=[n for n, _ in SUBGRAPH_QUERIES])
+def test_subgraph_queries_never_return_a_bare_node(name, build):
+    """`RETURN n` would arrive as a property bag that no longer knows its label."""
+    cypher, _ = build()
+    assert not re.search(r"RETURN\s+[a-z]\s*(,|$)", cypher, re.MULTILINE), (
+        f"{name} returns a whole node; labels do not survive record.data()"
+    )
+
+
+def test_export_subgraph_carries_value_as_the_weight():
+    """Stroke width has to mean something; the something is export value."""
+    cypher, _ = q.export_subgraph("tea", 2024)
+    assert "e.value       AS weight" in cypher
+    assert "ORDER BY e.value DESC" in cypher
+
+
+def test_export_subgraph_is_bounded():
+    cypher, params = q.export_subgraph("tea", 2024, limit=5)
+    assert "LIMIT $limit" in cypher
+    assert params["limit"] == 5
+
+
+def test_classification_unions_rather_than_optional_matching():
+    """An OPTIONAL MATCH on the agreement leg returns a row with null agreement
+    columns for every uncovered HS code, which decodes to a `TradeAgreement:None`
+    node hanging off the real graph. A union returns only edges that exist."""
+    cypher, _ = q.classification_subgraph("tea")
+    assert "UNION" in cypher
+    assert "OPTIONAL MATCH" not in cypher
+    assert "'CLASSIFIED_AS'" in cypher
+    assert "'COVERED_BY'" in cypher
+
+
+def test_neighbours_recovers_edge_direction():
+    """Matched undirected so expanding a Country finds what exports *to* it.
+    Without startNode/endNode every expanded edge would be drawn pointing away
+    from whatever the user happened to click."""
+    cypher, _ = q.neighbours("Country", "USA")
+    assert "-[r]-()" in cypher
+    assert "startNode(r)" in cypher and "endNode(r)" in cypher
+
+
+def test_neighbours_substitutes_the_label_and_its_key_property():
+    """Cypher has no parameter form for either — `MATCH (n:$label)` is a syntax
+    error. Each label's key comes from NODE_KEYS, not from the caller."""
+    cypher, _ = q.neighbours("Country", "USA")
+    assert "(n:Country {iso3: $key})" in cypher
+
+    cypher, _ = q.neighbours("HSCode", "6109")
+    assert "(n:HSCode {code: $key})" in cypher
+
+    cypher, _ = q.neighbours("PolicyDocument", "edb-2024")
+    assert "(n:PolicyDocument {doc_id: $key})" in cypher
+
+
+def test_neighbours_keeps_the_value_a_parameter():
+    """The label is substituted; the value never is. A key that reached the
+    query text would be the injection this module's docstring forbids."""
+    cypher, params = q.neighbours("Country", "'; MATCH (n) DETACH DELETE n //")
+    assert "DETACH DELETE" not in cypher
+    assert params["key"] == "'; MATCH (n) DETACH DELETE n //"
+    assert "$key" in cypher
+
+
+def test_neighbours_rejects_a_label_that_is_not_in_the_graph():
+    """The allowlist is what stands between a query string and query structure."""
+    with pytest.raises(CrosswalkError):
+        q.neighbours("Country) MATCH (x", "USA")
+    with pytest.raises(CrosswalkError):
+        q.neighbours("User", "admin")
+
+
+def test_node_keys_covers_every_constrained_label():
+    """schema.cypher constrains six labels; PolicyDocument is the seventh that
+    the loader merges on `doc_id` (deviation D10). A label missing here cannot
+    be expanded, which shows up as a click that silently does nothing."""
+    assert set(q.NODE_KEYS) == {
+        "Country",
+        "HSCode",
+        "Commodity",
+        "ApparelCategory",
+        "District",
+        "TradeAgreement",
+        "PolicyDocument",
+    }
