@@ -166,6 +166,53 @@ def qdrant_collection() -> str:
     return _env("QDRANT_COLLECTION", "ceynex_policy") or "ceynex_policy"
 
 
+def news_collection() -> str:
+    """Where the news sidecar's headlines live (docs/ARCHITECTURE_DELTA.md D11).
+
+    Deliberately a *second* collection rather than a `doc_type` field on
+    `ceynex_policy`. The policy corpus is hand-curated and human-verified because
+    anything cited as evidence has to be checkable (SRS 3.1.4); news is
+    high-volume and unvetted. Sharing a collection would mean every existing
+    retrieval path had to remember to exclude news, and forgetting once is a
+    silent failure — the exact shape `retrieval/schema.py` was written to
+    prevent. Same embedding model and dimensions, so the loaded ONNX sessions
+    are shared and the second collection costs nothing at query time.
+    """
+    return _env("QDRANT_NEWS_COLLECTION", "ceynex_news") or "ceynex_news"
+
+
+def news_enabled() -> bool:
+    """Kill switch for the whole news sidecar.
+
+    Same rule as `policy_retrieval_enabled()`: any value other than
+    "off"/"0"/"false"/"no" leaves it on, because a typo in an env var must not
+    silently disable a feature.
+    """
+    value = (_env("CEYNEX_NEWS", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def news_refresh_enabled() -> bool:
+    """Kill switch for the hourly refresher alone, separate from serving news.
+
+    Two switches rather than one so a second deployment can serve the trending
+    panel from the shared snapshot without also fetching from GDELT — the
+    refresher is the only part with an outbound call budget to protect.
+    """
+    value = (_env("CEYNEX_NEWS_REFRESH", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def news_cache_dir() -> Path:
+    """Where GDELT responses are cached. Inside the existing `llm_cache` volume."""
+    return Path(_env("CEYNEX_NEWS_CACHE_DIR", str(REPO_ROOT / ".cache" / "news")) or ".cache/news")
+
+
+def news_config() -> dict[str, Any]:
+    """D11 — the watchlist and the tuning knobs, in a table a marker can read."""
+    return load_config("news")
+
+
 def policy_retrieval_enabled() -> bool:
     """Kill switch for the retrieval path, so the evaluation can measure without it.
 
