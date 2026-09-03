@@ -72,10 +72,54 @@ ANALYTICS_WORDS = (
 # SRS 2.4 fixes scope. Naming one of these is a strong signal the question is
 # outside it — but only when nothing in scope is named too, since "should we
 # prioritise gems or tea" is still answerable about tea.
+#
+# The freight entries are deliberately two-word where the single word would
+# over-match: a bare "shipping" collides with phrasings like "drop-shipping
+# apparel", where the question really is about apparel. `keyword_route` pads the
+# query with spaces, which is what lets the existing "fish " entry rely on its
+# trailing space. There is no freight, shipping-cost or logistics data anywhere
+# in CeyNex, so naming freight here is what makes the refusal say *why* rather
+# than falling through to the generic "names nothing CeyNex covers" branch.
+#
+# Kept to the smallest set with the same matching power, because matching is
+# substring-based and every match is named in the note: "shipping cost" already
+# catches "shipping costs", and "freight" already catches "ocean/sea freight".
+# Listing the longer forms too would only make the note name one exclusion twice
+# ("the question is about freight, ocean freight").
 OUT_OF_SCOPE_WORDS = (
     "gem", "sapphire", "tourism", "tourist", "remittance", "fisheries", "fish ",
     "cement", "petroleum", "software export", "it export", "bpo",
+    "freight", "shipping cost", "container rate", "logistics cost",
 )
+
+# The sentence every out-of-scope note ends with, and the two whole-note shapes
+# built from it. One copy, because two copies drift — and they did: `keyword_route`
+# built these notes and `llm_route` built none, so every LLM-router out-of-scope
+# verdict reached `merger.py` with an empty note and fell through to its generic
+# fallback, telling the user a sector had been named when none was. Measured live
+# 2026-09-03 on "how are shipping costs affecting Sri Lankan exporters?", "who was
+# Leonhard Euler?" and "what were Sri Lanka's tea exports in 2035?" alike.
+SCOPE_SENTENCE = (
+    "Scope is agriculture (tea, cinnamon, rubber, coconut) and apparel "
+    "(HS 61/62) exports — SRS 2.4"
+)
+NO_TOPIC_NOTE = f"the question does not name anything CeyNex covers. {SCOPE_SENTENCE}"
+MIXED_SCOPE_NOTE = f"part of the question is outside what CeyNex covers. {SCOPE_SENTENCE}"
+
+
+def named_out_of_scope_note(named: str, *, partly_in_scope: bool) -> str:
+    """The most specific note of the three: it can name what was excluded.
+
+    Only `keyword_route` can produce this — it knows *which* word matched. The
+    LLM router only reports that something was out of scope, so it falls back to
+    the two generic notes above.
+    """
+    lead = (
+        f"the question also asks about {named}, which CeyNex does not cover"
+        if partly_in_scope
+        else f"the question is about {named}, which CeyNex does not cover"
+    )
+    return f"{lead}. {SCOPE_SENTENCE}"
 
 
 @dataclass
@@ -207,21 +251,13 @@ def keyword_route(query: str) -> RouteDecision:
         reason=reason,
     )
     if named_out_of_scope:
-        named = ", ".join(sorted(set(named_out_of_scope)))
-        lead = (
-            f"the question also asks about {named}, which CeyNex does not cover"
-            if partly_in_scope
-            else f"the question is about {named}, which CeyNex does not cover"
-        )
         decision.notes.append(
-            f"{lead}. Scope is agriculture (tea, cinnamon, rubber, coconut) and "
-            "apparel (HS 61/62) — SRS 2.4"
+            named_out_of_scope_note(
+                ", ".join(sorted(set(named_out_of_scope))), partly_in_scope=partly_in_scope
+            )
         )
     elif no_topic_recognized:
-        decision.notes.append(
-            "the question does not name anything CeyNex covers. Scope is agriculture "
-            "(tea, cinnamon, rubber, coconut) and apparel (HS 61/62) exports — SRS 2.4"
-        )
+        decision.notes.append(NO_TOPIC_NOTE)
     return decision
 
 
@@ -329,6 +365,17 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     # the "no topic recognised" case, same distinction keyword_route makes.
     no_topic_recognized = out_of_scope and not any(s in ("agriculture", "apparel") for s in sectors)
 
+    # Parity with `keyword_route`. `graph.py` turns `notes[0]` into the
+    # `out_of_scope:` error the merger reads back, so leaving this empty is not a
+    # missing nicety -- it is the difference between the user being told what
+    # CeyNex actually covers and being told, falsely, that they named an excluded
+    # sector. `keyword_route`'s more specific "names gems/tourism" note has no
+    # equivalent here: the LLM reports *that* something is out of scope, never
+    # which word did it.
+    notes: list[str] = []
+    if out_of_scope:
+        notes.append(NO_TOPIC_NOTE if no_topic_recognized else MIXED_SCOPE_NOTE)
+
     return RouteDecision(
         route=[agent for agent in ALL_AGENTS if agent in route],
         sectors=sectors or fallback.sectors,
@@ -337,6 +384,7 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         out_of_scope=out_of_scope,
         no_topic_recognized=no_topic_recognized,
         reason=str(parsed.get("reason", ""))[:200],
+        notes=notes,
     )
 
 

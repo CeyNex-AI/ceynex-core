@@ -525,7 +525,13 @@ def _out_of_scope_gaps(state: AgentState) -> list[str]:
         text = str(error)
         if text.startswith(OUT_OF_SCOPE_PREFIX):
             note = text[len(OUT_OF_SCOPE_PREFIX) :].strip()
-            gaps.append(note or "part of the question names a sector CeyNex does not cover")
+            # Belt to the router's braces. Both routers now populate `notes`, so
+            # this should never fire -- and when it does, it must not assert a
+            # *sector* was named. It used to, and with `llm_route` supplying no
+            # note it fired on every LLM-router out-of-scope verdict: "who was
+            # Leonhard Euler?" was told it had named a sector CeyNex does not
+            # cover (live 2026-09-03).
+            gaps.append(note or "part of the question is outside what CeyNex covers")
     return gaps
 
 
