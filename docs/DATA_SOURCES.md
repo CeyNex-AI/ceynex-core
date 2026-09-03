@@ -76,7 +76,18 @@ the first two digits are the broad chapter (61 = knitted clothing) and more
 digits mean more specific (0902 = tea specifically, inside chapter 09 "coffee,
 tea and spices").
 
-That currently gives us **4,625 rows covering 2015–2024**.
+A fresh local ingest gives **4,625 rows covering 2015–2024**. The deployed
+backend was re-ingested after that and covers **2015–2025** — verified live
+2026-09-03, where every answer's latest year is 2025 — so it holds more rows than
+this. The window is what to trust; the count depends on when the host last ran
+`make ingest`:
+
+```sql
+SELECT count(*), min(period_start), max(period_start) FROM fact_trade;
+```
+
+Coconut (HS 0801 and 1513) joined the pull on 2026-08-26 and is loaded on the
+deployed backend.
 
 ### Other sources belong to teammates
 
@@ -232,8 +243,9 @@ python -m ceynex.data.pipeline --verify     # print row counts per source
 SELECT source_id, count(*) FROM fact_trade GROUP BY 1;
 ```
 
-Expect roughly 4,625 rows from `UN_COMTRADE`. Then a number you can check
-against the real world:
+Expect roughly 4,625 rows from `UN_COMTRADE` on a fresh local ingest, and more on
+a host re-ingested since 2026-08-28. Then a number you can check against the real
+world:
 
 ```sql
 SELECT sum(export_value_usd) FROM fact_trade
