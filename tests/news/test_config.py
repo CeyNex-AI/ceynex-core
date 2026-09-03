@@ -64,22 +64,51 @@ def test_the_trending_window_fits_inside_the_span_that_gets_fetched():
     assert config["trending"]["window_hours"] <= fetched_days * 24
 
 
-def test_no_query_puts_a_conjunction_or_a_nested_group_inside_parentheses():
-    """GDELT: "Parentheses may only be used around OR'd statements."
+def test_every_query_obeys_both_of_gdelts_parenthesis_rules():
+    """GDELT enforces two rules that pull in opposite directions.
 
-    It enforces this with HTTP *200* carrying that sentence as plain text, which
-    is indistinguishable from a topic with no coverage unless you read the body.
-    Four watchlist queries shipped broken this way and only surfaced in the
-    deployed container's logs. Valid shapes are a bare OR list, `(x OR y) (a OR
-    b)`, or `"phrase" (a OR b)`.
+        1. "Queries containing OR'd terms must be surrounded by ()."
+        2. "Parentheses may only be used around OR'd statements."
+
+    Satisfying only the second is what broke four of these queries; "fixing"
+    them into bare OR lists then broke seven more on the first. Both violations
+    come back as HTTP **200** with the rule as plain text, which reads exactly
+    like a topic with no coverage — so nothing surfaces them except a human
+    reading container logs. Hence a static check.
+
+    The grammar that satisfies both: a sequence of quoted phrases and
+    parenthesised OR groups, implicitly ANDed. `("a" OR "b") "c" (d OR e)`.
     """
     for topic in news_config()["trending"]["topics"]:
-        for group in _paren_groups(topic["query"]):
+        query = topic["query"]
+
+        # Rule 2: nothing but ORs inside a group.
+        for group in _paren_groups(query):
             assert " AND " not in group.upper(), f"{topic['id']}: AND inside parentheses"
             assert "(" not in group, f"{topic['id']}: nested parentheses"
-            terms = [t for t in group.split() if t.upper() == "OR"]
-            words = _term_count(group)
-            assert words < 2 or terms, f"{topic['id']}: implicit AND inside parentheses — {group!r}"
+            if _term_count(group) >= 2:
+                assert " OR " in f" {group} ".upper(), (
+                    f"{topic['id']}: implicit AND inside parentheses — {group!r}"
+                )
+
+        # Rule 1: no OR left outside a group.
+        assert " OR " not in _outside_parens(query).upper(), (
+            f"{topic['id']}: an OR outside parentheses — {query!r}"
+        )
+
+
+def _outside_parens(query: str) -> str:
+    """Everything at depth 0, with each `(...)` group blanked out."""
+    out: list[str] = []
+    depth = 0
+    for char in query:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0:
+            out.append(char)
+    return "".join(out)
 
 
 def _paren_groups(query: str) -> list[str]:

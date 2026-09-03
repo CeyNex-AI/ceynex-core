@@ -127,15 +127,22 @@ trending:
   #
   # `sourcelang:english` is appended by the code, not repeated on every line.
   #
-  # GDELT SYNTAX, learned the hard way on the deployed box: **parentheses may
-  # only be used around OR'd statements.** `("a" AND "b")` and `("a" ("b" OR
-  # "c"))` are both rejected — and rejected with HTTP *200* carrying the plain
-  # text "Parentheses may only be used around OR'd statements.", which reads
-  # exactly like a topic that simply has no coverage. Four of these queries
-  # shipped broken because of it. `test_config.py` now rejects the shape
-  # statically, and `--dry-run` prints the URLs to paste into a browser.
+  # GDELT SYNTAX, established by running these against the live API from the
+  # deployed box. Two rules, and they pull in opposite directions, which is why
+  # guessing at one of them is not enough:
   #
-  # Valid shapes: a bare OR list; `(x OR y) (a OR b)`; `"phrase" (a OR b)`.
+  #   1. "Queries containing OR'd terms must be surrounded by ()."
+  #      -> a bare `a OR b` at the top level is REJECTED.
+  #   2. "Parentheses may only be used around OR'd statements."
+  #      -> `(a AND b)` and `(a (b OR c))` are REJECTED.
+  #
+  # So the grammar is: a sequence of quoted phrases and parenthesised OR groups,
+  # implicitly ANDed together. `("a" OR "b") "c" (d OR e)` is the shape.
+  #
+  # Both violations come back as HTTP **200** with the rule as plain text in the
+  # body, which is indistinguishable from "no coverage" unless something reads
+  # it. That is why gdelt.py raises on a 200-with-non-JSON instead of shrugging,
+  # and why test_config.py checks both rules statically.
   topics:
     # --- Sri Lanka -------------------------------------------------------
     - id: lk_tea
@@ -154,13 +161,13 @@ trending:
       scope: sri_lanka
       label: "GSP+ preferences"
       prompt: "What would losing GSP+ mean for Sri Lanka's exports to the EU?"
-      query: '("GSP+" OR "GSP plus" OR "trade preferences") "Sri Lanka"'
+      query: '(GSP OR "trade preferences" OR "duty free") "Sri Lanka"'
 
     - id: lk_cinnamon
       scope: sri_lanka
       label: "Cinnamon & spices"
       prompt: "What's the outlook for Ceylon cinnamon exports?"
-      query: '"Ceylon cinnamon" OR "Sri Lanka cinnamon" OR "Sri Lanka spice"'
+      query: '("Ceylon cinnamon" OR cinnamon OR spices) "Sri Lanka"'
 
     - id: lk_rupee
       scope: sri_lanka
@@ -172,7 +179,7 @@ trending:
       scope: sri_lanka
       label: "Colombo port"
       prompt: "How is Colombo port performance affecting exports?"
-      query: '"Colombo Port" OR "Port of Colombo" OR Hambantota OR "Sri Lanka transhipment" OR "Colombo terminal"'
+      query: '("Colombo Port" OR "Port of Colombo" OR Hambantota OR transhipment) "Sri Lanka"'
 
     - id: lk_tariffs
       scope: sri_lanka
@@ -191,13 +198,13 @@ trending:
       scope: global
       label: "Tariffs"
       prompt: "How are global tariff changes affecting Sri Lanka's exports?"
-      query: '"new tariffs" OR "tariff increase" OR "import duty" OR "trade barrier"'
+      query: '("new tariffs" OR "tariff increase" OR "import duty" OR "trade barrier")'
 
     - id: gl_freight
       scope: global
       label: "Freight & shipping"
       prompt: "How are shipping costs affecting Sri Lankan exporters?"
-      query: '"freight rates" OR "container shipping" OR "Red Sea shipping" OR "Suez Canal shipping"'
+      query: '("freight rates" OR "container shipping" OR "shipping costs")'
 
     - id: gl_supply_chain
       scope: global
@@ -209,7 +216,7 @@ trending:
       scope: global
       label: "Commodity prices"
       prompt: "How are global commodity prices affecting Sri Lanka's exports?"
-      query: '"commodity prices" OR "food prices" OR "tea prices" OR "rubber prices"'
+      query: '("commodity prices" OR "food prices" OR "tea prices" OR "rubber prices")'
 
     - id: gl_apparel_sourcing
       scope: global
@@ -221,4 +228,4 @@ trending:
       scope: global
       label: "Trade policy"
       prompt: "What global trade policy changes matter for Sri Lanka?"
-      query: 'WTO OR "trade policy" OR "trade agreement" OR "export controls"'
+      query: '(WTO OR "trade policy" OR "trade agreement" OR "export controls")'

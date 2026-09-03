@@ -280,12 +280,9 @@ class GdeltClient:
         if cached is not None:
             return cached
 
-        if not await self._throttle.acquire(max_wait_s=max_wait_s):
-            # Refusal, not an error: the caller has a store to fall back to and
-            # would rather have stale headlines now than fresh ones in 30 s.
-            raise GdeltUnavailableError("no GDELT throttle slot inside the budget")
-
-        raw = await self._fetch(params, attempts=attempts, backoff_base_s=backoff_base_s)
+        raw = await self._fetch(
+            params, attempts=attempts, backoff_base_s=backoff_base_s, max_wait_s=max_wait_s
+        )
 
         if keep_forensic:
             self._write_forensic(params, raw)
@@ -309,10 +306,24 @@ class GdeltClient:
         return payload
 
     async def _fetch(
-        self, params: dict[str, str], *, attempts: int, backoff_base_s: float
+        self, params: dict[str, str], *, attempts: int, backoff_base_s: float, max_wait_s: float
     ) -> bytes:
+        """Every attempt takes its own throttle slot.
+
+        Acquiring once per logical request and then retrying inside that slot is
+        the obvious shape and it is wrong: the retries fire at the backoff
+        interval (2 s, then 4 s) rather than the gate's 5 s, so a run of
+        transient failures turns into exactly the burst the gate exists to
+        prevent. Measured on the deployed box — the refresher tripped GDELT's
+        429 on six consecutive topics that way, having "respected" a 5 s limit
+        the whole time.
+        """
         last_error: Exception | None = None
         for attempt in range(1, max(1, attempts) + 1):
+            if not await self._throttle.acquire(max_wait_s=max_wait_s):
+                # Refusal, not an error: the caller has a store to fall back to
+                # and would rather have stale headlines now than fresh later.
+                raise GdeltUnavailableError("no GDELT throttle slot inside the budget")
             try:
                 response = await self.client.get(self._base_url, params=params)
             except httpx.HTTPError as exc:
@@ -335,8 +346,13 @@ class GdeltClient:
                     "gdelt attempt %d/%d returned HTTP %d", attempt, attempts, response.status_code
                 )
 
-            if attempt < attempts:
-                await asyncio.sleep(backoff_base_s * (2 ** (attempt - 1)))
+            # No extra backoff sleep here: the gate above already spaces every
+            # attempt by `min_interval_s`, and stacking an exponential wait on
+            # top of it made a four-attempt topic take half a minute for no
+            # added politeness. `backoff_base_s` survives only as the floor for
+            # a caller whose throttle is a no-op (tests, `--dry-run`).
+            if attempt < attempts and backoff_base_s:
+                await asyncio.sleep(min(backoff_base_s, 1.0))
 
         raise GdeltUnavailableError(
             f"GDELT unreachable after {attempts} attempts: {last_error}"
