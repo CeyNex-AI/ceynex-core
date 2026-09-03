@@ -99,6 +99,12 @@ DESCRIPTIVE_MARKERS = (
     "measures do", "rules of origin", "provisions", "does the", "do the ",
     "which trade agreement", "market access", "preferential access", "eligible",
     "what tariff", "which tariff", "what rate", "what duty",
+    # Comparative forms. "How do Japan's tariffs on Sri Lankan tea compare with
+    # Germany's?" asks what two schedules say; it proposes no change to either.
+    # The CHANGE_MARKERS veto keeps the comparative *simulations* out -- M01
+    # ("how would a 5% depreciation … compared to agriculture") and X09 ("hurt
+    # more by losing access") both carry one.
+    "compare", "how do ", "how does ",
 )
 
 #: What kind of measure a descriptive question is about, so retrieval can be
@@ -139,6 +145,24 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     shock = _classify_shock(state["query"])
     magnitude = intent.pct_change if intent.pct_change is not None else 0.05
+
+    # A tariff question that supplies no rate and posits no change is asking what
+    # the tariffs *are*. Simulating it means inventing the input: `magnitude`
+    # above falls back to 5%, and the answer reports the revenue effect of a
+    # tariff move nobody proposed. Measured live 2026-09-03 on P08 ("which of Sri
+    # Lanka's largest apparel markets has the most restrictive import tariffs?")
+    # and P10 ("how do Japan's tariffs on Sri Lankan tea compare with
+    # Germany's?") -- both got an unrequested 5% simulation, P08 at confidence
+    # 0.8. The rate-carrying questions (P14's "by 15%", M03's "by 10%") and the
+    # ones that posit a change without a rate are untouched: those have something
+    # to simulate.
+    #
+    # `agreement` is deliberately not included. Losing a preference re-imposes a
+    # rate the question does not have to supply -- `_simulate_agreement_loss`
+    # sources it, and says so when it falls back to the D9 literature constant.
+    if shock == "tariff" and intent.pct_change is None and not _posits_a_change(state["query"]):
+        log.info("tariff question with no rate and no proposed change; describing policy instead")
+        shock = "policy"
 
     # A question about what a policy *says* is not a shock, and answering it with
     # one produces a figure nobody asked for. See `_describe_policy`.
@@ -465,7 +489,7 @@ async def _describe_policy(
     source of record for coverage, and a retrieved passage that disagreed with it
     would be a corpus problem, not a correction.
     """
-    partner = _destination(state["query"], intent)
+    destinations = _destinations(state["query"], intent) or (None,)
     hs_prefixes = tuple(hs_hierarchy(_hs_for_item(intent.item))) if intent.item else ()
     measures = _descriptive_measures(state["query"])
 
@@ -497,32 +521,51 @@ async def _describe_policy(
                 )
             )
 
-    # 2. What the documents say.
-    context = await _retrieve_policy(
-        deps,
-        state,
-        partner=partner,
-        hs_prefixes=hs_prefixes,
-        measure_types=measures,
-        limit=4,
-    )
+    # 2. What the documents say, per destination the question names.
+    #
+    # Retrieved separately rather than in one pooled search: the allow-list is
+    # built per country (`policy_documents_for`), and pooling would let the
+    # country with documents supply passages the other country's half of the
+    # question then appears to have been answered from.
+    per_destination_limit = 4 if len(destinations) == 1 else 2
+    answered: list[str] = []
+    unheld: list[str] = []
 
-    if context.chunks:
-        sources = sorted({c.title for c in context.chunks})
-        lines.append(
-            f"{len(context.chunks)} passage(s) from {', '.join(sources)} address this."
+    for partner in destinations:
+        context = await _retrieve_policy(
+            deps,
+            state,
+            partner=partner,
+            hs_prefixes=hs_prefixes,
+            measure_types=measures,
+            limit=per_destination_limit,
         )
-        evidence.extend(_policy_evidence(context.chunks, context.detail, limit=4))
-    else:
+        where = f"for {partner}" if partner else "for the market named"
+
+        if context.chunks:
+            answered.append(partner or "the market named")
+            sources = sorted({c.title for c in context.chunks})
+            scope = f" {where}" if len(destinations) > 1 else ""
+            lines.append(
+                f"{len(context.chunks)} passage(s) from {', '.join(sources)} address this{scope}."
+            )
+            evidence.extend(
+                _policy_evidence(context.chunks, context.detail, limit=per_destination_limit)
+            )
+            continue
+
         # The corpus not holding something is a real answer and has to be said in
         # the prose, not left as an empty evidence list the reader must notice.
-        where = f"for {partner}" if partner else "for the market named"
+        unheld.append(partner or "the market named")
         lines.append(
-            f"No policy document {where} in the corpus addresses this, so the question "
+            f"No policy document {where} in the corpus addresses this, so that part of the "
+            "question cannot be answered from the documents CeyNex holds."
+            if len(destinations) > 1
+            else f"No policy document {where} in the corpus addresses this, so the question "
             "cannot be answered from the documents CeyNex holds."
         )
         assumptions.append(
-            f"Policy retrieval returned nothing: {context.detail}. "
+            f"Policy retrieval returned nothing {where}: {context.detail}. "
             "Reporting the gap rather than answering from the wrong country's document."
         )
         if context.cypher:
@@ -536,6 +579,16 @@ async def _describe_policy(
                     cypher=context.cypher,
                 )
             )
+
+    # The partial `eval/policy_questions.yaml` asks for on P10: answer for the
+    # market that is held, and say plainly that the other one is not. Without
+    # this the two halves sit side by side and a reader has to work out which
+    # country the passages came from.
+    if answered and unheld:
+        assumptions.append(
+            f"This compares {', '.join(answered)} against nothing held for "
+            f"{', '.join(unheld)}; the comparison is one-sided and stated as such."
+        )
 
     return await finish(
         agent=AGENT,
@@ -668,6 +721,12 @@ def _policy_evidence(
 # --- helpers -------------------------------------------------------------
 
 
+def _posits_a_change(query: str) -> bool:
+    """Does the question ask what *would happen*, rather than what the rules are?"""
+    lowered = query.lower()
+    return any(marker in lowered for marker in CHANGE_MARKERS)
+
+
 def _classify_shock(query: str) -> str:
     """`policy` | `agreement` | `tariff` | `fx`.
 
@@ -676,11 +735,12 @@ def _classify_shock(query: str) -> str:
     not a tariff shock, and "which trade agreement covers cinnamon" contains
     "agreement" and simulates nothing. A question is descriptive when it asks
     what the rules *are* and nothing in it posits a change.
+
+    Text only. Whether a tariff question actually carries a rate to simulate with
+    is `_simulate`'s call, because that is where the parsed intent lives.
     """
     lowered = query.lower()
-    if any(marker in lowered for marker in DESCRIPTIVE_MARKERS) and not any(
-        marker in lowered for marker in CHANGE_MARKERS
-    ):
+    if any(marker in lowered for marker in DESCRIPTIVE_MARKERS) and not _posits_a_change(query):
         return "policy"
     for shock, keywords in SHOCK_KEYWORDS:
         if any(keyword in lowered for keyword in keywords):
@@ -702,12 +762,28 @@ def _destination(query: str, intent: Intent) -> str | None:
     of its own export destinations, so it can be excluded outright rather than
     disambiguated.
     """
+    destinations = _destinations(query, intent)
+    return destinations[0] if destinations else None
+
+
+def _destinations(query: str, intent: Intent) -> tuple[str, ...]:
+    """Every destination market the question names, in the order they appear.
+
+    A simulation shocks one market and `_destination` above is right for it. A
+    *descriptive* question can name two -- "how do Japan's tariffs on Sri Lankan
+    tea compare with Germany's?" -- and answering it from one country's documents
+    is how the corpus ends up answering about the wrong government. Live
+    2026-09-03 that question ran a Japan tariff simulation and said nothing about
+    Germany; `eval/policy_questions.yaml` wants the opposite, and wants the Japan
+    gap named rather than filled.
+    """
+    ordered: list[str] = []
     if intent.partner and intent.partner != q.REPORTER_ISO3:
-        return intent.partner
+        ordered.append(intent.partner)
     for iso3 in countries_in(query):
-        if iso3 != q.REPORTER_ISO3:
-            return iso3
-    return None
+        if iso3 != q.REPORTER_ISO3 and iso3 not in ordered:
+            ordered.append(iso3)
+    return tuple(ordered)
 
 
 def _descriptive_measures(query: str) -> tuple[str, ...]:

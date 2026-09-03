@@ -48,9 +48,19 @@ class RaisingLLM:
         raise RuntimeError("LLM unavailable")
 
 
-def _series(item, *, target, **_kwargs):
+#: Which source each SERIES branch must read from. The agent names the source in
+#: every evidence entry it emits, so reading an unfiltered series would cite one
+#: source over another's numbers -- live 2026-09-03, a Comtrade unit-value blend
+#: was cited as the FAOSTAT producer-price series.
+_SOURCE_FOR_TARGET = {"price": "FAOSTAT", "export_volume": "TEA_BOARD"}
+
+
+def _series(item, *, target, source_id=None, **_kwargs):
     assert item in {"tea", "cinnamon"}
     assert target in {"price", "export_volume"}
+    assert source_id == _SOURCE_FOR_TARGET[target], (
+        f"{target} must be read from {_SOURCE_FOR_TARGET[target]} only, not blended across sources"
+    )
     return pd.DataFrame({"period": YEARS, "value": VALUES})
 
 
@@ -197,6 +207,22 @@ def test_rubber_volume_question_declines_instead_of_answering_about_tea(monkeypa
     assert "rubber" in out["summary"].lower()
     assert "figures" not in out or out["figures"] == {}
     assert out["confidence"] == pytest.approx(0.20)
+
+
+def test_the_item_mismatch_decline_does_not_claim_only_tea_is_answerable(monkeypatch):
+    """Found live 2026-09-03. The decline used to end "only tea is covered for
+    this question shape", which states this agent's coverage as the system's --
+    and it is false: the graph answers rubber concentration, share and growth,
+    and did so in the very same response (S03). The merger drops this line when
+    another finding covered the question, but the line itself must be true on the
+    occasions it does surface.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    summary = run("How have rubber export volumes changed over the last five years?")["summary"]
+
+    assert "only tea" not in summary.lower()
+    assert "rubber" in summary.lower(), "the decline must still say which item it holds nothing for"
 
 
 def test_a_bare_cinnamon_data_question_answers_with_the_real_price_series(monkeypatch):

@@ -68,6 +68,13 @@ Absolute rules:
    never extrapolate, never add a figure from your own knowledge.
 3. If the findings disagree, say so explicitly and give both figures. Do not average
    them, do not pick one silently.
+3a. A disagreement means two findings measuring THE SAME THING and getting different
+   answers. Two findings that state different scopes, sources or reference periods are
+   measuring DIFFERENT things and are not in conflict. When an assumption tells you two
+   figures come from different source boundaries or different years, say in one clause
+   which figure is which -- "USD X in 2025 on the HS-code basis, USD Y in 2024 on the
+   national reporting basis" -- and move on. Never call that a discrepancy between
+   sources, never present it as something the data cannot resolve, and never lead with it.
 4. If something could not be answered, say which part and why, in one clause.
 5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer.
@@ -163,7 +170,9 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
     contributing, declined = _split_succeeded(succeeded)
 
     unanswered = (
-        _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
+        _describe_gaps(failed, never_reported)
+        + _describe_declines(state["query"], declined, contributing)
+        + _out_of_scope_gaps(state)
     )
     conflicts = detect_conflicts(contributing)
     evidence = dedupe_evidence(succeeded)
@@ -455,8 +464,12 @@ def unanswered_from_outputs(state: AgentState) -> list[str]:
     if no_topic_recognized(state):
         return _out_of_scope_gaps(state)
     succeeded = {name: out for name, out in outputs.items() if not out.get("error")}
-    _, declined = _split_succeeded(succeeded)
-    return _describe_gaps(failed, never_reported) + _describe_declines(declined) + _out_of_scope_gaps(state)
+    contributing, declined = _split_succeeded(succeeded)
+    return (
+        _describe_gaps(failed, never_reported)
+        + _describe_declines(state["query"], declined, contributing)
+        + _out_of_scope_gaps(state)
+    )
 
 
 def agents_used_from_outputs(state: AgentState) -> list[str]:
@@ -470,19 +483,75 @@ def agents_used_from_outputs(state: AgentState) -> list[str]:
     return sorted(name for name, out in outputs.items() if not out.get("error"))
 
 
-def _describe_declines(declined: dict[AgentName, AgentOutput]) -> list[str]:
+def _describe_declines(
+    query: str,
+    declined: dict[AgentName, AgentOutput],
+    contributing: dict[AgentName, AgentOutput],
+) -> list[str]:
     """An honest SAD Section 4.1 refusal, phrased for a reader.
 
     Reuses the agent's own summary (it already states the specific reason,
     e.g. "No registered national tea export volume model is available")
     rather than a generic topic label -- the same principle _describe_gaps
     applies to a genuine failure's error text.
+
+    A decline that another finding already answered is dropped. Found live
+    2026-09-03: every non-tea agriculture question came back *correct* from
+    export_analytics and still carried "No sourced export volume series is
+    available for rubber…" in `unanswered`, because agriculture_commodity was
+    also routed and holds only tea volume and cinnamon price. S03, CO1, X02 and
+    M01 all reported a full, grounded answer that read as half-failed. Telling
+    the reader a question went unanswered when it was answered is the same class
+    of error as omitting a limit that was real -- both misdescribe the answer.
     """
     gaps: list[str] = []
     for agent, output in sorted(declined.items()):
         summary = (output.get("summary") or "").strip()
+        if summary and _covered_by_another_finding(query, summary, contributing):
+            log.info("%s declined, but another finding covered it; not surfacing as a gap", agent)
+            continue
         gaps.append(summary or f"{_topic_of(agent)} had nothing to add")
     return gaps
+
+
+def _covered_by_another_finding(
+    query: str, decline: str, contributing: dict[AgentName, AgentOutput]
+) -> bool:
+    """Did a contributing finding already answer what this decline declines?
+
+    The decline's *subject* is what it shares with the question: "rubber" and
+    "export" for "no sourced export volume series is held for rubber" asked
+    against "how concentrated are Sri Lanka's rubber export destinations?". When
+    every one of those words appears in some contributing finding, that finding
+    covered the same ground, and the decline describes a gap in one agent's own
+    sources rather than a gap in the answer.
+
+    Deliberately not the word-overlap ratio `_gap_already_stated` uses. That one
+    asks "has the answer already said this?" of two texts that are both phrased
+    as declines, so a loose threshold is right. This asks whether a *finding*
+    covers a *decline* -- two texts with almost nothing in common except the
+    subject -- so it matches on the subject alone, and requires all of it. A
+    partial match is how "no district share is recorded for cinnamon" would get
+    swallowed by a cinnamon market-share answer that never mentions districts.
+    """
+    subject = _significant_words(query) & _significant_words(decline)
+    if not subject:
+        return False
+    for output in contributing.values():
+        covered = " ".join(
+            [
+                output.get("summary") or "",
+                *(str(item.get("claim", "")) for item in output.get("evidence") or []),
+            ]
+        ).lower()
+        if all(word in covered for word in subject):
+            return True
+    return False
+
+
+def _significant_words(text: str) -> set[str]:
+    """Words long enough to carry a subject. Same filter as `_gap_already_stated`."""
+    return {word for word in re.findall(r"[a-z]+", text.lower()) if len(word) > 3}
 
 
 OUT_OF_SCOPE_PREFIX = "out_of_scope: "
@@ -525,7 +594,13 @@ def _out_of_scope_gaps(state: AgentState) -> list[str]:
         text = str(error)
         if text.startswith(OUT_OF_SCOPE_PREFIX):
             note = text[len(OUT_OF_SCOPE_PREFIX) :].strip()
-            gaps.append(note or "part of the question names a sector CeyNex does not cover")
+            # Belt to the router's braces. Both routers now populate `notes`, so
+            # this should never fire -- and when it does, it must not assert a
+            # *sector* was named. It used to, and with `llm_route` supplying no
+            # note it fired on every LLM-router out-of-scope verdict: "who was
+            # Leonhard Euler?" was told it had named a sector CeyNex does not
+            # cover (live 2026-09-03).
+            gaps.append(note or "part of the question is outside what CeyNex covers")
     return gaps
 
 

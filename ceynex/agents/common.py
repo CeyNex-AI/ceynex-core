@@ -27,7 +27,7 @@ from ceynex.contracts import (
     KnowledgeGraphClientProtocol,
     LLMReasoningClientProtocol,
 )
-from ceynex.orchestrator.confidence import aggregate_confidence
+from ceynex.orchestrator.confidence import aggregate_confidence, clamp
 
 # --- what the agents are given -------------------------------------------
 
@@ -314,11 +314,19 @@ async def finish(
     assumptions: list[str],
     forecast: list[ForecastPoint] | None = None,
     relevance: float | None = None,
+    confidence: float | None = None,
 ) -> dict[str, Any]:
     """Attach prose, derive confidence, and return the partial state.
 
     Returns only the keys this agent changed, so LangGraph's reducers merge
     parallel branches without one agent clobbering another's output.
+
+    `confidence` overrides the generic derivation below for an agent that knows
+    something the generic one cannot see -- `_confidence` scores on how much was
+    found (figures present, evidence count), which cannot tell a backtested model
+    from a naive baseline because both produce figures and evidence. It must
+    still come from `orchestrator/confidence.py`'s primitives; that module's
+    docstring is the one place the formula is allowed to live.
     """
     prose = ""
     if summary:
@@ -343,7 +351,11 @@ async def finish(
         figures=figures,
         assumptions=assumptions,
         evidence=evidence,
-        confidence=_confidence(agent, figures, evidence, degraded, weight),
+        confidence=(
+            _confidence(agent, figures, evidence, degraded, weight)
+            if confidence is None
+            else clamp(confidence)
+        ),
         degraded=degraded,
     )
     if forecast:
