@@ -32,12 +32,24 @@ class DatasetUnavailableError(RuntimeError):
     """Raised when the unified dataset cannot be read."""
 
 
+# How each measured column collapses many rows in a year into one number.
+#
+# Values and volumes are extensive: partner rows add up to a national total.
+# A price is intensive and does not -- summing 71 per-partner unit values gives a
+# number in no unit at all, which is exactly the bug this table exists to stop.
+# `data/align.py` states the same rule for the resampling path, and
+# `DataCleaner.resample` implements it; this is the read side of one rule.
+_EXTENSIVE_TARGETS = frozenset({"export_value_usd", "export_volume"})
+MEASURED_TARGETS = _EXTENSIVE_TARGETS | {"price"}
+
+
 def annual_series(
     item: str,
     *,
     sector: str | None = None,
     target: str = "export_value_usd",
     partner_iso3: str | None = None,
+    source_id: str | None = None,
     dsn: str | None = None,
 ) -> pd.DataFrame:
     """One row per year for an item: `period`, `value`.
@@ -47,8 +59,21 @@ def annual_series(
     those with per-partner rows would double-count; the filter below keeps the
     per-partner rows when any exist and falls back to the world rows when they do
     not, rather than adding the two together.
+
+    **`price` is averaged, not summed** -- volume-weighted where the same rows
+    carry a volume, unweighted where they do not. Found live 2026-09-03: cinnamon
+    prices in `fact_trade` are UN Comtrade per-partner unit values already in
+    USD/kg, roughly 6-16 of them per partner, and summing the 71 partner rows for
+    2015 produced 854.01, served to the user as "854.01 USD/kg". The mean is
+    12.03, which is what cinnamon costs.
+
+    `source_id` narrows the series to one source. Without it this blends every
+    source holding a price for the item -- a Comtrade unit value and a FAOSTAT
+    producer price are different measurements of different things, and averaging
+    across them produces a number neither source would recognise, attributed in
+    the evidence panel to whichever one the caller named.
     """
-    if target not in {"export_value_usd", "export_volume", "price"}:
+    if target not in MEASURED_TARGETS:
         raise ValueError(f"{target} is not a measured column on fact_trade")
 
     conditions = ["frequency = %(frequency)s", "lower(item) = lower(%(item)s)", f"{target} IS NOT NULL"]
@@ -60,13 +85,35 @@ def annual_series(
     if partner_iso3:
         conditions.append("partner_iso3 = %(partner)s")
         params["partner"] = partner_iso3
+    if source_id:
+        conditions.append("source_id = %(source_id)s")
+        params["source_id"] = source_id
+
+    if target in _EXTENSIVE_TARGETS:
+        aggregate = f"sum({target})::float8"
+    else:
+        # Weighted by export_volume, so a partner taking 90% of the volume moves
+        # the national price 90% as much as it should.
+        #
+        # Only when *every* row in the year carries a volume (`count(w) =
+        # count(*)`): weighting a subset would drop the unweighted rows from the
+        # average entirely, so one large partner with a missing volume would
+        # vanish from the year's price rather than merely be weighted oddly. A
+        # plain mean over all the rows is the honest fallback, and it is what
+        # single-row-per-year sources like FAOSTAT get anyway.
+        aggregate = (
+            f"(CASE WHEN count(export_volume) = count(*) AND sum(export_volume) > 0 "
+            f"      THEN sum({target} * export_volume) / sum(export_volume) "
+            f"      ELSE avg({target}) "
+            f" END)::float8"
+        )
 
     where = " AND ".join(conditions)
     sql = f"""
         WITH matched AS (SELECT * FROM fact_trade WHERE {where}),
              per_partner AS (SELECT * FROM matched WHERE partner_iso3 IS NOT NULL)
         SELECT extract(year FROM period_start)::int AS period,
-               sum({target})::float8               AS value
+               {aggregate}                          AS value
         FROM (
             SELECT * FROM per_partner
             UNION ALL
