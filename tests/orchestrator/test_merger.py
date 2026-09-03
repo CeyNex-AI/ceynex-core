@@ -16,6 +16,7 @@ from ceynex.orchestrator.merger import (
     dedupe_evidence,
     detect_conflicts,
     merge,
+    unanswered_from_outputs,
 )
 
 AGENT_NAMES = (
@@ -444,6 +445,105 @@ async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     assert "Exports are projected at USD 224.7m." in result.answer
     assert any("No registered national export-value model" in gap for gap in result.unanswered)
     assert "Not covered: No registered national export-value model" in result.answer
+
+
+async def test_a_decline_another_finding_already_answered_is_not_a_gap():
+    """Regression, found live 2026-09-03: S03 came back correct and complete from
+    the graph -- rubber concentration, HHI, market count -- and still carried "No
+    sourced export volume series is held for rubber" in `unanswered`, because
+    agriculture_commodity was routed too and holds only tea volume. The same shape
+    hit CO1 (coconut), X02 and M01. A correct answer read as half-failed.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Rubber export destinations are moderately concentrated: Germany takes 18.2%, HHI 0.09 across 62 markets in 2025.",
+            figures={"hhi": 0.09},
+            evidence=[ev("KG", "Rubber export value to Germany was USD 62,113,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No sourced export volume series is held for rubber.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="How concentrated are Sri Lanka's rubber export destinations?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "not covered" not in result.answer.lower()
+    assert "Germany takes 18.2%" in result.answer
+
+
+async def test_a_decline_nothing_else_covered_is_still_a_gap():
+    """The other half of the rule. `agriculture_commodity` correctly refuses a
+    district question (no sourced district share exists), and the market-share
+    answer alongside it does not cover districts -- so the reader must be told.
+    Suppressing this would be the failure `_out_of_scope_gaps` was written to
+    prevent: omitting a real limit is as wrong as inventing a figure.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Cinnamon export value was USD 312m in 2025, with Mexico the largest market at 21.4%.",
+            figures={"share": 0.214},
+            evidence=[ev("KG", "Cinnamon export value to Mexico was USD 66,768,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="The graph records cinnamon producing districts, but has no sourced numerical district share.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Which district contributes the largest share of cinnamon production?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert any("district share" in gap for gap in result.unanswered)
+    assert "district" in result.answer.lower()
+
+
+async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
+    """`merge()` and this helper compute the same list by two paths, and the API
+    route uses the helper. They diverged once already -- the bug this function's
+    own docstring records -- so the suppression has to land in both or a correct
+    answer keeps its spurious caveat in the API response only.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Rubber export destinations are moderately concentrated: Germany takes 18.2%.",
+            figures={"hhi": 0.09},
+            evidence=[ev("KG", "Rubber export value to Germany was USD 62,113,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No sourced export volume series is held for rubber.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    final = state(
+        query="How concentrated are Sri Lanka's rubber export destinations?",
+        outputs=outputs,
+        route=["export_analytics", "agriculture_commodity"],
+    )
+    result = await merge(final, FakeLLMClient(available=False))
+
+    assert unanswered_from_outputs(final) == result.unanswered == []
 
 
 async def test_everything_failing_says_so_rather_than_returning_nothing():
