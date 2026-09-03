@@ -99,6 +99,76 @@ def test_a_registered_model_is_served_instead_of_the_baseline():
     assert not any("baseline" in a.lower() for a in out["assumptions"])
 
 
+def test_an_apparel_model_is_served_and_not_only_the_agriculture_ones():
+    """Regression. `_load_registered_model` pinned `sector="agriculture"`, and the
+    registry lays models out as {sector}/{item}/{target}/{version} -- so
+    apparel_knit and apparel_woven, registered under sector="apparel", were
+    unreachable from this node and every apparel forecast fell through to the
+    drift baseline whatever the registry held. Invisible on the live system,
+    where no models were deployed at all and both sectors looked identical.
+    """
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        TimeSeriesModel(sector="apparel", item="apparel_knit").fit(frame),
+        metrics={"mape": 0.15, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast knitted apparel export value for the next two years")
+
+    assert any("model registry" in a for a in out["assumptions"]), out["assumptions"]
+    assert not any("baseline" in a.lower() for a in out["assumptions"])
+
+
+def test_the_best_scoring_version_wins_across_sectors():
+    """`load_best` ranks on MAPE. Removing the sector pin must not change which
+    version it picks -- an item belongs to exactly one sector either way.
+    """
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        TimeSeriesModel(sector="apparel", item="apparel_woven").fit(frame),
+        metrics={"mape": 0.30, "rmse": 1.0, "coverage": 0.8},
+    )
+    better = registry.save(
+        TimeSeriesModel(sector="apparel", item="apparel_woven").fit(frame),
+        metrics={"mape": 0.09, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run("forecast woven apparel export value next year")
+
+    assert any(better.version in a for a in out["assumptions"]), out["assumptions"]
+
+
+def test_the_drift_baseline_is_less_confident_than_a_backtested_model():
+    """`common._confidence` bases at 0.9 on the presence of figures, and a drift
+    baseline produces figures and evidence like anything else -- so live
+    2026-09-03, with no models deployed, every forecast was a drift baseline
+    served at High confidence with an 80% interval, while EVALUATION.md §3
+    advertised 5.3% MAPE for tea. SRS 3.3.4 calls this baseline the benchmark a
+    real model has to beat.
+    """
+    baseline = run()
+    assert any("drift baseline" in a for a in baseline["assumptions"]), baseline["assumptions"]
+
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        TimeSeriesModel(sector="agriculture", item="cinnamon").fit(frame),
+        metrics={"mape": 0.05, "rmse": 1.0, "coverage": 0.8},
+    )
+    registered = run()
+
+    assert baseline["confidence"] < registered["confidence"]
+
+
+def test_the_drift_baseline_still_answers_rather_than_refusing():
+    """Lower confidence, not no answer. The baseline exists so the node stays
+    useful before anything is registered (SRS 3.4.3).
+    """
+    out = run()
+
+    assert out["forecast"], "the baseline must still produce points"
+    assert out["confidence"] > 0.3, "a naive baseline is weak, not worthless"
+
+
 def test_tea_export_volume_uses_the_registered_kg_model_without_kg_history():
     frame = pd.DataFrame({"period": YEARS, "value": VALUES})
     registry.save(

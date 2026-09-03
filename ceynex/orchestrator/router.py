@@ -63,19 +63,83 @@ FORECAST_WORDS = (
     "forecast", "predict", "projection", "outlook", "next year", "next quarter",
     "next month", "will ", "future", "expected", "going to",
 )
+# Stems, not whole words, wherever a question is as likely to use the adjective
+# as the noun. "concentration" alone missed "how concentrated are…" and nothing
+# matched "diversified" at all, so X04 and X06 -- both squarely analytics
+# questions -- matched no keyword group whatsoever and were flagged as naming
+# nothing CeyNex covers (found 2026-09-03).
 ANALYTICS_WORDS = (
-    "trend", "growth", "cagr", "market share", "concentration", "district",
+    "trend", "growth", "cagr", "market share", "concentrat", "diversif", "district",
     "fastest", "largest", "top ", "which country", "which importing",
     "compare", "comparison", "versus", " vs ", "over the last", "historical",
+)
+
+# A question can compare Sri Lanka's export *sectors* without naming a single
+# commodity or garment. "Which of Sri Lanka's export sectors is most concentrated
+# in a single market?" is about agriculture and apparel both, and neither
+# AGRICULTURE_WORDS nor APPAREL_WORDS sees it. Measured live 2026-09-03: it was
+# answered about tea alone at confidence 0.9, contradicting itself in one
+# sentence ("most concentrated" … "relatively diversified"). Under-fanning is the
+# dangerous direction -- a confident answer to half the question.
+#
+# Plural "sectors" on purpose: "the apparel sector" is a single-sector question
+# and must not be dragged across both.
+CROSS_SECTOR_WORDS = (
+    "export sector", "sectors", "export base", "across sector",
+    "which sector", "each sector", "either sector",
 )
 
 # SRS 2.4 fixes scope. Naming one of these is a strong signal the question is
 # outside it — but only when nothing in scope is named too, since "should we
 # prioritise gems or tea" is still answerable about tea.
+#
+# The freight entries are deliberately two-word where the single word would
+# over-match: a bare "shipping" collides with phrasings like "drop-shipping
+# apparel", where the question really is about apparel. `keyword_route` pads the
+# query with spaces, which is what lets the existing "fish " entry rely on its
+# trailing space. There is no freight, shipping-cost or logistics data anywhere
+# in CeyNex, so naming freight here is what makes the refusal say *why* rather
+# than falling through to the generic "names nothing CeyNex covers" branch.
+#
+# Kept to the smallest set with the same matching power, because matching is
+# substring-based and every match is named in the note: "shipping cost" already
+# catches "shipping costs", and "freight" already catches "ocean/sea freight".
+# Listing the longer forms too would only make the note name one exclusion twice
+# ("the question is about freight, ocean freight").
 OUT_OF_SCOPE_WORDS = (
     "gem", "sapphire", "tourism", "tourist", "remittance", "fisheries", "fish ",
     "cement", "petroleum", "software export", "it export", "bpo",
+    "freight", "shipping cost", "container rate", "logistics cost",
 )
+
+# The sentence every out-of-scope note ends with, and the two whole-note shapes
+# built from it. One copy, because two copies drift — and they did: `keyword_route`
+# built these notes and `llm_route` built none, so every LLM-router out-of-scope
+# verdict reached `merger.py` with an empty note and fell through to its generic
+# fallback, telling the user a sector had been named when none was. Measured live
+# 2026-09-03 on "how are shipping costs affecting Sri Lankan exporters?", "who was
+# Leonhard Euler?" and "what were Sri Lanka's tea exports in 2035?" alike.
+SCOPE_SENTENCE = (
+    "Scope is agriculture (tea, cinnamon, rubber, coconut) and apparel "
+    "(HS 61/62) exports — SRS 2.4"
+)
+NO_TOPIC_NOTE = f"the question does not name anything CeyNex covers. {SCOPE_SENTENCE}"
+MIXED_SCOPE_NOTE = f"part of the question is outside what CeyNex covers. {SCOPE_SENTENCE}"
+
+
+def named_out_of_scope_note(named: str, *, partly_in_scope: bool) -> str:
+    """The most specific note of the three: it can name what was excluded.
+
+    Only `keyword_route` can produce this — it knows *which* word matched. The
+    LLM router only reports that something was out of scope, so it falls back to
+    the two generic notes above.
+    """
+    lead = (
+        f"the question also asks about {named}, which CeyNex does not cover"
+        if partly_in_scope
+        else f"the question is about {named}, which CeyNex does not cover"
+    )
+    return f"{lead}. {SCOPE_SENTENCE}"
 
 
 @dataclass
@@ -94,6 +158,15 @@ class RouteDecision:
     # merger.py uses this to decide whether a routed agent's output is a real
     # finding or noise that happens to have run.
     no_topic_recognized: bool = False
+    # Whether the question left an in-scope half worth answering. `no_topic` is
+    # one way to have none ("who is Euler"); naming *only* an excluded topic is
+    # the other ("what is the outlook for gem exports"), and the merger has to
+    # treat them the same. It did not: the suppression keyed on `no_topic`
+    # alone, so a pure gems question was answered with a confident tea forecast
+    # -- the same failure the suppression exists to prevent, one branch over.
+    # True whenever `out_of_scope` is and nothing in scope was named, so it is a
+    # superset of `no_topic_recognized`.
+    nothing_in_scope: bool = False
     reason: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -115,6 +188,9 @@ def keyword_route(query: str) -> RouteDecision:
     wants_simulation = _any(lowered, SIMULATION_WORDS) or _any(lowered, POLICY_WORDS)
     wants_forecast = _any(lowered, FORECAST_WORDS)
     wants_analytics = _any(lowered, ANALYTICS_WORDS)
+    # Only meaningful when the question names neither sector explicitly -- once it
+    # does, that naming is the better signal and this adds nothing.
+    hits_cross_sector = _any(lowered, CROSS_SECTOR_WORDS)
 
     # Flagged whenever an uncovered sector is named, in-scope words present or
     # not. Suppressing the flag when the query also names tea or apparel is what
@@ -132,6 +208,7 @@ def keyword_route(query: str) -> RouteDecision:
     no_topic_recognized = not (
         hits_agriculture
         or hits_apparel
+        or hits_cross_sector
         or wants_simulation
         or wants_forecast
         or wants_analytics
@@ -144,7 +221,9 @@ def keyword_route(query: str) -> RouteDecision:
         sectors.append("agriculture")
     if hits_apparel:
         sectors.append("apparel")
-    if len(sectors) == 2:
+    # Naming both sectors and naming neither-but-comparing-sectors are the same
+    # question shape: the answer has to span both to be an answer at all.
+    if len(sectors) == 2 or (hits_cross_sector and not sectors):
         sectors = ["cross_sector", "agriculture", "apparel"]
     if wants_simulation and "macro" not in sectors:
         sectors.append("macro")
@@ -167,8 +246,18 @@ def keyword_route(query: str) -> RouteDecision:
     if hits_apparel and not wants_simulation:
         relevance["apparel_manufacturing"] = 1.0
 
+    # Below the 1.0 an explicitly named sector earns: the question is about both
+    # sectors, but it named neither, so neither agent is the centre of it.
+    # `setdefault` because the simulation branch above already seeds both at 0.6
+    # for the same "no sector named" case, and that weight is its to set.
+    if hits_cross_sector and not (hits_agriculture or hits_apparel):
+        relevance.setdefault("agriculture_commodity", 0.7)
+        relevance.setdefault("apparel_manufacturing", 0.7)
+
     if wants_forecast:
-        relevance["forecast"] = 0.9 if (hits_agriculture or hits_apparel) else 0.7
+        relevance["forecast"] = (
+            0.9 if (hits_agriculture or hits_apparel or hits_cross_sector) else 0.7
+        )
 
     # Export Analytics answers from Cypher (SRS 3.1.6), so it can contribute
     # market share, concentration and growth to any question naming a sector or
@@ -185,7 +274,7 @@ def keyword_route(query: str) -> RouteDecision:
     # without adding information.
     if wants_analytics:
         relevance["export_analytics"] = 1.0
-    elif (hits_agriculture or hits_apparel) and not wants_simulation:
+    elif (hits_agriculture or hits_apparel or hits_cross_sector) and not wants_simulation:
         relevance["export_analytics"] = 0.7
     elif not relevance:
         relevance["export_analytics"] = 0.6
@@ -195,7 +284,10 @@ def keyword_route(query: str) -> RouteDecision:
         relevance[DEFAULT_AGENT] = 0.5
 
     route = [agent for agent in ALL_AGENTS if agent in relevance]
-    reason = _explain(hits_agriculture, hits_apparel, wants_simulation, wants_forecast, wants_analytics)
+    reason = _explain(
+        hits_agriculture, hits_apparel, hits_cross_sector,
+        wants_simulation, wants_forecast, wants_analytics,
+    )
 
     decision = RouteDecision(
         route=route,
@@ -204,24 +296,21 @@ def keyword_route(query: str) -> RouteDecision:
         method="keyword",
         out_of_scope=out_of_scope,
         no_topic_recognized=no_topic_recognized,
+        # `partly_in_scope` is the same test one level up: an excluded topic
+        # alongside tea or apparel leaves a half to answer, an excluded topic
+        # alone does not.
+        nothing_in_scope=out_of_scope
+        and not (hits_agriculture or hits_apparel or hits_cross_sector),
         reason=reason,
     )
     if named_out_of_scope:
-        named = ", ".join(sorted(set(named_out_of_scope)))
-        lead = (
-            f"the question also asks about {named}, which CeyNex does not cover"
-            if partly_in_scope
-            else f"the question is about {named}, which CeyNex does not cover"
-        )
         decision.notes.append(
-            f"{lead}. Scope is agriculture (tea, cinnamon, rubber, coconut) and "
-            "apparel (HS 61/62) — SRS 2.4"
+            named_out_of_scope_note(
+                ", ".join(sorted(set(named_out_of_scope))), partly_in_scope=partly_in_scope
+            )
         )
     elif no_topic_recognized:
-        decision.notes.append(
-            "the question does not name anything CeyNex covers. Scope is agriculture "
-            "(tea, cinnamon, rubber, coconut) and apparel (HS 61/62) exports — SRS 2.4"
-        )
+        decision.notes.append(NO_TOPIC_NOTE)
     return decision
 
 
@@ -229,7 +318,9 @@ def _any(haystack: str, needles: tuple[str, ...]) -> bool:
     return any(needle in haystack for needle in needles)
 
 
-def _explain(agri: bool, apparel: bool, sim: bool, forecast: bool, analytics: bool) -> str:
+def _explain(
+    agri: bool, apparel: bool, cross_sector: bool, sim: bool, forecast: bool, analytics: bool
+) -> str:
     parts = []
     if agri and apparel:
         parts.append("names both sectors")
@@ -237,6 +328,8 @@ def _explain(agri: bool, apparel: bool, sim: bool, forecast: bool, analytics: bo
         parts.append("names agriculture")
     elif apparel:
         parts.append("names apparel")
+    elif cross_sector:
+        parts.append("compares sectors without naming one")
     if sim:
         parts.append("asks about a policy or currency shock")
     if forecast:
@@ -260,6 +353,13 @@ The agents:
 Rules:
 - Return at least one agent. Never an empty list.
 - A question spanning both sectors gets both sector agents.
+- A question comparing Sri Lanka's export SECTORS while naming no commodity and no garment
+  spans both sectors: return agriculture_commodity AND apparel_manufacturing AND
+  export_analytics, with sectors ["cross_sector"]. "Which of Sri Lanka's export sectors is
+  most concentrated in a single market?", "Is Sri Lanka's export base becoming more or less
+  diversified across sectors?" and "Which sector should Sri Lanka prioritise?" are all three
+  agents, NOT export_analytics alone -- on its own it answers about whichever single
+  commodity it defaults to and calls that the answer to a question about every sector.
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
 - ANY question about a foreign government's or trade bloc's trade policy, trade strategy, tariffs, non-tariff measures, preferences, market access or priority markets gets trade_economics -- INCLUDING when it only asks what that policy SAYS and simulates nothing. export_analytics holds only Sri Lanka's own trade flows and cannot answer any of them.
   ADD the sector agent too whenever such a question names goods: "What non-tariff measures does the EU apply to spices?" is trade_economics AND agriculture_commodity; "Which trade agreement gives Sri Lankan cinnamon preferential access?" is trade_economics AND agriculture_commodity. trade_economics alone is right only when no commodity or garment is named at all, as in "What does India's Foreign Trade Policy say about imports from Sri Lanka?".
@@ -329,6 +429,17 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     # the "no topic recognised" case, same distinction keyword_route makes.
     no_topic_recognized = out_of_scope and not any(s in ("agriculture", "apparel") for s in sectors)
 
+    # Parity with `keyword_route`. `graph.py` turns `notes[0]` into the
+    # `out_of_scope:` error the merger reads back, so leaving this empty is not a
+    # missing nicety -- it is the difference between the user being told what
+    # CeyNex actually covers and being told, falsely, that they named an excluded
+    # sector. `keyword_route`'s more specific "names gems/tourism" note has no
+    # equivalent here: the LLM reports *that* something is out of scope, never
+    # which word did it.
+    notes: list[str] = []
+    if out_of_scope:
+        notes.append(NO_TOPIC_NOTE if no_topic_recognized else MIXED_SCOPE_NOTE)
+
     return RouteDecision(
         route=[agent for agent in ALL_AGENTS if agent in route],
         sectors=sectors or fallback.sectors,
@@ -336,7 +447,13 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         method="llm",
         out_of_scope=out_of_scope,
         no_topic_recognized=no_topic_recognized,
+        # Identical here: `no_topic_recognized` above is already derived as
+        # "out of scope and no in-scope sector named", which is what
+        # `nothing_in_scope` means. The two only diverge in `keyword_route`,
+        # which can additionally see that an excluded *word* matched.
+        nothing_in_scope=no_topic_recognized,
         reason=str(parsed.get("reason", ""))[:200],
+        notes=notes,
     )
 
 

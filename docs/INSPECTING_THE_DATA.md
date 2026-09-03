@@ -7,6 +7,14 @@ out what is wrong when something looks wrong.
 and the outputs shown are real. If you run one and get a different answer, that
 is information — either the data moved or something broke.
 
+> The row counts below (4,625 `fact_trade` rows, 4,625 `EXPORTS_TO` edges,
+> 2015–2024) are that run's numbers and have since moved: the deployed backend
+> was re-ingested and covers **2015–2025**, verified live 2026-09-03. Expect
+> larger counts there, and a fresh local `make ingest` to land somewhere between.
+> **What has to hold is the relationship between them, not the value** — the
+> `fact_trade` count and the `EXPORTS_TO` count must still match, and §5's health
+> check is written that way for exactly this reason.
+
 Companion documents: [DATA_SOURCES.md](DATA_SOURCES.md) explains where the data
 came from; this one is about looking at it once it is there.
 

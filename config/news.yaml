@@ -45,18 +45,24 @@ gdelt:
   # GDELT publishes no rate limit in its docs, but it enforces one and will tell
   # you so: the 429 body reads "Please limit requests to one every 5 seconds".
   #
-  # Ten, not the five they state. Measured against the live API from the
-  # deployed VM: at 5s, eight of fourteen topics collected 429s; at 6s, six did.
-  # Whatever GDELT actually meters, it is not a simple gap between consecutive
-  # requests — most likely a window over a longer period, which a fixed gap
-  # cannot satisfy at the boundary.
+  # Twenty, not the five they state. Measured against the live API from the
+  # deployed VM: at 5s, eight of fourteen topics collected 429s; at 6s, six did;
+  # at 10s, seven did. Whatever GDELT actually meters, it is not a simple gap
+  # between consecutive requests — most likely a window over a longer period,
+  # which a fixed gap cannot satisfy at the boundary.
   #
-  # The cost is nothing: 28 calls at 10s is ~5 minutes of an hour, and the
+  # 5 -> 6 -> 10 barely moved the failure count, which is the tell: the binding
+  # constraint is requests-per-window, not the gap itself, so only a step big
+  # enough to thin the window helps. The failures also cluster at the *end* of a
+  # cycle (the last three topics fail consecutively) rather than scattering
+  # through it — a cumulative quota running out, not an unlucky gap.
+  #
+  # The cost is nothing: 28 calls at 20s is ~9 minutes of an hour, and the
   # refresher is the only thing on this budget that runs unattended. Interactive
   # searches fail fast to the vector store instead of queueing (see
   # routes/news.py's THROTTLE_WAIT_S), so a wider gate does not slow a user down
   # — it just means live results are rarer and indexed ones more common.
-  min_interval_s: 10.0
+  min_interval_s: 20.0
 
   request_timeout_s: 6.0
 
@@ -114,8 +120,8 @@ refresh:
   enabled: true
 
   # Hourly. The binding constraint is not the API's limit (there isn't one
-  # published) but our own 5 s gate: 28 calls at 5 s apart is ~140 s of work per
-  # cycle, ~4% of the hour, leaving the rest of the budget for interactive
+  # published) but our own gate: 28 calls at 20 s apart is ~560 s of work per
+  # cycle, ~16% of the hour, leaving the rest of the budget for interactive
   # searches which fire on every submitted query.
   interval_minutes: 60
 
@@ -123,10 +129,13 @@ refresh:
   # contend for the lock at the same instant every hour, forever.
   jitter_seconds: 300
 
-  # ~6x the expected 140 s of work. Too short and a slow cycle loses the lock
+  # ~3x the expected 560 s of work. Too short and a slow cycle loses the lock
   # mid-flight and the other worker duplicates it; too long and a crashed holder
-  # blocks refreshes for that long.
-  lock_ttl_seconds: 900
+  # blocks refreshes for that long. Raised with min_interval_s: at 20 s spacing
+  # a cycle that hits any retries can run past the old 900 s, and an expired
+  # lock means both uvicorn workers refresh the same topics against a rate
+  # limiter that is already the binding constraint.
+  lock_ttl_seconds: 1800
 
   startup_delay_seconds: 20
 

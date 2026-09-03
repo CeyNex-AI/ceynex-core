@@ -9,6 +9,7 @@ import pytest
 from ceynex.contracts import AgentOutput, Evidence, failed_output, new_state
 from ceynex.llm import FakeLLMClient
 from ceynex.orchestrator.merger import (
+    MERGE_SYSTEM,
     NO_TOPIC_MARKER,
     OUT_OF_SCOPE_PREFIX,
     _dq_severities_from_evidence,
@@ -16,6 +17,7 @@ from ceynex.orchestrator.merger import (
     dedupe_evidence,
     detect_conflicts,
     merge,
+    unanswered_from_outputs,
 )
 
 AGENT_NAMES = (
@@ -402,6 +404,20 @@ async def test_a_mixed_out_of_scope_question_still_gets_its_real_answer():
     assert result.agents_used == ["agriculture_commodity"]
 
 
+async def test_an_empty_out_of_scope_note_no_longer_claims_a_sector_was_named():
+    """Belt to the router's braces (both routers now populate `notes`). When the
+    fallback does fire it must not invent a reason: found live 2026-09-03, an
+    empty note made "who was Leonhard Euler?" and "how are shipping costs
+    affecting exporters?" both answer "part of the question names a sector CeyNex
+    does not cover" -- neither names any sector.
+    """
+    llm = FakeLLMClient(response="")
+    result = await merge(state(outputs={}, route=[], errors=[OUT_OF_SCOPE_PREFIX]), llm)
+
+    assert result.unanswered == ["part of the question is outside what CeyNex covers"]
+    assert "names a sector" not in result.answer
+
+
 async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     """Regression: a real "cinnamon exports outlook" question was narrated as
     "uncertain due to conflicting findings" -- one analysis gave a real
@@ -430,6 +446,202 @@ async def test_an_honest_refusal_reads_as_a_gap_not_a_conflicting_finding():
     assert "Exports are projected at USD 224.7m." in result.answer
     assert any("No registered national export-value model" in gap for gap in result.unanswered)
     assert "Not covered: No registered national export-value model" in result.answer
+
+
+async def test_a_decline_another_finding_already_answered_is_not_a_gap():
+    """Regression, found live 2026-09-03: S03 came back correct and complete from
+    the graph -- rubber concentration, HHI, market count -- and still carried "No
+    sourced export volume series is held for rubber" in `unanswered`, because
+    agriculture_commodity was routed too and holds only tea volume. The same shape
+    hit CO1 (coconut), X02 and M01. A correct answer read as half-failed.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Rubber export destinations are moderately concentrated: Germany takes 18.2%, HHI 0.09 across 62 markets in 2025.",
+            figures={"hhi": 0.09},
+            evidence=[ev("KG", "Rubber export value to Germany was USD 62,113,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No sourced export volume series is held for rubber.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="How concentrated are Sri Lanka's rubber export destinations?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "not covered" not in result.answer.lower()
+    assert "Germany takes 18.2%" in result.answer
+
+
+async def test_a_decline_nothing_else_covered_is_still_a_gap():
+    """The other half of the rule. `agriculture_commodity` correctly refuses a
+    district question (no sourced district share exists), and the market-share
+    answer alongside it does not cover districts -- so the reader must be told.
+    Suppressing this would be the failure `_out_of_scope_gaps` was written to
+    prevent: omitting a real limit is as wrong as inventing a figure.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Cinnamon export value was USD 312m in 2025, with Mexico the largest market at 21.4%.",
+            figures={"share": 0.214},
+            evidence=[ev("KG", "Cinnamon export value to Mexico was USD 66,768,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="The graph records cinnamon producing districts, but has no sourced numerical district share.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Which district contributes the largest share of cinnamon production?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert any("district share" in gap for gap in result.unanswered)
+    assert "district" in result.answer.lower()
+
+
+async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
+    """`merge()` and this helper compute the same list by two paths, and the API
+    route uses the helper. They diverged once already -- the bug this function's
+    own docstring records -- so the suppression has to land in both or a correct
+    answer keeps its spurious caveat in the API response only.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Rubber export destinations are moderately concentrated: Germany takes 18.2%.",
+            figures={"hhi": 0.09},
+            evidence=[ev("KG", "Rubber export value to Germany was USD 62,113,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No sourced export volume series is held for rubber.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    final = state(
+        query="How concentrated are Sri Lanka's rubber export destinations?",
+        outputs=outputs,
+        route=["export_analytics", "agriculture_commodity"],
+    )
+    result = await merge(final, FakeLLMClient(available=False))
+
+    assert unanswered_from_outputs(final) == result.unanswered == []
+
+
+# --- a scope difference is not a disagreement ---------------------------
+
+
+def _comtrade_and_edb_outputs():
+    """The S07/S08/X02 shape: the same market, two sources, two boundaries, two
+    reference years. Both agents already declare the mismatch as their first
+    assumption -- see export_analytics.py's "separate source and boundary from
+    EDB's own combined 'Apparel' sub-category" note and apparel_manufacturing's
+    matching one.
+    """
+    return {
+        "export_analytics": output(
+            "export_analytics",
+            summary="The United States is the largest market for Sri Lankan knitted apparel, taking 41.2% of USD 1,149,365,364 in 2025.",
+            figures={"total_export_value_usd": 1_149_365_364.0, "top_partner_share": 0.412},
+            assumptions=[
+                "Apparel knit here is Comtrade's HS-code-based category, a separate source "
+                "and boundary from EDB's own combined 'Apparel' sub-category reported "
+                "elsewhere -- the two are not reconciled against each other, so they will not match."
+            ],
+            evidence=[ev("KG", "Knit apparel export value was USD 1,149,365,364 in 2025.")],
+            confidence=0.8,
+        ),
+        "apparel_manufacturing": output(
+            "apparel_manufacturing",
+            summary="Sri Lanka's apparel exports to USA: 9 years of EDB data. See figures for values by year.",
+            figures={"EDB_2024": 1_875_850_000.0},
+            assumptions=[
+                "Figures are Sri Lanka's Apparel sub-category exports only (EDB table "
+                "APPREL/APPAREL), not the broader Apparel & Textiles total, to avoid "
+                "double-counting against EDB's own aggregate table."
+            ],
+            evidence=[ev("EDB", "Sri Lanka's EDB-reported Apparel exports to USA, most recent 9 years.")],
+            confidence=0.75,
+        ),
+    }
+
+
+def test_two_sources_measuring_different_scopes_are_not_a_conflict():
+    """The figures differ by 63%, but they are not the same quantity: different
+    source, different category boundary, different year. `detect_conflicts` keys
+    on the figure name for exactly this reason, so nothing here should reach
+    `_ensure_conflicts_stated` and be appended as a disagreement.
+    """
+    assert detect_conflicts(_comtrade_and_edb_outputs()) == []
+
+
+async def test_a_scope_difference_is_not_narrated_as_a_discrepancy():
+    """Found live 2026-09-03: S07, S08 and X02 all read "…two different analyses
+    reporting export values of USD 1,149,365,364 and USD 1,875,850,000,
+    indicating a discrepancy between sources". The headline answer was right and
+    the prose spent its sentences on a reconciliation that is not owed -- the two
+    numbers measure different categories in different years, which both findings
+    say in their first assumption.
+    """
+    result = await merge(
+        state(
+            query="Which markets buy the most Sri Lankan knitted apparel?",
+            outputs=_comtrade_and_edb_outputs(),
+            route=["export_analytics", "apparel_manufacturing"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert not result.conflicts
+    lowered = result.answer.lower()
+    assert "discrepancy" not in lowered
+    assert "disagree" not in lowered
+
+
+def test_the_merge_prompt_tells_the_model_a_scope_difference_is_not_a_conflict():
+    """Rule 3 on its own commands the model to state disagreements with both
+    figures, which is why it narrated one. The qualifier has to reach the model
+    for the rule above to hold on the LLM path as well as the degraded one.
+    """
+    assert "not in conflict" in MERGE_SYSTEM
+    assert "Never call that a discrepancy between" in MERGE_SYSTEM
+
+
+async def test_a_real_numeric_conflict_is_still_stated():
+    """The qualifier must not blunt rule 3 where it belongs: two findings
+    reporting the same named quantity and disagreeing is information, and
+    `_ensure_conflicts_stated` appends it whether the model cooperates or not.
+    """
+    outputs = {
+        "export_analytics": output("export_analytics", figures={"cagr": 0.12}, confidence=0.8),
+        "apparel_manufacturing": output("apparel_manufacturing", figures={"cagr": -0.09}, confidence=0.8),
+    }
+    result = await merge(
+        state(query="How fast are apparel exports growing?", outputs=outputs),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.conflicts
+    assert "disagree" in result.answer.lower()
 
 
 async def test_everything_failing_says_so_rather_than_returning_nothing():

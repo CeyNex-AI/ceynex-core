@@ -6,6 +6,7 @@ resilience — the graph must answer when a node fails, hangs, or does not exist
 """
 
 import asyncio
+import re
 
 import pytest
 
@@ -92,6 +93,50 @@ async def test_the_route_is_recorded_in_state():
     final = await graph.ainvoke(new_state("cinnamon export trend", "u"))
     assert final["route"]
     assert all(agent in ALL_AGENTS for agent in final["route"])
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What is the outlook for Sri Lankan gem exports?",
+        "How are shipping costs affecting Sri Lankan exporters?",
+    ],
+)
+async def test_an_out_of_scope_question_is_not_answered_about_tea(query):
+    """The route is never empty, so `export_analytics` and `forecast` run and
+    default to tea (`item = intent.item or "tea"`). Their output is a real answer
+    to a question nobody asked, and the merger drops it -- but only when the
+    `out_of_scope_no_topic` marker reaches it.
+
+    Keyed on `no_topic_recognized`, the marker was absent whenever an excluded
+    topic *was* recognised, so "what is the outlook for Sri Lankan gem exports?"
+    came back with a tea export-value forecast and an 80% interval, with the
+    scope note appended after it. A confident answer to a question about a sector
+    CeyNex does not cover is worse than no answer.
+    """
+    graph = build_graph(deps(), use_llm_router=False)
+    final = await graph.ainvoke(new_state(query, "u"))
+
+    answer = final["final_answer"]
+    assert "could not be answered" in answer.lower()
+    # Neither "tea" nor a bare digit is the tell: the scope sentence names tea as
+    # something CeyNex *does* cover, and cites "HS 61/62" and "SRS 2.4". What a
+    # served answer always carries and a refusal never does is a measured
+    # quantity -- a USD value or a percentage.
+    assert not re.search(r"USD|\d+(\.\d+)?%", answer), (
+        f"a figure reached an out-of-scope answer: {answer}"
+    )
+    assert final["merged_evidence"] == []
+    assert final["final_confidence"] == pytest.approx(0.15)
+
+
+async def test_a_mixed_out_of_scope_question_still_answers_its_in_scope_half():
+    """The guard above must not swallow the half CeyNex can answer."""
+    graph = build_graph(deps(), use_llm_router=False)
+    final = await graph.ainvoke(new_state("Should Sri Lanka prioritise gems or tea next year?", "u"))
+
+    assert "tea" in final["final_answer"].lower()
+    assert "gem" in final["final_answer"].lower(), "the excluded half must still be named"
 
 
 async def test_a_cross_sector_query_fans_out_to_several_agents():

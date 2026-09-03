@@ -360,6 +360,114 @@ def test_a_price_driver_question_is_not_a_policy_lookup():
     assert _classify_shock("What is driving the recent movement in cinnamon prices?") != "policy"
 
 
+# --- a tariff question with no rate is not a shock (P08, P10) -----------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Which of Sri Lanka's largest apparel markets has the most restrictive import tariffs?",
+        "How do Japan's tariffs on Sri Lankan tea compare with Germany's?",
+    ],
+)
+def test_a_tariff_question_with_no_rate_runs_no_simulation(query):
+    """Found live 2026-09-03. `magnitude` falls back to 5% when the question
+    carries no rate, so both of these were answered with the revenue effect of a
+    tariff move nobody proposed -- P08 at confidence 0.8, P10 with an unsolicited
+    Japan simulation in place of the Germany answer the eval set asks for.
+    Nothing in either question posits a change; they ask what the tariffs *are*.
+    """
+    out = asyncio.run(run_with(query, PolicyKG(coverage=GSP_PLUS), SpyRetriever([policy_chunk(MFN_TEXT)])))
+
+    assert out["figures"] == {}, "no rate was given, so there is no shock to report a figure for"
+    assert not any("Shock modelled: tariff" in a for a in out["assumptions"])
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_pct"),
+    [
+        ("If the United States raised tariffs on Sri Lankan apparel by 15%, what is the revenue impact?", 15.0),
+        ("What if the European Union raised tariffs on Sri Lankan tea by 10%?", 10.0),
+    ],
+)
+def test_a_tariff_question_carrying_its_own_rate_still_simulates(query, expected_pct):
+    """P14 and M03 are the controls. The rate comes from the question, so there is
+    something to simulate and the answer must still be a figure.
+    """
+    out = asyncio.run(run_with(query, PolicyKG(coverage=GSP_PLUS), SpyRetriever([policy_chunk(MFN_TEXT)])))
+
+    assert any(key.endswith("_impact_usd") for key in out["figures"]), out["figures"]
+    assert any(f"Shock modelled: tariff, magnitude {expected_pct:.1f}%" in a for a in out["assumptions"])
+
+
+def test_a_tariff_question_positing_a_change_without_a_rate_still_simulates():
+    """The default magnitude exists for this: the reader asked what *would*
+    happen and simply did not say by how much. That is a different question from
+    "what are the tariffs", which supplies no change at all.
+    """
+    out = asyncio.run(
+        run_with(
+            "What happens to apparel revenue if the United States raises tariffs?",
+            PolicyKG(coverage=GSP_PLUS),
+            SpyRetriever([policy_chunk(MFN_TEXT)]),
+        )
+    )
+
+    assert any(key.endswith("_impact_usd") for key in out["figures"])
+
+
+# --- a comparison names two destinations, and both are answered for -----
+
+
+class PerCountryPolicyKG(PolicyKG):
+    """Holds documents for some countries and not others, like the real corpus."""
+
+    def __init__(self, *, held: dict[str, tuple[str, ...]], **kwargs):
+        super().__init__(**kwargs)
+        self._held = held
+
+    async def run(self, cypher, params=None):
+        if "PolicyDocument" in cypher:
+            iso3 = (params or {}).get("iso3")
+            return [{"doc_id": d} for d in self._held.get(iso3, ())], cypher
+        return await KG.run(self, cypher, params)
+
+
+def test_a_two_country_comparison_retrieves_for_both_countries():
+    """`_destination` returned the single longest country name, so a comparison
+    could only ever anchor on one of the two -- and the other half of the
+    question was answered from the first country's documents or not at all.
+    """
+    spy = SpyRetriever([policy_chunk(MFN_TEXT)])
+    asyncio.run(
+        run_with(
+            "How do Japan's tariffs on Sri Lankan tea compare with Germany's?",
+            PolicyKG(coverage=GSP_PLUS, documents=("DEU-DOC",)),
+            spy,
+        )
+    )
+
+    anchored = {call.iso3 for call in spy.calls}
+    assert anchored == {("JPN",), ("DEU",)}, anchored
+
+
+def test_a_comparison_answers_for_the_market_it_holds_and_names_the_one_it_does_not():
+    """The partial `eval/policy_questions.yaml` specifies for P10: answer for
+    Germany, state plainly that nothing is held for Japan. Live it did neither.
+    """
+    out = asyncio.run(
+        run_with(
+            "How do Japan's tariffs on Sri Lankan tea compare with Germany's?",
+            PerCountryPolicyKG(coverage=GSP_PLUS, held={"DEU": ("DEU-TARIFF-DOC",)}),
+            SpyRetriever([policy_chunk(MFN_TEXT)]),
+        )
+    )
+
+    assert "JPN" in out["summary"], "the market with no document must be named, not silently dropped"
+    assert any("one-sided" in a for a in out["assumptions"])
+    assert out["figures"] == {}, "still a document lookup, not a simulation"
+
+
 def test_a_descriptive_question_reports_no_impact_figure():
     """The whole point of the branch. Nothing was shocked, so nothing moved."""
     out = asyncio.run(

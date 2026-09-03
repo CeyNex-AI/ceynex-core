@@ -151,9 +151,15 @@ async def _trend_answer(
     # question ("how are export volumes trending"), where defaulting to the
     # one sourced item for this kind is the existing, intended behaviour.
     if requested_item is not None and requested_item != info["item"]:
+        # Claims only what is true here: no M1 series for this item. The clause
+        # this replaced -- "only tea is covered for this question shape" -- stated
+        # one agent's coverage as the system's, and it was wrong: the graph
+        # answers rubber and coconut concentration, share and growth perfectly
+        # well, and did so in the same response (live 2026-09-03, S03/CO1). The
+        # merger drops this line entirely when another finding covered the
+        # question; it still surfaces when nothing did, which is when it is true.
         reason = (
-            f"No sourced {info['target'].replace('_', ' ')} series is available for {requested_item} -- "
-            f"only {info['item']} is covered for this question shape."
+            f"No sourced {info['target'].replace('_', ' ')} series is held for {requested_item}."
         )
         return await _unsupported_target(state, deps, reason)
     # annual_series is a synchronous psycopg call -- off the event loop via
@@ -169,6 +175,14 @@ async def _trend_answer(
         str(info["item"]),
         sector="agriculture",
         target=str(info["target"]),
+        # SERIES names the source in every evidence entry this branch emits, so
+        # the series has to come from that source. Without the filter the reader
+        # blends every source holding the target for this item, and the cinnamon
+        # price answer cited "FAOSTAT annual Sri Lanka cinnamon producer-price
+        # series" over what was really a Comtrade unit-value series (live
+        # 2026-09-03) -- a correctly-formatted citation of a number it did not
+        # describe, which is the one failure `grounding.py` cannot catch.
+        source_id=str(info["source_id"]),
         dsn=deps.dsn,
     )
     frame = _clean_series(frame)
@@ -519,9 +533,15 @@ def _clean_series(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _series_detail(info: dict[str, object]) -> str:
+    # The aggregation is part of what the figure *is*, so it belongs in the
+    # evidence detail beside the source and unit: a mean price and a summed
+    # volume are different kinds of number and a reader checking the panel
+    # against the source needs to know which one they are looking at.
+    aggregation = "annual mean" if info["target"] == "price" else "annual total"
     return (
         "unified fact_trade annual series: "
-        f"source={info['source_id']}; item={info['item']}; target={info['target']}; unit={info['unit']}"
+        f"source={info['source_id']}; item={info['item']}; target={info['target']}; "
+        f"unit={info['unit']}; aggregation={aggregation}"
     )
 
 

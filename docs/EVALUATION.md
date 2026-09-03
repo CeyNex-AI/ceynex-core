@@ -4,6 +4,23 @@ Measured on **2026-08-28** against PostgreSQL 18 and Neo4j 5.26 holding 4,625
 `fact_trade` rows and 4,625 `EXPORTS_TO` edges of live UN Comtrade data covering
 2015–2024 for HS 0902, 0906, 4001, 61 and 62.
 
+> ⚠️ **These figures predate the production re-ingest and do not describe the
+> deployed system.** Verified live on 2026-09-03: every answer from the backend
+> VM now reaches **2025** (tea export value USD 1,431,567,471 for 2025, "141
+> markets in 2025"), so `fact_trade` there covers **2015–2025** and holds more
+> than the 4,625 rows above. Coconut (HS 0801/1513) was also added to the
+> Comtrade pull on 2026-08-26 and is loaded there. A local checkout still reads
+> 4,625 rows over 2015–2024 unless you re-run `make ingest`, so treat every
+> number in this document as measuring the local stack on the date given, not
+> production. Re-measure before quoting any of it as current:
+>
+> ```sql
+> SELECT count(*), min(period_start), max(period_start) FROM fact_trade;
+> ```
+>
+> §3's model accuracy table needs the same caution for a different reason — see
+> the note there.
+
 **This supersedes the 2026-08-19 run**, which is not comparable to it. Three
 things changed in between, and the differences below are mostly attributable to
 them rather than to the orchestrator:
@@ -265,6 +282,19 @@ failed by losing data quietly rather than by raising.
 Rolling-origin backtest, expanding window, 3 folds at horizon 1, on the real
 Comtrade series (9 annual observations per item; **2018 is absent from Comtrade
 at source**, not dropped by the pipeline).
+
+> ⚠️ **This table describes the models as evaluated locally. It is not the
+> accuracy of the deployed system.** Verified live 2026-09-03: the backend VM has
+> no registered model at all, so every forecast it serves is the drift baseline
+> ("mean year-on-year change + bootstrap interval") and says so in its
+> assumptions — S05 (tea) and S10 (knit apparel) both confirmed. The artifacts
+> under `models/` are git-ignored, excluded from the build context, and excluded
+> from the deploy tar, so they reach a VM only through the `models_data` volume.
+> See `ceynex-infra/docs/12-deployment.md` for the step that puts them there.
+>
+> Quoting 5.3% MAPE for tea while the live path is a drift baseline is the
+> specific claim to avoid. Check what a host actually holds with
+> `GET /admin/models`.
 
 | Sector | Item | Model | MAPE | RMSE (USD) | Coverage |
 |---|---|---|---:|---:|---:|
