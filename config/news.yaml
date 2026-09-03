@@ -8,6 +8,22 @@ gdelt:
   # GDELT DOC 2.0 needs no API key, which is why there is no GDELT_API_KEY
   # anywhere — a placeholder would imply one is required.
 
+  # HTTPS by default, overridable per deployment with CEYNEX_GDELT_BASE_URL.
+  #
+  # The override is not hypothetical: `api.gdeltproject.org` does not serve TLS
+  # reliably. From the deployed backend VM, DNS resolves and port 80 answers
+  # normally, but every connection to :443 is reset — verified three times,
+  # spaced, while github.com and api.openai.com over TLS were fine from the same
+  # host. So the failure is that endpoint's, not the network's.
+  #
+  # Falling back to plain HTTP is a real trade and is written down rather than
+  # assumed. What crosses in clear text is the user's question and a list of
+  # public headlines; there is no key, no token and no personal data, because
+  # this API has none. The integrity risk — an injected headline — is bounded by
+  # the same rule the whole feature rests on: news is never evidence, never
+  # enters an answer, and every row links to its own source. See D11.
+  base_url: "https://api.gdeltproject.org/api/v2/doc/doc"
+
   # A week of coverage for an interactive search: long enough that a question
   # about a story from Monday still finds it, short enough that "recent" means
   # something. GDELT indexes back to 2017 but its default window is 3 months.

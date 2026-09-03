@@ -266,3 +266,12 @@ throttled: login, a user reading their own history, and the admin routes.
 - **GDELT's rate limit is undocumented and real.** It returns HTTP 429 under
   concurrent requests. `news/throttle.py` gates outbound calls to one every five
   seconds by convention, not by measurement — the actual ceiling is unknown.
+- **The deployed backend calls GDELT over plain HTTP.** `api.gdeltproject.org`
+  resets every connection to :443 from that VM while answering on :80 normally;
+  github.com and api.openai.com are reachable over TLS from the same host, so
+  the fault is that endpoint's rather than the network's.
+  `CEYNEX_GDELT_BASE_URL` in `ceynex-infra/backend/docker-compose.yml` carries
+  the override and `config/news.yaml` still defaults to https. What crosses in
+  clear text is the user's question and a list of public headlines — this API
+  has no key, no token and no account. The integrity risk is bounded by news
+  never being evidence (D11). Remove the override once :443 answers.

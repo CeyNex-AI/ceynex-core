@@ -385,7 +385,9 @@ async def _main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         # The single most useful flag here: a watchlist query GDELT silently
         # rejects looks identical to one that simply found nothing.
-        client = GdeltClient()
+        # The configured endpoint, not the default: --dry-run exists to show the
+        # calls that would actually be made, and this deployment's may be http.
+        client = GdeltClient(base_url=settings.news_base_url())
         for topic in topics:
             print(f"# {topic.id} ({topic.scope}) — {topic.label}")
             print(

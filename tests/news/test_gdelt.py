@@ -302,3 +302,38 @@ async def test_the_fixture_still_contains_the_traps_it_guards():
     ), "the malformed-date trap"
     assert any(" . " in record["title"] for record in raw["articles"]), "the tokenizer trap"
     assert any("socialimage" not in record for record in raw["articles"]), "the absent-field trap"
+
+
+# --- the endpoint ---------------------------------------------------------
+
+
+def test_the_endpoint_defaults_to_https():
+    from ceynex.settings import news_base_url
+
+    assert news_base_url().startswith("https://")
+
+
+def test_the_endpoint_can_be_overridden_per_deployment(monkeypatch):
+    """`api.gdeltproject.org` refuses TLS from some networks.
+
+    The deployed backend VM is one of them: DNS resolves, port 80 answers
+    normally, and every connection to :443 is reset — while github.com and
+    api.openai.com over TLS are fine from the same host. `config/` ships baked
+    into the image, so the value has to be settable per machine.
+    """
+    from ceynex.settings import news_base_url
+
+    monkeypatch.setenv("CEYNEX_GDELT_BASE_URL", "http://api.gdeltproject.org/api/v2/doc/doc")
+
+    assert news_base_url() == "http://api.gdeltproject.org/api/v2/doc/doc"
+
+
+async def test_the_client_calls_whatever_endpoint_it_was_given(tmp_path):
+    client, seen = client_returning(
+        ok(b'{"articles": []}'), tmp_path=tmp_path, base_url="http://example.test/doc"
+    )
+
+    await client.articles("tea")
+
+    assert str(seen[0].url).startswith("http://example.test/doc")
+    await client.close()

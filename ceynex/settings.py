@@ -213,6 +213,25 @@ def news_config() -> dict[str, Any]:
     return load_config("news")
 
 
+def news_base_url() -> str:
+    """The GDELT DOC 2.0 endpoint, env-overridable per deployment.
+
+    Normally a URL like this belongs in YAML and only in YAML — it is a tunable,
+    not a credential. This one gets an environment override because it has to
+    differ *per machine*: `api.gdeltproject.org` refuses TLS from some networks
+    (the deployed backend VM among them) while answering happily on port 80, and
+    `config/` ships baked into the image, so a committed value cannot vary by
+    host. Same reasoning as `postgres_dsn()` accepting either a URL or parts.
+    """
+    override = _env("CEYNEX_GDELT_BASE_URL")
+    if override:
+        return override
+    try:
+        return str(news_config()["gdelt"]["base_url"])
+    except (KeyError, TypeError, FileNotFoundError):
+        return "https://api.gdeltproject.org/api/v2/doc/doc"
+
+
 def policy_retrieval_enabled() -> bool:
     """Kill switch for the retrieval path, so the evaluation can measure without it.
 
