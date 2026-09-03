@@ -159,6 +159,37 @@ def test_a_wholly_excluded_sector_is_out_of_scope_but_not_topic_less(query):
     assert not decision.no_topic_recognized
 
 
+@pytest.mark.parametrize("query", [
+    "What is the outlook for Sri Lankan gem exports?",
+    "How is tourism revenue trending?",
+    "How are shipping costs affecting Sri Lankan exporters?",
+    "who is Euler",
+])
+def test_a_question_naming_nothing_in_scope_leaves_no_half_to_answer(query):
+    """`no_topic_recognized` is only one way to have no in-scope half. Naming an
+    excluded topic and nothing else is the other, and the merger has to treat the
+    two identically -- keyed on the narrower flag, "what is the outlook for Sri
+    Lankan gem exports?" was answered with a confident tea forecast and a scope
+    note stapled to the end.
+    """
+    assert keyword_route(query).nothing_in_scope
+
+
+@pytest.mark.parametrize("query", [
+    "Should Sri Lanka prioritise gems or tea next year?",
+    "How does tea compare with fisheries?",
+    "Are logistics costs hurting Sri Lankan tea exporters?",
+])
+def test_a_mixed_question_keeps_its_in_scope_half(query):
+    """The flag must stay off wherever there is something real to answer,
+    otherwise the mixed case regresses to a bare refusal.
+    """
+    decision = keyword_route(query)
+
+    assert decision.out_of_scope, "the excluded half is still flagged"
+    assert not decision.nothing_in_scope, "tea is named -- there is a half to answer"
+
+
 # --- a sector comparison naming no goods still spans both sectors -------
 
 
