@@ -199,6 +199,22 @@ def test_rubber_volume_question_declines_instead_of_answering_about_tea(monkeypa
     assert out["confidence"] == pytest.approx(0.20)
 
 
+def test_the_item_mismatch_decline_does_not_claim_only_tea_is_answerable(monkeypatch):
+    """Found live 2026-09-03. The decline used to end "only tea is covered for
+    this question shape", which states this agent's coverage as the system's --
+    and it is false: the graph answers rubber concentration, share and growth,
+    and did so in the very same response (S03). The merger drops this line when
+    another finding covered the question, but the line itself must be true on the
+    occasions it does surface.
+    """
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+
+    summary = run("How have rubber export volumes changed over the last five years?")["summary"]
+
+    assert "only tea" not in summary.lower()
+    assert "rubber" in summary.lower(), "the decline must still say which item it holds nothing for"
+
+
 def test_a_bare_cinnamon_data_question_answers_with_the_real_price_series(monkeypatch):
     """Regression, found live 2026-08-27: "do we have cinnamon data?" has no
     "price"/"production"/forecast signal for _question_kind to key off, so it
