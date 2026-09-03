@@ -17,17 +17,22 @@ explains the store, the window and why it fails open.
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ceynex import settings
+from ceynex.agents.common import parse_intent
 from ceynex.api import history, rate_limit
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.routes.auth import TokenPayload, get_optional_user
-from ceynex.api.schemas import QueryRequest, QueryResponse
+from ceynex.api.schemas import AnswerGraph, QueryRequest, QueryResponse
 from ceynex.contracts import new_state
+from ceynex.kg import queries as kg_queries
+from ceynex.kg import subgraph as kg_subgraph
 from ceynex.orchestrator.confidence import confidence_band
 from ceynex.orchestrator.merger import (
     agents_used_from_outputs,
@@ -43,6 +48,12 @@ router = APIRouter(tags=["query"])
 # it something is wrong that per-node timeouts did not catch, and a caller
 # waiting forever is worse than a clear failure.
 REQUEST_TIMEOUT_S = 25.0
+
+# What the drawable graph may add to a request that has already been answered.
+# Small on purpose: the answer is the product and the picture is an illustration
+# of it, so the illustration does not get to spend the response-time budget. Past
+# this the request returns without a graph rather than late with one.
+GRAPH_BUDGET_S = 3.0
 
 
 async def enforce_rate_limit(
@@ -122,6 +133,11 @@ async def submit_query(
     outputs = final.get("agent_outputs", {})
     confidence = float(final.get("final_confidence", 0.0))
 
+    # Before the response is built, so `elapsed_ms` below counts it. The graph
+    # is time the caller actually waited; excluding it would make the number
+    # that SRS 3.4.1 is measured against quietly optimistic.
+    graph = await _answer_graph(runtime, query, final)
+
     response = QueryResponse(
         answer=final.get("final_answer", ""),
         confidence=confidence,
@@ -142,6 +158,7 @@ async def submit_query(
         # dropped declines and out-of-scope notes from the public response
         # even though the prose answer already mentioned them correctly.
         unanswered=unanswered_from_outputs(final),
+        graph=graph,
     )
 
     if user is not None:
@@ -163,3 +180,90 @@ def _forecast_of(outputs: dict) -> list:
         if output.get("forecast"):
             return list(output["forecast"])
     return []
+
+
+# --- the drawable graph (SRS 3.1.4) -----------------------------------------
+
+
+async def _answer_graph(runtime: Runtime, query: str, final: dict) -> AnswerGraph | None:
+    """The subgraph to draw beside this answer, or None.
+
+    Three things have to hold, and the first is the important one.
+
+    **It must be an answer the graph actually produced.** A drawing is a claim
+    about where a number came from, so it is built only when the merged evidence
+    carries a `KG` entry, and never for a question that named nothing CeyNex
+    covers. A node-link diagram beside a model-derived or out-of-scope answer
+    would assert a provenance that isn't there — the same failure
+    `orchestrator/grounding.py` exists to catch in prose, and the same
+    suppression `forecast=` already applies two lines up in the caller.
+
+    **It must not cost the answer.** Everything below is inside one budget and
+    one `except`. A graph that is slow, broken, or asked of a dead Neo4j returns
+    None, and the user gets the answer without a picture.
+
+    **It must be the same graph the agents used.** See `_graph_subject`.
+    """
+    evidence = final.get("merged_evidence") or []
+    if not any(item.get("source_id") == "KG" for item in evidence):
+        return None
+    if no_topic_recognized(final):
+        return None
+
+    try:
+        return await asyncio.wait_for(
+            _build_answer_graph(runtime, query, final), timeout=GRAPH_BUDGET_S
+        )
+    except TimeoutError:
+        log.info("graph build exceeded %.1fs; answering without it", GRAPH_BUDGET_S)
+        return None
+    except Exception:  # noqa: BLE001 - an illustration must never fail an answer
+        log.warning("graph build failed; answering without it", exc_info=True)
+        return None
+
+
+async def _build_answer_graph(runtime: Runtime, query: str, final: dict) -> AnswerGraph | None:
+    item, year = await _graph_subject(runtime, query)
+    if item is None:
+        return None
+
+    built = await kg_subgraph.build_answer_subgraph(
+        runtime.kg, item=item, year=year, sectors=tuple(final.get("sectors", []))
+    )
+    if built.is_empty:
+        # An empty panel is worse than none: it reads as "the graph knows
+        # nothing about this", when the truth is that this answer's figures came
+        # from somewhere the drawing does not cover.
+        return None
+
+    return AnswerGraph(
+        nodes=[dataclasses.asdict(node) for node in built.nodes],
+        edges=[dataclasses.asdict(edge) for edge in built.edges],
+        focus_id=built.focus_id,
+        queries=built.queries,
+        truncated=built.truncated,
+    )
+
+
+async def _graph_subject(runtime: Runtime, query: str) -> tuple[str | None, int | None]:
+    """What to centre the drawing on, derived the way the agents derive it.
+
+    `AgentState` is a frozen contract with nowhere to put the item and year an
+    agent settled on, so this re-derives them rather than reading them back. That
+    is only sound if it derives them *identically*: `parse_intent` is the same
+    keyword parser `ceynex/agents/common.py` gives every agent, and the year
+    falls back to `latest_observation_year(item)` — scoped to the item, which is
+    the precedence `export_analytics` and `trade_economics` both use and the
+    thing the 2026-08-26 bug in that query's docstring was about. Drawing a
+    different year than the one analysed would put a picture that disagrees with
+    the prose right next to it.
+    """
+    intent = parse_intent(query)
+    if intent.item is None:
+        return None, None
+    if intent.year is not None:
+        return intent.item, intent.year
+
+    row, _ = await runtime.kg.run_one(*kg_queries.latest_observation_year(intent.item))
+    latest = (row or {}).get("latest_year")
+    return intent.item, int(latest) if latest is not None else None

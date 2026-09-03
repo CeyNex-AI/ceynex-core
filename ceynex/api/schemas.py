@@ -32,6 +32,53 @@ class ForecastPointItem(BaseModel):
     unit: str
 
 
+# --- the drawable graph (SRS 3.1.4, 3.1.6) ----------------------------------
+#
+# `EvidenceItem.detail` already carries the Cypher that produced each figure,
+# which makes "this was answered from the graph" checkable by anyone who reads
+# Cypher. These carry the same claim as a picture. Built by `ceynex/kg/subgraph.py`
+# from explicitly-projected labels and relationship types — see that module on
+# why `record.data()` means the shape has to be asked for rather than returned.
+
+
+class GraphNode(BaseModel):
+    #: "Country:USA" — the label plus its schema.cypher uniqueness key, not
+    #: Neo4j's elementId, which changes across a reload and so could not survive
+    #: the round trip back to /api/graph/expand.
+    id: str
+    label: str
+    name: str
+    properties: dict[str, Any] = Field(default_factory=dict)
+    focus: bool = False
+
+
+class GraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str
+    #: 0..1 within its own relationship type, for stroke width. None where the
+    #: relationship has no magnitude (CLASSIFIED_AS).
+    weight: float | None = None
+    #: The figure, formatted ("$412M"). `weight` is unit-less by the time it
+    #: arrives, so this is the only thing that can be printed on the edge.
+    label: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnswerGraph(BaseModel):
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+    focus_id: str | None = None
+    #: The Cypher behind this picture, so the drawing is as auditable as the
+    #: figures beside it.
+    queries: list[str] = Field(default_factory=list)
+    #: There is more graph than is drawn. In the response rather than inferred
+    #: from a node count, same reasoning as `degraded` — a partial view that
+    #: does not say so reads as a complete one.
+    truncated: bool = False
+
+
 class QueryResponse(BaseModel):
     answer: str
     confidence: float
@@ -46,6 +93,23 @@ class QueryResponse(BaseModel):
     route: list[str] = Field(default_factory=list)
     sectors: list[str] = Field(default_factory=list)
     unanswered: list[str] = Field(default_factory=list)
+    # Additive in the same way. None — and so no panel at all — whenever the
+    # answer did not come from the graph: a diagram beside an answer the graph
+    # did not produce would claim a provenance that isn't there.
+    graph: AnswerGraph | None = None
+
+
+class GraphFragment(BaseModel):
+    """One hop out from a clicked node — the /api/graph/expand response.
+
+    Deliberately not `AnswerGraph`: a fragment is merged into a canvas that
+    already has a focus and its own queries, and reusing the answer shape would
+    invite a caller to replace the drawing with it rather than add to it.
+    """
+
+    nodes: list[GraphNode] = Field(default_factory=list)
+    edges: list[GraphEdge] = Field(default_factory=list)
+    truncated: bool = False
 
 
 # --- news sidecar (docs/ARCHITECTURE_DELTA.md D11) --------------------------
