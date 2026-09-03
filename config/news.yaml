@@ -45,11 +45,18 @@ gdelt:
   # GDELT publishes no rate limit in its docs, but it enforces one and will tell
   # you so: the 429 body reads "Please limit requests to one every 5 seconds".
   #
-  # Six, not five. At exactly the stated interval the deployed refresher still
-  # collected 429s on eight of fourteen topics — whatever GDELT measures, it is
-  # not generous about the boundary. A second of headroom costs 14s per cycle,
-  # once an hour, and buys the difference between a full panel and half of one.
-  min_interval_s: 6.0
+  # Ten, not the five they state. Measured against the live API from the
+  # deployed VM: at 5s, eight of fourteen topics collected 429s; at 6s, six did.
+  # Whatever GDELT actually meters, it is not a simple gap between consecutive
+  # requests — most likely a window over a longer period, which a fixed gap
+  # cannot satisfy at the boundary.
+  #
+  # The cost is nothing: 28 calls at 10s is ~5 minutes of an hour, and the
+  # refresher is the only thing on this budget that runs unattended. Interactive
+  # searches fail fast to the vector store instead of queueing (see
+  # routes/news.py's THROTTLE_WAIT_S), so a wider gate does not slow a user down
+  # — it just means live results are rarer and indexed ones more common.
+  min_interval_s: 10.0
 
   request_timeout_s: 6.0
 
