@@ -1,0 +1,198 @@
+# The news sidecar — docs/ARCHITECTURE_DELTA.md D11.
+#
+# Kept out of code so a diff shows who changed what (see ceynex/settings.py's
+# module docstring). `settings.load_config` is lru_cached, so an edit here needs
+# a process restart before the API sees it.
+
+gdelt:
+  # GDELT DOC 2.0 needs no API key, which is why there is no GDELT_API_KEY
+  # anywhere — a placeholder would imply one is required.
+
+  # A week of coverage for an interactive search: long enough that a question
+  # about a story from Monday still finds it, short enough that "recent" means
+  # something. GDELT indexes back to 2017 but its default window is 3 months.
+  timespan_search: "7d"
+
+  # The trending window and its own baseline come from ONE call each. See
+  # trending.baseline_days — these two must agree or the baseline is computed
+  # over a span that was never fetched.
+  timespan_trending: "7d"
+  timespan_topic_articles: "24h"
+
+  max_records_search: 75      # GDELT's own default; the hard cap is 250
+  max_records_topic: 20
+
+  # HybridRel is GDELT's relevance ordering. It returns no *score*, only an
+  # order, which is why ceynex/news/relevance.py re-ranks locally.
+  sort: HybridRel
+
+  # GDELT publishes no rate limit. One request every five seconds is the
+  # community convention and this project is a guest on a free service, so the
+  # gate is deliberately conservative rather than tuned to what we can get away
+  # with. At this interval the ceiling is 720 calls/hour and the refresher uses
+  # 28 of them (see trending.topics — two calls per topic).
+  min_interval_s: 5.0
+
+  request_timeout_s: 6.0
+
+  # == GDELT's own minimum `timespan` granularity. A shorter TTL cannot return
+  # fresher data; it can only spend rate budget re-asking for the same answer.
+  response_cache_ttl_s: 900
+
+relevance:
+  # NOT retrieval's MIN_RERANK_SCORE (0.0). Neither half of that constant's
+  # justification transfers: it scores multi-sentence passages, this scores
+  # 5-12 word headlines that land systematically lower on the same model; and a
+  # bad policy chunk becomes an uncheckable citation while a weak headline is a
+  # visible, ignorable link in a labelled panel. Empirical, not calibrated —
+  # ceynex/news/relevance.py's docstring records the run this came from.
+  min_score: -6.0
+  limit: 8
+
+store:
+  # News accumulates forever and nothing else prunes it. 30 days keeps the
+  # collection near a few hundred thousand points on a database VM already
+  # hosting Postgres, Neo4j, Redis and ceynex_policy. Longer buys little:
+  # GDELT's own default window is 3 months, so older points cannot be
+  # re-fetched or corroborated anyway.
+  retention_days: 30
+  upsert_batch: 64
+
+  # A display filter, never a truth claim about any outlet. GDELT indexes
+  # everything, and `sourcelang:english` is not a quality filter. Empty by
+  # default: the mechanism is here because it is impossible to retrofit under
+  # demo pressure, not because anything is currently excluded.
+  blocked_domains: []
+
+refresh:
+  enabled: true
+
+  # Hourly. The binding constraint is not the API's limit (there isn't one
+  # published) but our own 5 s gate: 28 calls at 5 s apart is ~140 s of work per
+  # cycle, ~4% of the hour, leaving the rest of the budget for interactive
+  # searches which fire on every submitted query.
+  interval_minutes: 60
+
+  # Two workers that started together would otherwise tick in lockstep and
+  # contend for the lock at the same instant every hour, forever.
+  jitter_seconds: 300
+
+  # ~6x the expected 140 s of work. Too short and a slow cycle loses the lock
+  # mid-flight and the other worker duplicates it; too long and a crashed holder
+  # blocks refreshes for that long.
+  lock_ttl_seconds: 900
+
+  startup_delay_seconds: 20
+
+trending:
+  window_hours: 24
+  baseline_days: 7
+
+  # Guards the small-denominator trap. Without it, 0 -> 2 articles is "+200%"
+  # and outranks 40 -> 90, so the panel fills with noise from the quietest
+  # topics — exactly inverting what it is for.
+  min_articles: 3
+
+  top_n: 6
+
+  # Topic selection is CURATED, never LLM-chosen. A watchlist a marker can read
+  # and disagree with is defensible; a model picking its own topics every hour
+  # is not reproducible and cannot be reviewed. Same rule as `measure_type` in
+  # retrieval/schema.py, which is assigned by keyword and never by an LLM.
+  #
+  # Each topic carries three strings because they serve three audiences, and
+  # collapsing any two produces a bad string for one of them:
+  #   label  -> the chip in the UI
+  #   prompt -> what lands in the query box when the chip is clicked
+  #   query  -> GDELT DOC 2.0 boolean syntax
+  # A chip reading "Ceylon tea" that puts the literal words "Ceylon tea" into
+  # the query box produces a question the orchestrator cannot route. `prompt` is
+  # what makes the interaction work.
+  #
+  # `sourcelang:english` is appended by the code, not repeated on every line.
+  topics:
+    # --- Sri Lanka -------------------------------------------------------
+    - id: lk_tea
+      scope: sri_lanka
+      label: "Ceylon tea"
+      prompt: "How are Ceylon tea exports performing right now?"
+      query: '("Ceylon tea" OR "Sri Lanka tea") (export OR auction OR price)'
+
+    - id: lk_apparel
+      scope: sri_lanka
+      label: "Apparel exports"
+      prompt: "How are Sri Lanka's apparel exports doing?"
+      query: '("Sri Lanka" OR Colombo) (apparel OR garment OR textile) (export OR factory OR order)'
+
+    - id: lk_gsp
+      scope: sri_lanka
+      label: "GSP+ preferences"
+      prompt: "What would losing GSP+ mean for Sri Lanka's exports to the EU?"
+      query: '"GSP+" OR ("GSP plus" AND "Sri Lanka") OR ("Sri Lanka" AND "trade preferences")'
+
+    - id: lk_cinnamon
+      scope: sri_lanka
+      label: "Cinnamon & spices"
+      prompt: "What's the outlook for Ceylon cinnamon exports?"
+      query: '"Ceylon cinnamon" OR ("Sri Lanka" (cinnamon OR spice OR pepper))'
+
+    - id: lk_rupee
+      scope: sri_lanka
+      label: "Rupee & IMF"
+      prompt: "How is the rupee affecting Sri Lanka's export competitiveness?"
+      query: '"Sri Lanka" (rupee OR IMF OR "debt restructuring" OR reserves)'
+
+    - id: lk_ports
+      scope: sri_lanka
+      label: "Colombo port"
+      prompt: "How is Colombo port performance affecting exports?"
+      query: '"Colombo Port" OR "Port of Colombo" OR Hambantota OR ("Sri Lanka" (transhipment OR terminal))'
+
+    - id: lk_tariffs
+      scope: sri_lanka
+      label: "Market access"
+      prompt: "What tariffs do Sri Lankan exports face in their main markets?"
+      query: '"Sri Lanka" (tariff OR "trade deal" OR "free trade agreement" OR duty)'
+
+    - id: lk_rubber_coconut
+      scope: sri_lanka
+      label: "Rubber & coconut"
+      prompt: "How are Sri Lanka's rubber and coconut exports performing?"
+      query: '"Sri Lanka" (rubber OR coconut OR "desiccated coconut" OR "coconut oil")'
+
+    # --- Global ----------------------------------------------------------
+    - id: gl_tariffs
+      scope: global
+      label: "Tariffs"
+      prompt: "How are global tariff changes affecting Sri Lanka's exports?"
+      query: '"new tariffs" OR "tariff increase" OR "import duty" OR "trade barrier"'
+
+    - id: gl_freight
+      scope: global
+      label: "Freight & shipping"
+      prompt: "How are shipping costs affecting Sri Lankan exporters?"
+      query: '"freight rates" OR "container shipping" OR ("Red Sea" AND shipping) OR ("Suez" AND shipping)'
+
+    - id: gl_supply_chain
+      scope: global
+      label: "Supply chains"
+      prompt: "How are global supply chain shifts affecting Sri Lanka?"
+      query: '"supply chain" (disruption OR shortage OR nearshoring OR reshoring)'
+
+    - id: gl_commodities
+      scope: global
+      label: "Commodity prices"
+      prompt: "How are global commodity prices affecting Sri Lanka's exports?"
+      query: '"commodity prices" OR "food prices" OR "tea prices" OR "rubber prices"'
+
+    - id: gl_apparel_sourcing
+      scope: global
+      label: "Apparel sourcing"
+      prompt: "How does Sri Lanka compare with other apparel sourcing markets?"
+      query: '(apparel OR garment) (sourcing OR Bangladesh OR Vietnam OR "fast fashion")'
+
+    - id: gl_trade_policy
+      scope: global
+      label: "Trade policy"
+      prompt: "What global trade policy changes matter for Sri Lanka?"
+      query: 'WTO OR "trade policy" OR "trade agreement" OR "export controls"'
