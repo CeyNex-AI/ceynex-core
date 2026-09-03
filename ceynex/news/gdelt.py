@@ -127,7 +127,18 @@ class GdeltClient:
             log.info("news disabled by CEYNEX_NEWS")
             return None
         config = settings.news_config().get("gdelt", {})
+        base_url = settings.news_base_url()
+        if base_url.startswith("http://"):
+            # Loud, once, at startup. A plaintext call to a third party is a
+            # decision someone should be able to find in the logs rather than
+            # only in a config file — see config/news.yaml for why it is allowed.
+            log.warning(
+                "GDELT endpoint is plain HTTP (%s) — queries and headlines cross "
+                "in clear text. Intended only where api.gdeltproject.org refuses TLS.",
+                base_url,
+            )
         return cls(
+            base_url=base_url,
             timeout_s=float(config.get("request_timeout_s", 6.0)),
             throttle=build_throttle(float(config.get("min_interval_s", MIN_INTERVAL_S))),
             cache_ttl_s=float(config.get("response_cache_ttl_s", 900.0)),
