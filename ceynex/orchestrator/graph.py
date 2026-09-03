@@ -118,11 +118,17 @@ def build_graph(deps: AgentDeps, *, use_llm_router: bool = True) -> Any:
         log.info("routed to %s (%s)", decision.route, decision.method)
         if decision.out_of_scope:
             errors = [f"out_of_scope: {decision.notes[0] if decision.notes else ''}"]
-            if decision.no_topic_recognized:
+            if decision.nothing_in_scope:
                 # A second, machine-only marker (never surfaced as prose) --
                 # merger.py reads it to tell "named an excluded sector, still
                 # answer the in-scope part" from "named nothing CeyNex covers,
                 # answer nothing".
+                #
+                # Keyed on `nothing_in_scope`, not `no_topic_recognized`: naming
+                # only an excluded topic leaves just as little to answer as
+                # naming nothing at all. Keyed on the narrower flag, "what is the
+                # outlook for Sri Lankan gem exports?" was served a confident tea
+                # forecast with a scope note stapled to the end.
                 errors.append("out_of_scope_no_topic: true")
             patch["errors"] = errors
         return patch
