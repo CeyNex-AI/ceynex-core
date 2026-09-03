@@ -64,6 +64,48 @@ def test_the_trending_window_fits_inside_the_span_that_gets_fetched():
     assert config["trending"]["window_hours"] <= fetched_days * 24
 
 
+def test_no_query_puts_a_conjunction_or_a_nested_group_inside_parentheses():
+    """GDELT: "Parentheses may only be used around OR'd statements."
+
+    It enforces this with HTTP *200* carrying that sentence as plain text, which
+    is indistinguishable from a topic with no coverage unless you read the body.
+    Four watchlist queries shipped broken this way and only surfaced in the
+    deployed container's logs. Valid shapes are a bare OR list, `(x OR y) (a OR
+    b)`, or `"phrase" (a OR b)`.
+    """
+    for topic in news_config()["trending"]["topics"]:
+        for group in _paren_groups(topic["query"]):
+            assert " AND " not in group.upper(), f"{topic['id']}: AND inside parentheses"
+            assert "(" not in group, f"{topic['id']}: nested parentheses"
+            terms = [t for t in group.split() if t.upper() == "OR"]
+            words = _term_count(group)
+            assert words < 2 or terms, f"{topic['id']}: implicit AND inside parentheses — {group!r}"
+
+
+def _paren_groups(query: str) -> list[str]:
+    """The text inside each top-level `(...)`, without the outer parentheses."""
+    groups: list[str] = []
+    depth = 0
+    start = 0
+    for i, char in enumerate(query):
+        if char == "(":
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                groups.append(query[start:i])
+    return groups
+
+
+def _term_count(group: str) -> int:
+    """Quoted phrases and bare words, counted as single terms."""
+    import re
+
+    return len(re.findall(r'"[^"]*"|\S+', re.sub(r'"[^"]*"', '"x"', group)))
+
+
 def test_the_relevance_floor_is_not_the_policy_floor():
     """retrieval's 0.0 is tuned for passages; reusing it here empties the panel."""
     from ceynex.retrieval.client import MIN_RERANK_SCORE
