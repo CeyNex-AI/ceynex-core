@@ -1,0 +1,103 @@
+{
+ "articles": [
+  {
+   "url": "https://www.lankanewspapers.com/2026/09/01/sri-lanka-s-export-earnings-surpass-us-10-billion-in-first-seven-months-of-the-year",
+   "url_mobile": "",
+   "title": "Sri Lanka Export Earnings Surpass US$10 Billion in First Seven Months of the Year",
+   "seendate": "20260901T041500Z",
+   "socialimage": "https://www.lankanewspapers.com/og-image.jpg",
+   "domain": "lankanewspapers.com",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  },
+  {
+   "url": "https://www.lankanewspapers.com/2026/09/01/sri-lanka-s-services-exports-surge-over-20-in-july-despite-financial-sector-slump",
+   "url_mobile": "",
+   "title": "Sri Lanka Services Exports Surge Over 20 % in July Despite Financial Sector Slump",
+   "seendate": "20260901T041500Z",
+   "socialimage": "https://www.lankanewspapers.com/og-image.jpg",
+   "domain": "lankanewspapers.com",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  },
+  {
+   "url": "https://www.thehindu.com/news/national/commerce-ministry-discusses-india-us-trade-performance-with-exporters/article71415497.ece",
+   "url_mobile": "https://www.thehindu.com/news/national/commerce-ministry-discusses-india-us-trade-performance-with-exporters/article71415497.ece/amp/",
+   "title": "Commerce Ministry discusses India - U . S . trade performance with exporters , their issues on market access",
+   "seendate": "20260901T140000Z",
+   "socialimage": "https://th-i.thgim.com/public/incoming/5a3x2q/article71415603.ece/alternates/LANDSCAPE_1200/India-Canada.jpg",
+   "domain": "thehindu.com",
+   "language": "English",
+   "sourcecountry": "India"
+  },
+  {
+   "url": "https://www.asiaone.com/money/blockade-succeeds-where-sanctions-failed-iran-oil-exports-stall",
+   "url_mobile": "",
+   "title": "Blockade succeeds where sanctions failed as Iran oil exports stall",
+   "seendate": "20260902T040000Z",
+   "socialimage": "https://www.asiaone.com/sites/default/files/strait-of-hormuz.JPG",
+   "domain": "asiaone.com",
+   "language": "English",
+   "sourcecountry": "Singapore"
+  },
+  {
+   "url": "https://www.asiaone.com:443/money/blockade-succeeds-where-sanctions-failed-iran-oil-exports-stall",
+   "url_mobile": "",
+   "title": "Blockade succeeds where sanctions failed as Iran oil exports stall",
+   "seendate": "20260902T040000Z",
+   "socialimage": "https://media.asiaone.com/sites/default/files/strait-of-hormuz.JPG",
+   "domain": "asiaone.com",
+   "language": "English",
+   "sourcecountry": "Singapore"
+  },
+  {
+   "url": "https://economynext.com/ceylon-tea-auction-prices-hold-firm-as-demand-from-russia-recovers-201455?utm_source=twitter&utm_medium=social&fbclid=IwAR3xY",
+   "url_mobile": "",
+   "title": "Ceylon tea auction prices hold firm as demand from Russia recovers",
+   "seendate": "20260902T061500Z",
+   "socialimage": "",
+   "domain": "economynext.com",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  },
+  {
+   "url": "https://www.dailymirror.lk/business/Tea-exports-earn-record-in-August/215-301447",
+   "url_mobile": "",
+   "title": "Tea exports earn record in August",
+   "seendate": "not-a-real-timestamp",
+   "socialimage": "",
+   "domain": "dailymirror.lk",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  },
+  {
+   "url": "https://www.ft.lk/business/Ceylon-Tea-brand-push-targets-premium-buyers/34-771203",
+   "url_mobile": "",
+   "title": "Ceylon Tea brand push targets premium buyers",
+   "seendate": "20260831T231500Z",
+   "domain": "ft.lk",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  },
+  {
+   "url": "https://timesofindia.indiatimes.com/city/chennai/tamil-nadu-must-now-begin-focusing-on-new-growth-engines/articleshow/133634874.cms",
+   "url_mobile": "https://timesofindia.indiatimes.com/city/chennai/tamil-nadu-must-now-begin-focusing-on-new-growth-engines/amp_articleshow/133634874.cms",
+   "title": "Tamil Nadu must now begin focusing on new growth engines",
+   "seendate": "20260831T001500Z",
+   "socialimage": "https://static.toiimg.com/thumb/msid-133634872/photo.jpg",
+   "domain": "timesofindia.indiatimes.com",
+   "language": "English",
+   "sourcecountry": "India"
+  },
+  {
+   "url": "",
+   "url_mobile": "",
+   "title": "A record with no url at all, which GDELT does occasionally emit",
+   "seendate": "20260830T120000Z",
+   "socialimage": "",
+   "domain": "example.com",
+   "language": "English",
+   "sourcecountry": "Sri Lanka"
+  }
+ ]
+}
