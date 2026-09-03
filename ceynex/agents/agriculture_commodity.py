@@ -175,6 +175,14 @@ async def _trend_answer(
         str(info["item"]),
         sector="agriculture",
         target=str(info["target"]),
+        # SERIES names the source in every evidence entry this branch emits, so
+        # the series has to come from that source. Without the filter the reader
+        # blends every source holding the target for this item, and the cinnamon
+        # price answer cited "FAOSTAT annual Sri Lanka cinnamon producer-price
+        # series" over what was really a Comtrade unit-value series (live
+        # 2026-09-03) -- a correctly-formatted citation of a number it did not
+        # describe, which is the one failure `grounding.py` cannot catch.
+        source_id=str(info["source_id"]),
         dsn=deps.dsn,
     )
     frame = _clean_series(frame)
@@ -525,9 +533,15 @@ def _clean_series(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def _series_detail(info: dict[str, object]) -> str:
+    # The aggregation is part of what the figure *is*, so it belongs in the
+    # evidence detail beside the source and unit: a mean price and a summed
+    # volume are different kinds of number and a reader checking the panel
+    # against the source needs to know which one they are looking at.
+    aggregation = "annual mean" if info["target"] == "price" else "annual total"
     return (
         "unified fact_trade annual series: "
-        f"source={info['source_id']}; item={info['item']}; target={info['target']}; unit={info['unit']}"
+        f"source={info['source_id']}; item={info['item']}; target={info['target']}; "
+        f"unit={info['unit']}; aggregation={aggregation}"
     )
 
 
