@@ -126,6 +126,16 @@ trending:
   # what makes the interaction work.
   #
   # `sourcelang:english` is appended by the code, not repeated on every line.
+  #
+  # GDELT SYNTAX, learned the hard way on the deployed box: **parentheses may
+  # only be used around OR'd statements.** `("a" AND "b")` and `("a" ("b" OR
+  # "c"))` are both rejected — and rejected with HTTP *200* carrying the plain
+  # text "Parentheses may only be used around OR'd statements.", which reads
+  # exactly like a topic that simply has no coverage. Four of these queries
+  # shipped broken because of it. `test_config.py` now rejects the shape
+  # statically, and `--dry-run` prints the URLs to paste into a browser.
+  #
+  # Valid shapes: a bare OR list; `(x OR y) (a OR b)`; `"phrase" (a OR b)`.
   topics:
     # --- Sri Lanka -------------------------------------------------------
     - id: lk_tea
@@ -144,13 +154,13 @@ trending:
       scope: sri_lanka
       label: "GSP+ preferences"
       prompt: "What would losing GSP+ mean for Sri Lanka's exports to the EU?"
-      query: '"GSP+" OR ("GSP plus" AND "Sri Lanka") OR ("Sri Lanka" AND "trade preferences")'
+      query: '("GSP+" OR "GSP plus" OR "trade preferences") "Sri Lanka"'
 
     - id: lk_cinnamon
       scope: sri_lanka
       label: "Cinnamon & spices"
       prompt: "What's the outlook for Ceylon cinnamon exports?"
-      query: '"Ceylon cinnamon" OR ("Sri Lanka" (cinnamon OR spice OR pepper))'
+      query: '"Ceylon cinnamon" OR "Sri Lanka cinnamon" OR "Sri Lanka spice"'
 
     - id: lk_rupee
       scope: sri_lanka
@@ -162,7 +172,7 @@ trending:
       scope: sri_lanka
       label: "Colombo port"
       prompt: "How is Colombo port performance affecting exports?"
-      query: '"Colombo Port" OR "Port of Colombo" OR Hambantota OR ("Sri Lanka" (transhipment OR terminal))'
+      query: '"Colombo Port" OR "Port of Colombo" OR Hambantota OR "Sri Lanka transhipment" OR "Colombo terminal"'
 
     - id: lk_tariffs
       scope: sri_lanka
@@ -187,7 +197,7 @@ trending:
       scope: global
       label: "Freight & shipping"
       prompt: "How are shipping costs affecting Sri Lankan exporters?"
-      query: '"freight rates" OR "container shipping" OR ("Red Sea" AND shipping) OR ("Suez" AND shipping)'
+      query: '"freight rates" OR "container shipping" OR "Red Sea shipping" OR "Suez Canal shipping"'
 
     - id: gl_supply_chain
       scope: global
