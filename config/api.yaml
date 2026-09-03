@@ -18,3 +18,15 @@ rate_limit:
   # a longer window with the same limit would allow the whole allowance to be
   # spent in one burst and then nothing for minutes.
   window_seconds: 60
+
+# The news sidecar's own allowance (docs/ARCHITECTURE_DELTA.md D11). A separate
+# block, and a separate identity namespace in routes/news.py, because the
+# browser fires a news search on every submitted query — counting both against
+# one allowance would halve the query limit above without anyone changing it.
+#
+# Lower than the query limit on purpose: a news search costs an outbound call
+# on someone else's free API, which is a scarcer resource than our own CPU.
+news_rate_limit:
+  enabled: true
+  search_per_minute: 20
+  window_seconds: 60
