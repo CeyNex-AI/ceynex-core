@@ -235,3 +235,34 @@ throttled: login, a user reading their own history, and the admin routes.
   safely.
 - **Data-tier credentials have not been rotated** since being committed as
   `.env.example` values in `DevOps/`.
+
+## News sidecar (D11)
+
+- **The news endpoints are unauthenticated.** `GET /api/news/search` and
+  `/api/news/trending` use `get_optional_user` and gate nothing, matching
+  `POST /api/query`, which deliberately answers anonymous callers. Gating the
+  sidecar while the main event stays open would be incoherent; both should be
+  closed together or not at all. They have their own rate-limit allowance under
+  a `news:` identity prefix, so abuse of one cannot exhaust the other.
+- **The relevance floor is empirical, not calibrated.** `relevance.min_score` in
+  `config/news.yaml` is a cut chosen from observed cross-encoder scores over
+  headlines, not a validated boundary. It is deliberately looser than
+  `retrieval/client.py`'s `MIN_RERANK_SCORE`, and the reasoning is in
+  `news/relevance.py`. The UI shows three coarse buckets rather than a number
+  precisely because the number does not support finer claims.
+- **Cross-outlet story deduplication is not attempted.** One wire story running
+  on forty sites is forty points in `ceynex_news`. Near-identical titles are
+  collapsed in a *response* only; entity resolution across outlets is not
+  solvable from a headline at acceptable cost.
+- **`store.blocked_domains` is empty.** GDELT indexes everything, and
+  `sourcelang:english` is not a quality filter. The mechanism exists because it
+  is impossible to retrofit under demo pressure, not because anything is
+  currently excluded.
+- **The watchlist queries have not been validated against live GDELT.** They are
+  syntactically checked by `tests/news/test_config.py` and printable with
+  `python -m ceynex.news.refresh --dry-run`, but a query GDELT silently rejects
+  returns a plain-text 200 that looks identical to "no coverage". Run
+  `make news-refresh` once and read the report before trusting the panel.
+- **GDELT's rate limit is undocumented and real.** It returns HTTP 429 under
+  concurrent requests. `news/throttle.py` gates outbound calls to one every five
+  seconds by convention, not by measurement — the actual ceiling is unknown.
