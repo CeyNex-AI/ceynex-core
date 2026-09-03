@@ -33,6 +33,7 @@ from ceynex.agents.common import (
 )
 from ceynex.contracts import AgentState, Evidence, ForecastModel, ForecastPoint, failed_output
 from ceynex.kg.client import KnowledgeGraphUnavailableError
+from ceynex.orchestrator.confidence import clamp
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,29 @@ TARGET_LABELS = {
     "export_volume": "export volume",
     "producer_price": "producer price",
 }
+
+# What a forecast with no backtest behind it costs in confidence. The same 0.20
+# `agriculture_commodity._model_confidence` charges a registered model whose
+# metadata carries no usable MAPE, for the same reason: an unscored forecast has
+# made no measured claim about its own accuracy.
+#
+# Without this the drift baseline scored exactly like a backtested model --
+# `common._confidence` bases at 0.9 on the presence of figures, and a baseline
+# produces figures and evidence like anything else. Live 2026-09-03 the deployed
+# system had no registered models at all, so every forecast was drift and every
+# one was labelled High confidence with an 80% interval, while EVALUATION.md §3
+# advertised 5.3% MAPE for tea. SRS 3.3.4 treats this baseline as the benchmark a
+# real model has to beat; scoring it like one says there is nothing to beat.
+UNSCORED_FORECAST_PENALTY = 0.20
+
+
+def _baseline_confidence(observations: int) -> float:
+    """Confidence for the drift baseline: support from history, minus the
+    unscored penalty. Built from `orchestrator/confidence.py`'s primitives, which
+    is where the formula is allowed to live.
+    """
+    support = min(0.25, observations * 0.015)
+    return clamp(0.65 + support - UNSCORED_FORECAST_PENALTY)
 
 
 async def forecast_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
@@ -200,6 +224,7 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence=evidence,
         assumptions=assumptions,
         forecast=points,
+        confidence=_baseline_confidence(len(history)),
     )
 
 
@@ -370,10 +395,21 @@ async def _missing_target_model(
 
 
 def _load_registered_model(item: str, target: str) -> Any | None:
-    """Look for the best agriculture model matching both item and target.
+    """Look for the best registered model matching both item and target.
 
     Imported lazily and failure-tolerantly: the registry lands later in the
     sprint, and this node has to work before it does.
+
+    No sector filter. This pinned `sector="agriculture"`, which made the apparel
+    models unreachable from this node -- `apparel_knit` and `apparel_woven` are
+    registered under `sector="apparel"` (the registry lays out
+    `{sector}/{item}/{target}/{version}`), so every apparel forecast fell through
+    to the drift baseline no matter what was in the registry. The item already
+    identifies the model uniquely; `load_best` and `load_latest` both treat
+    `sector` as optional for exactly this reason. Found while fixing the
+    deployment gap that hid it: with no models on the VM at all, agriculture and
+    apparel behaved identically, so nothing distinguished this from the models
+    simply being absent.
     """
     try:
         from ceynex.models.registry import load_best, load_latest
@@ -383,9 +419,7 @@ def _load_registered_model(item: str, target: str) -> Any | None:
         # Best-scoring first. Newest is only the right answer when nothing has
         # been backtested yet, and serving a model with twice the error because
         # it was registered second is a loss nobody would see.
-        return load_best(item=item, sector="agriculture", target=target) or load_latest(
-            item=item, sector="agriculture", target=target
-        )
+        return load_best(item=item, target=target) or load_latest(item=item, target=target)
     except Exception as exc:  # noqa: BLE001 - no registered model is the normal case
         log.debug("no registered model for %s: %s", item, exc)
         return None
