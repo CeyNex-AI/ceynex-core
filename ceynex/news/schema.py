@@ -232,18 +232,18 @@ def parse_seendate(raw: str | None) -> datetime | None:
 
 #: Label cuts, as raw cross-encoder logits.
 #:
-#: **Not sigmoid cuts.** The first version of this function mapped the logit
-#: through a sigmoid and cut at 0.5 and 0.1 — i.e. at logits 0.0 and -2.2 — on
-#: the reasoning that 0.0 is the model's own "more relevant than not" boundary.
-#: Measured against 150 real indexed headlines and eleven real questions, the
-#: single best score across the whole matrix was **-1.78** and the median pair
-#: was **-11.35**. Every article would have been labelled "loose", for every
-#: question, forever. A boundary that is principled for the model's training
-#: distribution is not automatically reachable on ours.
+#: **Not sigmoid cuts.** The first version mapped the logit through a sigmoid
+#: and cut at 0.5 and 0.1 — logits 0.0 and -2.2 — on the reasoning that 0.0 is
+#: the model's own "more relevant than not" boundary. That is a fact about the
+#: model's training distribution, not about ours, and nothing forced the two to
+#: line up.
 #:
-#: These are set from that run: the best hit for a well-covered question lands
-#: near -2, a decent hit near -5 to -7, and everything a human would call
-#: unrelated sits below -8.
+#: Set instead from real questions against the live collection (the table is in
+#: `news/relevance.py`). A well-covered question tops out around +7 to -3, a
+#: decent-but-partial match runs -5 to -7, and anything a reader would call
+#: unrelated sits below -8, which is where `relevance.min_score` cuts. Every
+#: bucket is reachable — `test_schema.py` asserts that, because a label nothing
+#: can ever earn is a bug rather than a spare category.
 _STRONG = -5.0
 _RELATED = -7.5
 
