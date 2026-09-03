@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -55,6 +55,12 @@ ingest:
 
 kg-load:
 	$(PYTHON) -m ceynex.kg.load --schema --agreements --apparel --flows --policy
+
+# One news refresh, by hand (D11). The API runs this hourly on its own, but a
+# cold ceynex_news makes the demo's degraded path look broken -- run this once
+# before showing anything. `--dry-run` prints the GDELT URLs without calling.
+news-refresh:
+	$(PYTHON) -m ceynex.news.refresh --once --ensure-collection
 
 # usage: make backtest SECTOR=agriculture ITEM=cinnamon
 backtest:

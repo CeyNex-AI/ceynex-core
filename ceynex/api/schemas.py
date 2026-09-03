@@ -48,6 +48,71 @@ class QueryResponse(BaseModel):
     unanswered: list[str] = Field(default_factory=list)
 
 
+# --- news sidecar (docs/ARCHITECTURE_DELTA.md D11) --------------------------
+#
+# Deliberately NOT `EvidenceItem`. News is not evidence — it has no `source_id`
+# from the frozen `SourceId` vocabulary, no `claim`, and no `detail` naming the
+# query that produced it, because none of those would be true of a headline
+# nobody verified. A separate shape is what stops the two ever being merged by
+# a future convenience.
+
+
+class NewsArticleItem(BaseModel):
+    url: str
+    title: str
+    domain: str
+    source_country: str
+    #: When GDELT first *saw* the article, not when it was published. The UI says
+    #: "seen" for that reason.
+    seen_at: str | None = None
+    #: The raw cross-encoder logit, shipped but not rendered. It travels so the
+    #: floor in config/news.yaml can be tuned without a frontend redeploy.
+    relevance_score: float | None = None
+    #: "strong" | "related" | "loose" | "unscored" — what the UI actually shows.
+    relevance: str = "unscored"
+
+
+class NewsSearchResponse(BaseModel):
+    query: str
+    articles: list[NewsArticleItem]
+    #: "gdelt" (live) | "cache" (indexed headlines) | "unavailable" (neither).
+    #: In the response on purpose: the panel says which it is showing rather than
+    #: degrading silently, same reasoning as `QueryResponse.degraded`.
+    source: str
+    elapsed_ms: float
+
+
+class TrendingArticleItem(BaseModel):
+    url: str
+    title: str
+    domain: str
+    seen_at: str | None = None
+
+
+class TrendingTopicItem(BaseModel):
+    topic_id: str
+    label: str
+    #: The question that goes in the query box when the chip is clicked — not the
+    #: label, which would produce a question the router cannot use.
+    prompt: str
+    scope: str
+    articles_24h: int
+    baseline_24h: float
+    delta_pct: float
+    direction: str
+    top_articles: list[TrendingArticleItem] = Field(default_factory=list)
+
+
+class TrendingResponse(BaseModel):
+    #: "warming" (never computed) | "ready" | "stale" (older than two intervals)
+    #: | "unavailable" (the sidecar is off). Always HTTP 200 — an empty trending
+    #: panel must not make the page look broken.
+    status: str
+    computed_at: str | None = None
+    partial: bool = False
+    scopes: dict[str, list[TrendingTopicItem]] = Field(default_factory=dict)
+
+
 class HealthResponse(BaseModel):
     status: str
     neo4j: bool

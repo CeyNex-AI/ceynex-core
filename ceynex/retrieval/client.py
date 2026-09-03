@@ -129,6 +129,22 @@ async def _models_ready() -> dict[str, Any]:
     return _models
 
 
+async def shared_models() -> dict[str, Any]:
+    """The process-wide fastembed handles, for anything else that needs them.
+
+    Public because headline relevance scoring in `ceynex/news/` reuses this
+    cross-encoder and must not load a second copy: another `TextCrossEncoder` is
+    another ~90 MB of ONNX session for byte-identical weights, in a container
+    already carrying three of them. Sharing costs nothing — the news path only
+    calls `.rerank()`, and nothing here mutates.
+
+    Raises `ImportError` when the `[policy]` extra is absent. That is the caller's
+    signal to degrade, not an error to handle here: `news/relevance.py` returns
+    its articles unscored, which is a usable answer.
+    """
+    return await _models_ready()
+
+
 class PolicyRetriever:
     """Async hybrid search over the policy-document collection.
 
@@ -414,4 +430,5 @@ __all__ = [
     "RETRIEVAL_TIMEOUT_S",
     "PolicyRetriever",
     "PolicyRetrieverUnavailableError",
+    "shared_models",
 ]

@@ -1,0 +1,261 @@
+# The news sidecar — docs/ARCHITECTURE_DELTA.md D11.
+#
+# Kept out of code so a diff shows who changed what (see ceynex/settings.py's
+# module docstring). `settings.load_config` is lru_cached, so an edit here needs
+# a process restart before the API sees it.
+
+gdelt:
+  # GDELT DOC 2.0 needs no API key, which is why there is no GDELT_API_KEY
+  # anywhere — a placeholder would imply one is required.
+
+  # HTTPS by default, overridable per deployment with CEYNEX_GDELT_BASE_URL.
+  #
+  # The override is not hypothetical: `api.gdeltproject.org` does not serve TLS
+  # reliably. From the deployed backend VM, DNS resolves and port 80 answers
+  # normally, but every connection to :443 is reset — verified three times,
+  # spaced, while github.com and api.openai.com over TLS were fine from the same
+  # host. So the failure is that endpoint's, not the network's.
+  #
+  # Falling back to plain HTTP is a real trade and is written down rather than
+  # assumed. What crosses in clear text is the user's question and a list of
+  # public headlines; there is no key, no token and no personal data, because
+  # this API has none. The integrity risk — an injected headline — is bounded by
+  # the same rule the whole feature rests on: news is never evidence, never
+  # enters an answer, and every row links to its own source. See D11.
+  base_url: "https://api.gdeltproject.org/api/v2/doc/doc"
+
+  # A week of coverage for an interactive search: long enough that a question
+  # about a story from Monday still finds it, short enough that "recent" means
+  # something. GDELT indexes back to 2017 but its default window is 3 months.
+  timespan_search: "7d"
+
+  # The trending window and its own baseline come from ONE call each. See
+  # trending.baseline_days — these two must agree or the baseline is computed
+  # over a span that was never fetched.
+  timespan_trending: "7d"
+  timespan_topic_articles: "24h"
+
+  max_records_search: 75      # GDELT's own default; the hard cap is 250
+  max_records_topic: 20
+
+  # HybridRel is GDELT's relevance ordering. It returns no *score*, only an
+  # order, which is why ceynex/news/relevance.py re-ranks locally.
+  sort: HybridRel
+
+  # GDELT publishes no rate limit in its docs, but it enforces one and will tell
+  # you so: the 429 body reads "Please limit requests to one every 5 seconds".
+  #
+  # Ten, not the five they state. Measured against the live API from the
+  # deployed VM: at 5s, eight of fourteen topics collected 429s; at 6s, six did.
+  # Whatever GDELT actually meters, it is not a simple gap between consecutive
+  # requests — most likely a window over a longer period, which a fixed gap
+  # cannot satisfy at the boundary.
+  #
+  # The cost is nothing: 28 calls at 10s is ~5 minutes of an hour, and the
+  # refresher is the only thing on this budget that runs unattended. Interactive
+  # searches fail fast to the vector store instead of queueing (see
+  # routes/news.py's THROTTLE_WAIT_S), so a wider gate does not slow a user down
+  # — it just means live results are rarer and indexed ones more common.
+  min_interval_s: 10.0
+
+  request_timeout_s: 6.0
+
+  # == GDELT's own minimum `timespan` granularity. A shorter TTL cannot return
+  # fresher data; it can only spend rate budget re-asking for the same answer.
+  response_cache_ttl_s: 900
+
+relevance:
+  # MEASURED through the real route path, on the deployed box: eleven questions
+  # against the live ceynex_news collection, scoring the candidates the vector
+  # search actually returns. ceynex/news/relevance.py records the full table.
+  #
+  # Measuring the wrong thing first is worth writing down. The initial sweep
+  # scored every indexed title against each question and concluded that all
+  # scores are negative. They are not — the route only ever scores retrieved
+  # candidates, and those reach +7.16. A floor set from the synthetic sweep
+  # returned an empty panel for every question in production.
+  #
+  # Sweeping the floor over the real distribution:
+  #
+  #     floor  -6.0 -> keeps 4/8 in-scope, admits 0/3 out-of-scope
+  #     floor  -7.0 -> keeps 5/8 in-scope, admits 0/3 out-of-scope
+  #     floor  -8.0 -> keeps 6/8 in-scope, admits 0/3 out-of-scope   <-- chosen
+  #     floor  -9.0 -> keeps 7/8 in-scope, admits 1/3 out-of-scope
+  #     floor -10.0 -> keeps 7/8 in-scope, admits 2/3 out-of-scope
+  #
+  # -8.0 is the loosest cut that still rejects everything out of scope. Going
+  # one step further buys one more question and starts letting "will it rain in
+  # Colombo tomorrow" (-8.96) into a trade-intelligence panel.
+  #
+  # Honest caveat: the in-scope and out-of-scope ranges OVERLAP. "ceylon tea
+  # auction prices" scores -10.72, below every out-of-scope question, because
+  # this 150-headline corpus contains no tea-auction story. No floor can fix
+  # that; only more corpus can. Re-measure once the refresher has run for a few
+  # days — the script is in the commit that set this number.
+  min_score: -8.0
+  limit: 8
+
+store:
+  # News accumulates forever and nothing else prunes it. 30 days keeps the
+  # collection near a few hundred thousand points on a database VM already
+  # hosting Postgres, Neo4j, Redis and ceynex_policy. Longer buys little:
+  # GDELT's own default window is 3 months, so older points cannot be
+  # re-fetched or corroborated anyway.
+  retention_days: 30
+  upsert_batch: 64
+
+  # A display filter, never a truth claim about any outlet. GDELT indexes
+  # everything, and `sourcelang:english` is not a quality filter. Empty by
+  # default: the mechanism is here because it is impossible to retrofit under
+  # demo pressure, not because anything is currently excluded.
+  blocked_domains: []
+
+refresh:
+  enabled: true
+
+  # Hourly. The binding constraint is not the API's limit (there isn't one
+  # published) but our own 5 s gate: 28 calls at 5 s apart is ~140 s of work per
+  # cycle, ~4% of the hour, leaving the rest of the budget for interactive
+  # searches which fire on every submitted query.
+  interval_minutes: 60
+
+  # Two workers that started together would otherwise tick in lockstep and
+  # contend for the lock at the same instant every hour, forever.
+  jitter_seconds: 300
+
+  # ~6x the expected 140 s of work. Too short and a slow cycle loses the lock
+  # mid-flight and the other worker duplicates it; too long and a crashed holder
+  # blocks refreshes for that long.
+  lock_ttl_seconds: 900
+
+  startup_delay_seconds: 20
+
+trending:
+  window_hours: 24
+  baseline_days: 7
+
+  # Guards the small-denominator trap. Without it, 0 -> 2 articles is "+200%"
+  # and outranks 40 -> 90, so the panel fills with noise from the quietest
+  # topics — exactly inverting what it is for.
+  min_articles: 3
+
+  top_n: 6
+
+  # Topic selection is CURATED, never LLM-chosen. A watchlist a marker can read
+  # and disagree with is defensible; a model picking its own topics every hour
+  # is not reproducible and cannot be reviewed. Same rule as `measure_type` in
+  # retrieval/schema.py, which is assigned by keyword and never by an LLM.
+  #
+  # Each topic carries three strings because they serve three audiences, and
+  # collapsing any two produces a bad string for one of them:
+  #   label  -> the chip in the UI
+  #   prompt -> what lands in the query box when the chip is clicked
+  #   query  -> GDELT DOC 2.0 boolean syntax
+  # A chip reading "Ceylon tea" that puts the literal words "Ceylon tea" into
+  # the query box produces a question the orchestrator cannot route. `prompt` is
+  # what makes the interaction work.
+  #
+  # `sourcelang:english` is appended by the code, not repeated on every line.
+  #
+  # GDELT SYNTAX, established by running these against the live API from the
+  # deployed box. Two rules, and they pull in opposite directions, which is why
+  # guessing at one of them is not enough:
+  #
+  #   1. "Queries containing OR'd terms must be surrounded by ()."
+  #      -> a bare `a OR b` at the top level is REJECTED.
+  #   2. "Parentheses may only be used around OR'd statements."
+  #      -> `(a AND b)` and `(a (b OR c))` are REJECTED.
+  #
+  # So the grammar is: a sequence of quoted phrases and parenthesised OR groups,
+  # implicitly ANDed together. `("a" OR "b") "c" (d OR e)` is the shape.
+  #
+  # Both violations come back as HTTP **200** with the rule as plain text in the
+  # body, which is indistinguishable from "no coverage" unless something reads
+  # it. That is why gdelt.py raises on a 200-with-non-JSON instead of shrugging,
+  # and why test_config.py checks both rules statically.
+  topics:
+    # --- Sri Lanka -------------------------------------------------------
+    - id: lk_tea
+      scope: sri_lanka
+      label: "Ceylon tea"
+      prompt: "How are Ceylon tea exports performing right now?"
+      query: '("Ceylon tea" OR "Sri Lanka tea") (export OR auction OR price)'
+
+    - id: lk_apparel
+      scope: sri_lanka
+      label: "Apparel exports"
+      prompt: "How are Sri Lanka's apparel exports doing?"
+      query: '("Sri Lanka" OR Colombo) (apparel OR garment OR textile) (export OR factory OR order)'
+
+    - id: lk_gsp
+      scope: sri_lanka
+      label: "GSP+ preferences"
+      prompt: "What would losing GSP+ mean for Sri Lanka's exports to the EU?"
+      query: '(GSP OR "trade preferences" OR "duty free") "Sri Lanka"'
+
+    - id: lk_cinnamon
+      scope: sri_lanka
+      label: "Cinnamon & spices"
+      prompt: "What's the outlook for Ceylon cinnamon exports?"
+      query: '("Ceylon cinnamon" OR cinnamon OR spices) "Sri Lanka"'
+
+    - id: lk_rupee
+      scope: sri_lanka
+      label: "Rupee & IMF"
+      prompt: "How is the rupee affecting Sri Lanka's export competitiveness?"
+      query: '"Sri Lanka" (rupee OR IMF OR "debt restructuring" OR reserves)'
+
+    - id: lk_ports
+      scope: sri_lanka
+      label: "Colombo port"
+      prompt: "How is Colombo port performance affecting exports?"
+      query: '("Colombo Port" OR "Port of Colombo" OR Hambantota OR transhipment) "Sri Lanka"'
+
+    - id: lk_tariffs
+      scope: sri_lanka
+      label: "Market access"
+      prompt: "What tariffs do Sri Lankan exports face in their main markets?"
+      query: '"Sri Lanka" (tariff OR "trade deal" OR "free trade agreement" OR duty)'
+
+    - id: lk_rubber_coconut
+      scope: sri_lanka
+      label: "Rubber & coconut"
+      prompt: "How are Sri Lanka's rubber and coconut exports performing?"
+      query: '"Sri Lanka" (rubber OR coconut OR "desiccated coconut" OR "coconut oil")'
+
+    # --- Global ----------------------------------------------------------
+    - id: gl_tariffs
+      scope: global
+      label: "Tariffs"
+      prompt: "How are global tariff changes affecting Sri Lanka's exports?"
+      query: '("new tariffs" OR "tariff increase" OR "import duty" OR "trade barrier")'
+
+    - id: gl_freight
+      scope: global
+      label: "Freight & shipping"
+      prompt: "How are shipping costs affecting Sri Lankan exporters?"
+      query: '("freight rates" OR "container shipping" OR "shipping costs")'
+
+    - id: gl_supply_chain
+      scope: global
+      label: "Supply chains"
+      prompt: "How are global supply chain shifts affecting Sri Lanka?"
+      query: '"supply chain" (disruption OR shortage OR nearshoring OR reshoring)'
+
+    - id: gl_commodities
+      scope: global
+      label: "Commodity prices"
+      prompt: "How are global commodity prices affecting Sri Lanka's exports?"
+      query: '("commodity prices" OR "food prices" OR "tea prices" OR "rubber prices")'
+
+    - id: gl_apparel_sourcing
+      scope: global
+      label: "Apparel sourcing"
+      prompt: "How does Sri Lanka compare with other apparel sourcing markets?"
+      query: '(apparel OR garment) (sourcing OR Bangladesh OR Vietnam OR "fast fashion")'
+
+    - id: gl_trade_policy
+      scope: global
+      label: "Trade policy"
+      prompt: "What global trade policy changes matter for Sri Lanka?"
+      query: '(WTO OR "trade policy" OR "trade agreement" OR "export controls")'
