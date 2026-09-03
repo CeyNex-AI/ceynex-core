@@ -273,3 +273,82 @@ constraint in `ceynex-contracts`' frozen `schema.cypher`, which is a three-way
 approval. The proposed diff is in
 [CONTRACT_PROPOSAL_POLICY_DOCUMENT.md](CONTRACT_PROPOSAL_POLICY_DOCUMENT.md);
 the loader works without it, so the PR is not on the critical path.
+
+## D11 — a news sidecar over the same Qdrant, deliberately not evidence
+
+**What the SAD says.** Nothing. There is no news source in the SRS, no current-
+events requirement, and no scheduled component in the SAD's deployment view.
+This is an addition, not a deviation from a stated design, and it is recorded
+here because an addition nobody wrote down is drift.
+
+**What was built.** `GET /api/news/search` runs a GDELT DOC 2.0 query alongside
+each submitted question; `GET /api/news/trending` serves a precomputed panel of
+fourteen watchlist topics ranked by 24-hour article volume against their own
+7-day baseline. An hourly in-process task refreshes the panel and indexes the
+headlines into a Qdrant collection.
+
+**The load-bearing constraint: news is never evidence.** SRS 3.1.4 says every
+claim beside an answer must be checkable against a verified source. A headline
+from an outlet nobody vetted is not one, so the guarantee is enforced in four
+independent places rather than by convention:
+
+1. **A separate collection.** `ceynex_news`, never `ceynex_policy`.
+   `NewsStore.__init__` raises `ValueError` if the two names match. Sharing one
+   collection with a `doc_type` discriminator was considered and rejected:
+   `retrieval/client.py` *widens its own filters* when a goods-filtered search
+   returns nothing, so "remember to exclude news" would have to survive a code
+   path designed to relax constraints — and forgetting once is silent.
+2. **A separate response type.** `NewsArticleItem` has no `source_id`, no
+   `claim` and no `detail`. `NewsArticle` has no `.citation` and no
+   `.to_evidence()`; `tests/news/test_schema.py` asserts their absence.
+3. **The frozen contracts.** `SourceId` in `ceynex-web/src/types/contracts.ts`
+   is a closed union and `ceynex-contracts` sits behind a three-reviewer PR, so
+   emitting news as `Evidence` is *structurally* impossible without that PR.
+   The gate normally read as friction is, here, the enforcement mechanism.
+4. **On screen.** The panel carries the sentence "Recent coverage from GDELT.
+   Not used to produce the answer above", and is `print:hidden` — the printed
+   report is the evidence-backed answer.
+
+**Headlines only, no article bodies.** GDELT returns metadata and a title; it
+does not return text. Fetching each article would mean scraping several hundred
+arbitrary outlets — slow, fragile, and squarely into publishers' copyright.
+GDELT's own terms permit non-commercial use with attribution, which the
+`DATA_SOURCES` footer entry provides. The cost is that a dense vector is built
+from 5–12 words, which is why the relevance floor is not retrieval's.
+
+**Not folded into `POST /api/query`.** That path's p95 is 14.6 s against SRS
+3.4.1's 10 s budget (EVALUATION.md §1). Adding an outbound HTTP call to it would
+make a documented problem worse for every query, including those nobody wanted
+news for, and would change `QueryResponse`, whose field names the frontend
+depends on. The browser fires the two in parallel instead — a property of the
+*frontend*, so `routes/news.py` carries a comment saying so.
+
+**An in-process task instead of a scheduler.** No Celery, no APScheduler, no
+cron exists anywhere in this project, and adding one for 28 HTTP calls an hour
+would be a component the SAD does not have. The cost is a Redis lock, because
+`ceynex-infra/backend/Dockerfile` runs `uvicorn --workers 2` and both workers
+run the same lifespan. Without `REDIS_URL` the lock is a no-op, which is correct
+for one worker and logged rather than assumed.
+
+**A latent bug fixed on the way.** `Runtime.warmup()` was defined with a
+docstring explaining it must run before the first request, and `main.py`'s
+lifespan never called it. Deployed, the first policy query paid several seconds
+of ONNX loading against a 2 s budget, degraded, and never reproduced once warm.
+It is now started as a task — not awaited, because on a cold `fastembed_cache`
+volume it downloads several hundred megabytes and the container healthcheck
+allows roughly 95 s before it starts killing the process.
+
+**Cost, stated plainly.** A second Qdrant collection (~30 days' retention, a few
+hundred thousand points), one outbound call per user query and 28 per hour from
+the refresher, and a `news_trending_snapshot` table in Postgres. No new
+dependency, no new container, no new volume — `.cache/news/` and
+`data/raw/gdelt/` sit inside volumes the backend already mounts.
+
+**Egress is the deployment risk.** The backend VM has no external IP and
+`ceynex-infra/gcp/` configures ingress only, so reaching `api.gdeltproject.org`
+depends on the same NAT path the OpenAI client already uses. If the deployed LLM
+works, this works; the compose file carries the one-line check.
+
+**Reversal cost is low.** `CEYNEX_NEWS=off`. Both endpoints stay up and report
+`unavailable`, the refresher returns immediately, and the query flow is
+untouched — it never depended on either.

@@ -19,6 +19,8 @@ from typing import Any
 from ceynex.agents.common import AgentDeps
 from ceynex.kg.client import KnowledgeGraphClient
 from ceynex.llm import LLMReasoningClient
+from ceynex.news.gdelt import GdeltClient
+from ceynex.news.store import NewsStore
 from ceynex.orchestrator.graph import build_graph
 from ceynex.retrieval.client import PolicyRetriever
 
@@ -34,6 +36,12 @@ class Runtime:
     deps: AgentDeps
     graph: Any
     policy: PolicyRetriever | None = None
+    #: The news sidecar (D11). Both None-tolerant: without them the endpoints
+    #: still answer, they just answer "unavailable". Deliberately *not* in
+    #: `AgentDeps` — no agent may reach news, and the way to guarantee that is
+    #: for it never to be handed to one.
+    gdelt: GdeltClient | None = None
+    news: NewsStore | None = None
 
     @classmethod
     def build(cls) -> Runtime:
@@ -47,29 +55,47 @@ class Runtime:
         # Routing through the LLM only when there is a key. Without one the
         # keyword router runs and the system still answers (SRS 3.4.3).
         graph = build_graph(deps, use_llm_router=llm.available)
+        gdelt = GdeltClient.from_settings()
+        news = NewsStore.from_settings()
         log.info(
-            "runtime built: llm=%s router=%s policy_retrieval=%s",
+            "runtime built: llm=%s router=%s policy_retrieval=%s news=%s news_index=%s",
             "available" if llm.available else "degraded",
             "llm" if llm.available else "keyword",
             "on" if policy else "off",
+            "on" if gdelt else "off",
+            "on" if news else "off",
         )
-        return cls(kg=kg, llm=llm, deps=deps, graph=graph, policy=policy)
+        return cls(
+            kg=kg, llm=llm, deps=deps, graph=graph, policy=policy, gdelt=gdelt, news=news
+        )
 
     async def warmup(self) -> None:
-        """Load the retrieval models before the first request.
+        """Load the retrieval models and prepare the news collection.
 
         Their ONNX sessions take about a second to build — half again the whole
         per-query retrieval budget — so paying it here rather than inside the
         first query is the difference between one slow startup and one query that
         mysteriously degrades and never reproduces.
+
+        Started as a task rather than awaited by the lifespan: on a cold
+        `fastembed_cache` volume this downloads several hundred megabytes, and
+        the container healthcheck allows roughly 95 s before it starts killing
+        the process. `_models_ready()` inside `search()` remains the safety net
+        for a query that arrives first.
         """
         if self.policy is not None:
             await self.policy.warmup()
+        if self.news is not None:
+            await self.news.ensure_collection()
 
     async def aclose(self) -> None:
         await self.kg.close()
         if self.policy is not None:
             await self.policy.close()
+        if self.gdelt is not None:
+            await self.gdelt.close()
+        if self.news is not None:
+            await self.news.close()
 
 
 _runtime: Runtime | None = None
