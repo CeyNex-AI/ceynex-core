@@ -32,7 +32,6 @@ neither. Same discipline `retrieval/schema.py` keeps.
 
 from __future__ import annotations
 
-import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -231,10 +230,22 @@ def parse_seendate(raw: str | None) -> datetime | None:
 
 # --- relevance labels -----------------------------------------------------
 
-#: Cuts on `sigmoid(cross-encoder logit)`. 0.5 is the model's own "more relevant
-#: than not" boundary; 0.1 is where the tail stops being worth a row.
-_STRONG_P = 0.5
-_RELATED_P = 0.1
+#: Label cuts, as raw cross-encoder logits.
+#:
+#: **Not sigmoid cuts.** The first version of this function mapped the logit
+#: through a sigmoid and cut at 0.5 and 0.1 — i.e. at logits 0.0 and -2.2 — on
+#: the reasoning that 0.0 is the model's own "more relevant than not" boundary.
+#: Measured against 150 real indexed headlines and eleven real questions, the
+#: single best score across the whole matrix was **-1.78** and the median pair
+#: was **-11.35**. Every article would have been labelled "loose", for every
+#: question, forever. A boundary that is principled for the model's training
+#: distribution is not automatically reachable on ours.
+#:
+#: These are set from that run: the best hit for a well-covered question lands
+#: near -2, a decent hit near -5 to -7, and everything a human would call
+#: unrelated sits below -8.
+_STRONG = -5.0
+_RELATED = -7.5
 
 
 def relevance_label(score: float | None) -> str:
@@ -252,10 +263,9 @@ def relevance_label(score: float | None) -> str:
     """
     if score is None:
         return "unscored"
-    probability = 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, float(score)))))
-    if probability >= _STRONG_P:
+    if score >= _STRONG:
         return "strong"
-    if probability >= _RELATED_P:
+    if score >= _RELATED:
         return "related"
     return "loose"
 

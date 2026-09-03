@@ -97,11 +97,25 @@ def test_a_malformed_seendate_is_none_rather_than_an_exception():
 # --- relevance labels ----------------------------------------------------
 
 
-def test_relevance_labels_bucket_on_the_models_own_boundary():
-    assert relevance_label(2.0) == "strong"
-    assert relevance_label(0.0) == "strong"
-    assert relevance_label(-1.0) == "related"
-    assert relevance_label(-5.0) == "loose"
+def test_relevance_labels_bucket_on_scores_headlines_actually_reach():
+    """Measured, not assumed. See relevance.py — every real pair scored negative.
+
+    The first version cut on sigmoid(logit) at 0.5 and 0.1, i.e. logits 0.0 and
+    -2.2. The best of 1500 real pairs was -1.78, so every article would have
+    been labelled "loose" for every question, forever.
+    """
+    assert relevance_label(-1.78) == "strong"  # best real pair observed
+    assert relevance_label(-4.86) == "strong"  # a good tariffs match
+    assert relevance_label(-6.66) == "related"  # a decent shipping match
+    assert relevance_label(-7.76) == "loose"  # a real tea match, but a weak one
+    assert relevance_label(-9.06) == "loose"  # below the floor, never shown
+
+
+def test_no_real_headline_score_lands_in_a_dead_label():
+    """A label nothing can ever reach is a bug, not a spare bucket."""
+    observed = [-1.78, -4.86, -6.66, -7.08, -7.76, -8.14, -8.75, -9.06, -9.54, -10.58]
+
+    assert {relevance_label(s) for s in observed} == {"strong", "related", "loose"}
 
 
 def test_an_unscored_article_says_so_rather_than_scoring_zero():

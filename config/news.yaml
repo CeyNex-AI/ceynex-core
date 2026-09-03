@@ -65,13 +65,34 @@ gdelt:
   response_cache_ttl_s: 900
 
 relevance:
-  # NOT retrieval's MIN_RERANK_SCORE (0.0). Neither half of that constant's
-  # justification transfers: it scores multi-sentence passages, this scores
-  # 5-12 word headlines that land systematically lower on the same model; and a
-  # bad policy chunk becomes an uncheckable citation while a weak headline is a
-  # visible, ignorable link in a labelled panel. Empirical, not calibrated —
-  # ceynex/news/relevance.py's docstring records the run this came from.
-  min_score: -6.0
+  # MEASURED, not guessed. 150 indexed headlines x 11 real questions on the
+  # deployed box; ceynex/news/relevance.py records the full table.
+  #
+  # Headline scores from this cross-encoder are ALL negative — best pair across
+  # the whole matrix was -1.78, median -11.35. The first version of this file
+  # said -6.0, reasoned from nothing, and would have returned an empty panel for
+  # six of the eight in-scope questions.
+  #
+  # -8.0 is the highest floor that rejects every out-of-scope question tried:
+  #
+  #     apparel   -1.78  | kept        commodities  -8.75  | dropped
+  #     tariffs   -4.86  | kept        cinnamon     -9.06  | dropped
+  #     shipping  -6.66  | kept        rupee        -9.54  | dropped
+  #     gsp       -7.08  | kept        --- out of scope ---
+  #     tea       -7.76  | kept        weather      -8.14  | dropped
+  #                                    cricket      -9.58  | dropped
+  #                                    cake        -10.58  | dropped
+  #
+  # The three dropped in-scope questions are dropped CORRECTLY: their top hits
+  # were "king coconut villages" for cinnamon and "New Zealand exporters" for
+  # the rupee. No answer is the right answer there.
+  #
+  # Honest caveat: the margin is thin. "Will it rain in Colombo tomorrow?"
+  # scored -8.14 purely on the word Colombo, only 0.14 below the cut, and above
+  # three real questions. This floor separates the cases we tried and is not a
+  # clean boundary. It should be re-measured as the corpus grows — with 150
+  # mostly-unrelated headlines, nothing scores well.
+  min_score: -8.0
   limit: 8
 
 store:
