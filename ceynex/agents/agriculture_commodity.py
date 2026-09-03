@@ -151,9 +151,15 @@ async def _trend_answer(
     # question ("how are export volumes trending"), where defaulting to the
     # one sourced item for this kind is the existing, intended behaviour.
     if requested_item is not None and requested_item != info["item"]:
+        # Claims only what is true here: no M1 series for this item. The clause
+        # this replaced -- "only tea is covered for this question shape" -- stated
+        # one agent's coverage as the system's, and it was wrong: the graph
+        # answers rubber and coconut concentration, share and growth perfectly
+        # well, and did so in the same response (live 2026-09-03, S03/CO1). The
+        # merger drops this line entirely when another finding covered the
+        # question; it still surfaces when nothing did, which is when it is true.
         reason = (
-            f"No sourced {info['target'].replace('_', ' ')} series is available for {requested_item} -- "
-            f"only {info['item']} is covered for this question shape."
+            f"No sourced {info['target'].replace('_', ' ')} series is held for {requested_item}."
         )
         return await _unsupported_target(state, deps, reason)
     # annual_series is a synchronous psycopg call -- off the event loop via
