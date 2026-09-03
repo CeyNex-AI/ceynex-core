@@ -5,11 +5,19 @@ harder than the LLM router. Its three invariants — never empty, recognises
 out-of-scope, weights relevance — are what the orchestrator assumes downstream.
 """
 
+import json
+
 import pytest
 
 from ceynex.contracts import ALL_AGENTS
 from ceynex.llm import FakeLLMClient
-from ceynex.orchestrator.router import keyword_route, llm_route
+from ceynex.orchestrator.router import (
+    MIXED_SCOPE_NOTE,
+    NO_TOPIC_NOTE,
+    SCOPE_SENTENCE,
+    keyword_route,
+    llm_route,
+)
 
 # --- invariant 1: never empty -------------------------------------------
 
@@ -250,6 +258,113 @@ async def test_llm_route_does_not_flag_no_topic_for_a_mixed_question():
     decision = await llm_route("how does tea compare with fisheries?", llm)
     assert decision.out_of_scope
     assert not decision.no_topic_recognized
+
+
+# --- both routers explain themselves the same way ------------------------
+
+
+@pytest.mark.parametrize(
+    ("sectors", "expected_note"),
+    [
+        ([], NO_TOPIC_NOTE),
+        (["agriculture"], MIXED_SCOPE_NOTE),
+    ],
+)
+async def test_llm_route_populates_notes_for_both_out_of_scope_shapes(sectors, expected_note):
+    """Regression, found live 2026-09-03: `llm_route` built its RouteDecision with
+    no `notes`, so `graph.py` produced `errors = ["out_of_scope: "]` with an empty
+    note and `merger.py` substituted its generic fallback -- telling the user they
+    had named a sector CeyNex does not cover when they had named no sector at all.
+    Wrong for every LLM-router out-of-scope verdict, not just the shipping query
+    that surfaced it.
+    """
+    llm = FakeLLMClient(
+        response=json.dumps(
+            {
+                "route": ["export_analytics"],
+                "sectors": sectors,
+                "relevance": {"export_analytics": 0.3},
+                "out_of_scope": True,
+                "reason": "x",
+            }
+        )
+    )
+    decision = await llm_route("how are shipping costs affecting exporters?", llm)
+
+    assert decision.notes == [expected_note]
+    assert "names a sector" not in decision.notes[0]
+
+
+async def test_llm_route_leaves_notes_empty_when_the_question_is_in_scope():
+    """The note is an explanation of a refusal. An answered question has none."""
+    llm = FakeLLMClient(
+        response='{"route": ["agriculture_commodity"], "sectors": ["agriculture"], '
+        '"relevance": {"agriculture_commodity": 1.0}, '
+        '"out_of_scope": false, "reason": "names tea"}'
+    )
+    decision = await llm_route("how have tea exports grown?", llm)
+
+    assert decision.notes == []
+
+
+def test_both_routers_end_an_out_of_scope_note_with_the_same_scope_sentence():
+    """The two routers built their own copies of this sentence and drifted --
+    `keyword_route` said "apparel (HS 61/62)" where the no-topic branch said
+    "apparel (HS 61/62) exports", and `llm_route` said nothing at all. One
+    constant now, so a future edit cannot desynchronise them again.
+    """
+    assert keyword_route("who is Euler").notes[0].endswith(SCOPE_SENTENCE)
+    assert keyword_route("how is tourism revenue trending?").notes[0].endswith(SCOPE_SENTENCE)
+    assert NO_TOPIC_NOTE.endswith(SCOPE_SENTENCE)
+    assert MIXED_SCOPE_NOTE.endswith(SCOPE_SENTENCE)
+
+
+# --- freight / logistics is named as excluded, not left topic-less -------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "How are shipping costs affecting Sri Lankan exporters?",
+        "What are ocean freight rates doing?",
+        "How have container rates moved this year?",
+    ],
+)
+def test_a_freight_question_names_freight_as_the_reason(query):
+    """CeyNex holds no freight, shipping-cost or logistics data (SRS 2.4 scope is
+    agriculture and apparel). Before this these questions matched no keyword group
+    at all and fell to the "names nothing CeyNex covers" branch, which is a worse
+    explanation than the true one: the topic is recognised, it is just not held.
+    """
+    decision = keyword_route(query)
+
+    assert decision.out_of_scope
+    assert not decision.no_topic_recognized, "freight is a recognised exclusion, not an unrecognised topic"
+    assert any(word in decision.notes[0] for word in ("freight", "shipping cost", "container rate"))
+    assert decision.route, "an out-of-scope query still gets an agent so the user hears back"
+
+
+def test_freight_alongside_an_in_scope_sector_still_answers_the_in_scope_half():
+    """Same mixed-question rule the gems/tea case established: naming an excluded
+    topic does not throw away the half CeyNex can answer.
+    """
+    decision = keyword_route("Are logistics costs hurting Sri Lankan tea exporters?")
+
+    assert "agriculture_commodity" in decision.route, "the tea half must still be answered"
+    assert decision.out_of_scope
+    assert not decision.no_topic_recognized
+    assert "also asks" in decision.notes[0]
+
+
+def test_shipping_as_a_business_model_is_not_a_freight_question():
+    """`OUT_OF_SCOPE_WORDS` matches on substrings, so a bare "shipping" would
+    exclude "drop-shipping apparel" -- a question squarely about apparel. The
+    two-word entries are what keep that in scope.
+    """
+    decision = keyword_route("How is our drop-shipping apparel channel performing?")
+
+    assert not decision.out_of_scope
+    assert "apparel_manufacturing" in decision.route
 
 
 # --- policy questions reach the agent that holds the corpus (D10) --------
