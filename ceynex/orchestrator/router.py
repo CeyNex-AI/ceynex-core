@@ -63,10 +63,30 @@ FORECAST_WORDS = (
     "forecast", "predict", "projection", "outlook", "next year", "next quarter",
     "next month", "will ", "future", "expected", "going to",
 )
+# Stems, not whole words, wherever a question is as likely to use the adjective
+# as the noun. "concentration" alone missed "how concentrated are…" and nothing
+# matched "diversified" at all, so X04 and X06 -- both squarely analytics
+# questions -- matched no keyword group whatsoever and were flagged as naming
+# nothing CeyNex covers (found 2026-09-03).
 ANALYTICS_WORDS = (
-    "trend", "growth", "cagr", "market share", "concentration", "district",
+    "trend", "growth", "cagr", "market share", "concentrat", "diversif", "district",
     "fastest", "largest", "top ", "which country", "which importing",
     "compare", "comparison", "versus", " vs ", "over the last", "historical",
+)
+
+# A question can compare Sri Lanka's export *sectors* without naming a single
+# commodity or garment. "Which of Sri Lanka's export sectors is most concentrated
+# in a single market?" is about agriculture and apparel both, and neither
+# AGRICULTURE_WORDS nor APPAREL_WORDS sees it. Measured live 2026-09-03: it was
+# answered about tea alone at confidence 0.9, contradicting itself in one
+# sentence ("most concentrated" … "relatively diversified"). Under-fanning is the
+# dangerous direction -- a confident answer to half the question.
+#
+# Plural "sectors" on purpose: "the apparel sector" is a single-sector question
+# and must not be dragged across both.
+CROSS_SECTOR_WORDS = (
+    "export sector", "sectors", "export base", "across sector",
+    "which sector", "each sector", "either sector",
 )
 
 # SRS 2.4 fixes scope. Naming one of these is a strong signal the question is
@@ -159,6 +179,9 @@ def keyword_route(query: str) -> RouteDecision:
     wants_simulation = _any(lowered, SIMULATION_WORDS) or _any(lowered, POLICY_WORDS)
     wants_forecast = _any(lowered, FORECAST_WORDS)
     wants_analytics = _any(lowered, ANALYTICS_WORDS)
+    # Only meaningful when the question names neither sector explicitly -- once it
+    # does, that naming is the better signal and this adds nothing.
+    hits_cross_sector = _any(lowered, CROSS_SECTOR_WORDS)
 
     # Flagged whenever an uncovered sector is named, in-scope words present or
     # not. Suppressing the flag when the query also names tea or apparel is what
@@ -176,6 +199,7 @@ def keyword_route(query: str) -> RouteDecision:
     no_topic_recognized = not (
         hits_agriculture
         or hits_apparel
+        or hits_cross_sector
         or wants_simulation
         or wants_forecast
         or wants_analytics
@@ -188,7 +212,9 @@ def keyword_route(query: str) -> RouteDecision:
         sectors.append("agriculture")
     if hits_apparel:
         sectors.append("apparel")
-    if len(sectors) == 2:
+    # Naming both sectors and naming neither-but-comparing-sectors are the same
+    # question shape: the answer has to span both to be an answer at all.
+    if len(sectors) == 2 or (hits_cross_sector and not sectors):
         sectors = ["cross_sector", "agriculture", "apparel"]
     if wants_simulation and "macro" not in sectors:
         sectors.append("macro")
@@ -211,8 +237,18 @@ def keyword_route(query: str) -> RouteDecision:
     if hits_apparel and not wants_simulation:
         relevance["apparel_manufacturing"] = 1.0
 
+    # Below the 1.0 an explicitly named sector earns: the question is about both
+    # sectors, but it named neither, so neither agent is the centre of it.
+    # `setdefault` because the simulation branch above already seeds both at 0.6
+    # for the same "no sector named" case, and that weight is its to set.
+    if hits_cross_sector and not (hits_agriculture or hits_apparel):
+        relevance.setdefault("agriculture_commodity", 0.7)
+        relevance.setdefault("apparel_manufacturing", 0.7)
+
     if wants_forecast:
-        relevance["forecast"] = 0.9 if (hits_agriculture or hits_apparel) else 0.7
+        relevance["forecast"] = (
+            0.9 if (hits_agriculture or hits_apparel or hits_cross_sector) else 0.7
+        )
 
     # Export Analytics answers from Cypher (SRS 3.1.6), so it can contribute
     # market share, concentration and growth to any question naming a sector or
@@ -229,7 +265,7 @@ def keyword_route(query: str) -> RouteDecision:
     # without adding information.
     if wants_analytics:
         relevance["export_analytics"] = 1.0
-    elif (hits_agriculture or hits_apparel) and not wants_simulation:
+    elif (hits_agriculture or hits_apparel or hits_cross_sector) and not wants_simulation:
         relevance["export_analytics"] = 0.7
     elif not relevance:
         relevance["export_analytics"] = 0.6
@@ -239,7 +275,10 @@ def keyword_route(query: str) -> RouteDecision:
         relevance[DEFAULT_AGENT] = 0.5
 
     route = [agent for agent in ALL_AGENTS if agent in relevance]
-    reason = _explain(hits_agriculture, hits_apparel, wants_simulation, wants_forecast, wants_analytics)
+    reason = _explain(
+        hits_agriculture, hits_apparel, hits_cross_sector,
+        wants_simulation, wants_forecast, wants_analytics,
+    )
 
     decision = RouteDecision(
         route=route,
@@ -265,7 +304,9 @@ def _any(haystack: str, needles: tuple[str, ...]) -> bool:
     return any(needle in haystack for needle in needles)
 
 
-def _explain(agri: bool, apparel: bool, sim: bool, forecast: bool, analytics: bool) -> str:
+def _explain(
+    agri: bool, apparel: bool, cross_sector: bool, sim: bool, forecast: bool, analytics: bool
+) -> str:
     parts = []
     if agri and apparel:
         parts.append("names both sectors")
@@ -273,6 +314,8 @@ def _explain(agri: bool, apparel: bool, sim: bool, forecast: bool, analytics: bo
         parts.append("names agriculture")
     elif apparel:
         parts.append("names apparel")
+    elif cross_sector:
+        parts.append("compares sectors without naming one")
     if sim:
         parts.append("asks about a policy or currency shock")
     if forecast:
@@ -296,6 +339,13 @@ The agents:
 Rules:
 - Return at least one agent. Never an empty list.
 - A question spanning both sectors gets both sector agents.
+- A question comparing Sri Lanka's export SECTORS while naming no commodity and no garment
+  spans both sectors: return agriculture_commodity AND apparel_manufacturing AND
+  export_analytics, with sectors ["cross_sector"]. "Which of Sri Lanka's export sectors is
+  most concentrated in a single market?", "Is Sri Lanka's export base becoming more or less
+  diversified across sectors?" and "Which sector should Sri Lanka prioritise?" are all three
+  agents, NOT export_analytics alone -- on its own it answers about whichever single
+  commodity it defaults to and calls that the answer to a question about every sector.
 - A currency, tariff or agreement question gets trade_economics, plus the sector agents it affects.
 - ANY question about a foreign government's or trade bloc's trade policy, trade strategy, tariffs, non-tariff measures, preferences, market access or priority markets gets trade_economics -- INCLUDING when it only asks what that policy SAYS and simulates nothing. export_analytics holds only Sri Lanka's own trade flows and cannot answer any of them.
   ADD the sector agent too whenever such a question names goods: "What non-tariff measures does the EU apply to spices?" is trade_economics AND agriculture_commodity; "Which trade agreement gives Sri Lankan cinnamon preferential access?" is trade_economics AND agriculture_commodity. trade_economics alone is right only when no commodity or garment is named at all, as in "What does India's Foreign Trade Policy say about imports from Sri Lanka?".
