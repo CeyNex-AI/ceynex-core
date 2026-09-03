@@ -61,7 +61,12 @@ import httpx
 
 from ceynex import settings
 from ceynex.news.schema import NewsArticle, parse_seendate
-from ceynex.news.throttle import MIN_INTERVAL_S, Throttle, build_throttle
+from ceynex.news.throttle import (
+    MIN_INTERVAL_S,
+    RATE_LIMIT_PENALTY_S,
+    Throttle,
+    build_throttle,
+)
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +81,12 @@ LANGUAGE_CLAUSE = "sourcelang:english"
 MAX_RECORDS_CEILING = 250
 
 #: How long a caller will wait for a throttle slot before giving up and letting
-#: the caller degrade. Generous for the refresher, overridden by the route.
-DEFAULT_MAX_WAIT_S = 30.0
+#: the caller degrade. Overridden by the route, which fails fast to the store.
+#:
+#: Longer than `RATE_LIMIT_PENALTY_S` on purpose: the refresher should *wait out*
+#: a rate-limit penalty rather than fail every remaining topic against it. Set
+#: below the penalty, a single 429 costs the rest of the cycle.
+DEFAULT_MAX_WAIT_S = 90.0
 
 
 class GdeltUnavailableError(RuntimeError):
@@ -332,7 +341,10 @@ class GdeltClient:
             else:
                 if response.status_code == 429:
                     # Retrying into a 429 is how a courtesy limit becomes a ban.
-                    # Honour it and let the caller degrade.
+                    # Shut the gate for everyone first — a 429 says our interval
+                    # is wrong for current conditions, so the next caller through
+                    # would hit it too — then let this one degrade.
+                    await self._throttle.penalise(RATE_LIMIT_PENALTY_S)
                     raise GdeltUnavailableError(
                         f"GDELT rate limited us (retry-after "
                         f"{response.headers.get('retry-after', 'unset')})"

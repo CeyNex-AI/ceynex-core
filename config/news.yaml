@@ -42,12 +42,14 @@ gdelt:
   # order, which is why ceynex/news/relevance.py re-ranks locally.
   sort: HybridRel
 
-  # GDELT publishes no rate limit. One request every five seconds is the
-  # community convention and this project is a guest on a free service, so the
-  # gate is deliberately conservative rather than tuned to what we can get away
-  # with. At this interval the ceiling is 720 calls/hour and the refresher uses
-  # 28 of them (see trending.topics — two calls per topic).
-  min_interval_s: 5.0
+  # GDELT publishes no rate limit in its docs, but it enforces one and will tell
+  # you so: the 429 body reads "Please limit requests to one every 5 seconds".
+  #
+  # Six, not five. At exactly the stated interval the deployed refresher still
+  # collected 429s on eight of fourteen topics — whatever GDELT measures, it is
+  # not generous about the boundary. A second of headroom costs 14s per cycle,
+  # once an hour, and buys the difference between a full panel and half of one.
+  min_interval_s: 6.0
 
   request_timeout_s: 6.0
 

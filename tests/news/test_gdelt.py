@@ -180,6 +180,61 @@ async def test_a_429_is_not_retried_into(tmp_path):
     await client.close()
 
 
+async def test_a_429_shuts_the_gate_for_every_caller_not_just_this_one(tmp_path):
+    """A 429 says our interval is wrong for current conditions.
+
+    Penalising only the caller that saw it would send the next process straight
+    into the same wall — which is exactly what happened on the deployed box,
+    where eight of fourteen topics collected 429s in a row.
+    """
+
+    class RecordingThrottle(NoThrottle):
+        penalties: list[float] = []
+
+        async def penalise(self, seconds):
+            RecordingThrottle.penalties.append(seconds)
+
+    client, _ = client_returning(
+        httpx.Response(429), tmp_path=tmp_path, throttle=RecordingThrottle()
+    )
+
+    with pytest.raises(GdeltUnavailableError, match="rate limited"):
+        await client.articles("tea")
+
+    assert RecordingThrottle.penalties, "the gate was not held shut"
+    await client.close()
+
+
+async def test_every_attempt_takes_its_own_throttle_slot(tmp_path):
+    """Acquiring once per request and retrying inside that slot is the obvious
+    shape and it is wrong: the retries then fire at the backoff interval rather
+    than the gate's, which is how a run of transient failures becomes the burst
+    the gate exists to prevent."""
+
+    class CountingThrottle(NoThrottle):
+        acquired = 0
+
+        async def acquire(self, *, max_wait_s):
+            CountingThrottle.acquired += 1
+            return True
+
+    def handler(request):
+        raise httpx.ConnectError("reset")
+
+    client = GdeltClient(
+        throttle=CountingThrottle(),
+        cache_dir=tmp_path / "c",
+        forensic_dir=tmp_path / "f",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(GdeltUnavailableError):
+        await client.articles("tea", attempts=3, backoff_base_s=0.0)
+
+    assert CountingThrottle.acquired == 3
+    await client.close()
+
+
 async def test_a_refused_throttle_slot_makes_no_http_call_at_all(tmp_path):
     """The whole point of refusing is not to spend the call."""
 
