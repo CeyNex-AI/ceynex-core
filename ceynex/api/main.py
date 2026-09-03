@@ -25,7 +25,7 @@ from ceynex.api.api_keys import ensure_table as ensure_api_keys_table
 from ceynex.api.deps import Runtime, set_runtime
 from ceynex.api.history import ensure_table as ensure_history_table
 from ceynex.api.preferences import ensure_table as ensure_preferences_table
-from ceynex.api.routes import account, admin, auth, health, history, news, query
+from ceynex.api.routes import account, admin, auth, graph, health, history, news, query
 from ceynex.news import refresh as news_refresh
 from ceynex.news import snapshot as news_snapshot
 
@@ -107,3 +107,4 @@ app.include_router(history.router)
 app.include_router(admin.router)
 app.include_router(account.router)
 app.include_router(news.router)
+app.include_router(graph.router)
