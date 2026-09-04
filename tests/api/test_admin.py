@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import admin as admin_module
+from ceynex.api import audit as audit_module
 from ceynex.api import deps as deps_module
 from ceynex.api.auth import DemoUser, issue_token
 from ceynex.api.deps import Runtime
@@ -28,6 +29,22 @@ from ceynex.models.registry import ModelMetadata
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def captured_audit(monkeypatch):
+    """Every mutating admin route now writes an audit row before acting
+    (`routes/admin.py`'s `_audit`) — patch the real DB write to a no-op that
+    records calls, so existing tests here don't need a live Postgres. Tests
+    that care about the audit behaviour itself read `calls` back; the rest
+    can ignore it."""
+    calls: list[dict[str, object]] = []
+
+    def fake_record(*, actor_email: str, action: str, target: str | None) -> None:
+        calls.append({"actor_email": actor_email, "action": action, "target": target})
+
+    monkeypatch.setattr(audit_module, "record", fake_record)
+    return calls
 
 
 class FakeKGForRuntime:
@@ -89,6 +106,7 @@ ADMIN_ROUTES = [
     ("GET", "/api/admin/dq-flags", None),
     ("POST", "/api/admin/dq-flags/1/resolve", None),
     ("GET", "/api/admin/llm/status", None),
+    ("GET", "/api/admin/audit-log", None),
 ]
 
 
@@ -396,3 +414,128 @@ def test_llm_status_distinguishes_a_down_openai_from_an_ok_openrouter(llm_status
     assert body["openai"]["status"] == "down"
     assert body["openai"]["last_error"] == "rate limited"
     assert body["openrouter"]["status"] == "ok"
+
+
+# --- audit log (SRS 3.4.7) -------------------------------------------------
+
+
+def test_retrain_writes_an_audit_row_before_retraining(client, monkeypatch, captured_audit):
+    import pandas as pd
+
+    monkeypatch.setattr(
+        "ceynex.data.reader.annual_series",
+        lambda item, sector, target: pd.DataFrame({"period": [2023], "value": [1.0]}),
+    )
+    monkeypatch.setattr(
+        "ceynex.models.registry.retrain",
+        lambda sector, item, target, df, **kw: ModelMetadata(
+            sector=sector, item=item, target=target, version="v1",
+            saved_at="2026-08-21T00:00:00+00:00", model_class="TimeSeriesModel",
+            model_module="ceynex.models.timeseries", training_rows=1, metrics=None,
+            interval_level=0.8, notes=None,
+        ),
+    )
+
+    response = client.post(
+        "/api/admin/retrain",
+        json={"sector": "agriculture", "item": "cinnamon"},
+        headers=admin_headers(),
+    )
+
+    assert response.status_code == 200
+    assert captured_audit == [
+        {
+            "actor_email": "admin@ceynex.dev", "action": "retrain",
+            "target": "agriculture/cinnamon/export_value_usd",
+        }
+    ]
+
+
+def test_ingest_writes_an_audit_row_naming_every_source(client, monkeypatch, captured_audit):
+    from ceynex.data.writer import WriteResult
+
+    monkeypatch.setattr(
+        "ceynex.data.pipeline.run_source",
+        lambda name, writer: WriteResult(
+            source_id=name, run_id=1, rows_in=1, rows_written=1, dq_flags=0,
+            parquet_path=None, status="success",
+        ),
+    )
+
+    response = client.post(
+        "/api/admin/pipeline/ingest", json={"sources": ["edb"]}, headers=admin_headers()
+    )
+
+    assert response.status_code == 200
+    assert captured_audit == [
+        {"actor_email": "admin@ceynex.dev", "action": "pipeline_ingest", "target": "edb"}
+    ]
+
+
+def test_resolve_dq_flag_writes_an_audit_row_naming_the_flag(client, monkeypatch, captured_audit):
+    monkeypatch.setattr(admin_module, "resolve_dq_flag", lambda flag_id: True)
+
+    response = client.post("/api/admin/dq-flags/7/resolve", headers=admin_headers())
+
+    assert response.status_code == 200
+    assert captured_audit == [
+        {"actor_email": "admin@ceynex.dev", "action": "resolve_dq_flag", "target": "7"}
+    ]
+
+
+def test_an_unwritable_audit_log_blocks_retrain_rather_than_running_it_unlogged(
+    client, monkeypatch
+):
+    """The point of the whole feature: a DB outage must not let a mutation
+    through unaudited. `_do_retrain` should never even be called."""
+
+    def boom(*, actor_email, action, target):
+        raise psycopg.OperationalError("db down")
+
+    monkeypatch.setattr(audit_module, "record", boom)
+
+    called = False
+
+    def spy(*a, **kw):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("ceynex.api.routes.admin._do_retrain", spy)
+
+    response = client.post(
+        "/api/admin/retrain",
+        json={"sector": "agriculture", "item": "cinnamon"},
+        headers=admin_headers(),
+    )
+
+    assert response.status_code == 503
+    assert called is False
+
+
+def test_audit_log_lists_entries(client, monkeypatch):
+    entry = audit_module.AuditEntry(
+        id=1, actor_email="admin@ceynex.dev", action="retrain",
+        target="agriculture/cinnamon/export_value_usd", logged_at="2026-08-21T00:00:00+00:00",
+    )
+    monkeypatch.setattr(audit_module, "list_entries", lambda: [entry])
+
+    response = client.get("/api/admin/audit-log", headers=admin_headers())
+
+    assert response.status_code == 200
+    assert response.json()["entries"] == [
+        {
+            "id": 1, "actor_email": "admin@ceynex.dev", "action": "retrain",
+            "target": "agriculture/cinnamon/export_value_usd",
+            "logged_at": "2026-08-21T00:00:00+00:00",
+        }
+    ]
+
+
+def test_audit_log_outage_is_a_503(client, monkeypatch):
+    def boom():
+        raise psycopg.OperationalError("db down")
+
+    monkeypatch.setattr(audit_module, "list_entries", boom)
+
+    response = client.get("/api/admin/audit-log", headers=admin_headers())
+    assert response.status_code == 503

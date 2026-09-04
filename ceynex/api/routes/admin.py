@@ -27,10 +27,12 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
-from ceynex.api import admin
+from ceynex.api import admin, audit
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.routes.auth import TokenPayload, require_admin
 from ceynex.api.schemas import (
+    AuditLogItem,
+    AuditLogResponse,
     DQFlagItem,
     DQFlagsResponse,
     IngestRequest,
@@ -47,6 +49,20 @@ from ceynex.api.schemas import (
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+async def _audit(admin_user: TokenPayload, action: str, target: str | None) -> None:
+    """Write the audit row *before* the mutation it covers — see
+    `ceynex/api/audit.py`'s module docstring for why a failed write must block
+    the action rather than let it run unlogged."""
+    try:
+        await asyncio.to_thread(
+            audit.record, actor_email=admin_user.email, action=action, target=target
+        )
+    except psycopg.Error as exc:
+        raise HTTPException(
+            status_code=503, detail="could not write audit log; action not performed"
+        ) from exc
 
 
 # --- LLM provider status -------------------------------------------------
@@ -134,8 +150,9 @@ def _do_retrain(sector: str, item: str, target: str) -> Any:
 @router.post("/retrain", response_model=ModelSummary)
 async def retrain(
     request: RetrainRequest,
-    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
 ) -> ModelSummary:
+    await _audit(admin_user, "retrain", f"{request.sector}/{request.item}/{request.target}")
     metadata = await asyncio.to_thread(_do_retrain, request.sector, request.item, request.target)
     return _model_summary(metadata)
 
@@ -177,7 +194,7 @@ def _run_ingest(names: list[str]) -> list[IngestResultItem]:
 @router.post("/pipeline/ingest", response_model=IngestResponse)
 async def trigger_ingest(
     request: IngestRequest,
-    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
 ) -> IngestResponse:
     from ceynex.data.pipeline import CONNECTORS
 
@@ -189,6 +206,7 @@ async def trigger_ingest(
             detail=f"unknown sources: {unknown} (known: {sorted(CONNECTORS)})",
         )
 
+    await _audit(admin_user, "pipeline_ingest", ",".join(names))
     results = await asyncio.to_thread(_run_ingest, names)
     return IngestResponse(results=results)
 
@@ -241,8 +259,9 @@ async def list_dq_flags(
 @router.post("/dq-flags/{flag_id}/resolve", response_model=ResolveDQFlagResponse)
 async def resolve_dq_flag(
     flag_id: int,
-    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
 ) -> ResolveDQFlagResponse:
+    await _audit(admin_user, "resolve_dq_flag", str(flag_id))
     try:
         found = await asyncio.to_thread(admin.resolve_dq_flag, flag_id)
     except psycopg.Error as exc:
@@ -250,3 +269,23 @@ async def resolve_dq_flag(
     if not found:
         raise HTTPException(status_code=404, detail=f"no dq_flag with id {flag_id}")
     return ResolveDQFlagResponse(flag_id=flag_id, resolved=True)
+
+
+# --- audit log (SRS 3.4.7) -------------------------------------------------
+
+
+@router.get("/audit-log", response_model=AuditLogResponse)
+async def audit_log(_admin: TokenPayload = Depends(require_admin)) -> AuditLogResponse:  # noqa: B008
+    try:
+        entries = await asyncio.to_thread(audit.list_entries)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="audit log unavailable") from exc
+    return AuditLogResponse(
+        entries=[
+            AuditLogItem(
+                id=e.id, actor_email=e.actor_email, action=e.action,
+                target=e.target, logged_at=e.logged_at,
+            )
+            for e in entries
+        ]
+    )
