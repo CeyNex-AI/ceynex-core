@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ceynex.agents.common import ITEM_KEYWORDS
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.orchestrator.confidence import aggregate_confidence, confidence_band
 from ceynex.orchestrator.grounding import ungrounded_figures
@@ -533,20 +534,85 @@ def _covered_by_another_finding(
     subject -- so it matches on the subject alone, and requires all of it. A
     partial match is how "no district share is recorded for cinnamon" would get
     swallowed by a cinnamon market-share answer that never mentions districts.
+
+    Falls back to `_same_item_already_answered` when this fails, which covers
+    the shape the exact-word check structurally cannot: a decline refusing one
+    *metric* (agriculture_commodity has only a tea export-**volume** series) is
+    not itself a gap once a contributing finding reports the same **item** by a
+    different metric (export_analytics/forecast answering in export **value**).
+    "volume" then never appears in the covering finding's text at all, so no
+    literal subject word could ever satisfy the check above -- found live
+    2026-09-04, 18/65 answers, when the Tea Board volume and FAOSTAT price
+    series both had zero usable observations on the host and every other
+    tea/cinnamon question that a value- or model-based agent answered correctly
+    still carried this decline into `unanswered[]`.
     """
     subject = _significant_words(query) & _significant_words(decline)
-    if not subject:
+    if subject and any(
+        all(word in _covered_text(output) for word in subject) for output in contributing.values()
+    ):
+        return True
+    return _same_item_already_answered(query, decline, contributing)
+
+
+def _same_item_already_answered(
+    query: str, decline: str, contributing: dict[AgentName, AgentOutput]
+) -> bool:
+    """Narrower than the check above: item identity only, not full subject overlap.
+
+    Deliberately scoped to the one metric this is known to be safe for:
+    **export volume**. Export volume, export value, and export growth are
+    different measures of the same underlying "how is this item's trade
+    doing" question, so a volume series being empty does not mean that
+    question went unanswered once another finding reports it in value or
+    growth terms instead. Producer **price** and **production** are not
+    interchangeable with a trade-value answer the same way -- a missing price
+    or production series stays a real, reportable gap even when a value/volume
+    finding exists for the same item (e.g. a cinnamon producer-price question
+    genuinely has no answer when only export-value data exists), so those
+    decline shapes fall through to the exact-word check above unchanged.
+
+    A decline of this shape names exactly one commodity (`ITEM_KEYWORDS`'s
+    canonical items or one of their synonyms -- "tea", "ceylon tea", ...). If
+    the query names that same commodity and a contributing finding also names
+    it while reporting at least one real figure, the specific series this
+    decline refuses is not something the reader still needs to hear about --
+    the question about that commodity was answered, just not by this agent's
+    metric. Requires the decline to name exactly one item (`_named_item`
+    returns `None` on zero or several) so this never fires on a decline whose
+    subject is ambiguous.
+    """
+    if "volume" not in decline.lower():
         return False
-    for output in contributing.values():
-        covered = " ".join(
-            [
-                output.get("summary") or "",
-                *(str(item.get("claim", "")) for item in output.get("evidence") or []),
-            ]
-        ).lower()
-        if all(word in covered for word in subject):
-            return True
-    return False
+    item = _named_item(decline)
+    if item is None or item not in _named_items(query):
+        return False
+    return any(
+        output.get("figures") and item in _named_items(_covered_text(output))
+        for output in contributing.values()
+    )
+
+
+def _covered_text(output: AgentOutput) -> str:
+    return " ".join(
+        [
+            output.get("summary") or "",
+            *(str(item.get("claim", "")) for item in output.get("evidence") or []),
+        ]
+    ).lower()
+
+
+def _named_items(text: str) -> set[str]:
+    """Canonical `ITEM_KEYWORDS` items named in `text` via any of their
+    synonyms (so "ceylon tea" and "black tea" both resolve to "tea")."""
+    lowered = text.lower()
+    return {item for item, synonyms in ITEM_KEYWORDS.items() if any(s in lowered for s in synonyms)}
+
+
+def _named_item(text: str) -> str | None:
+    """The single item `text` names, or `None` if it names none or several."""
+    items = _named_items(text)
+    return next(iter(items)) if len(items) == 1 else None
 
 
 def _significant_words(text: str) -> set[str]:
