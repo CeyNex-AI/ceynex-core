@@ -176,30 +176,43 @@ prose the LLM never wrote would have measured the deterministic composer, which
 is not what SRS 3.1.2 is about. Everything else outstanding is a command; this
 one needs three people's calendars, so book it before writing anything else.
 
-## Audit logging (SRS 3.4.7) — not built
+## Audit logging (SRS 3.4.7) — administrative half now built
 
-**Found 2026-08-28 while implementing the rate limiter, and not previously
-recorded anywhere — which is the failure this file exists to prevent.**
+**Found 2026-08-28 while implementing the rate limiter, not previously
+recorded anywhere. The administrative half was built 2026-09-04.**
 
 SRS 3.4.7 requires "an audit log of all user queries and all administrative
 actions, such as changes to user accounts or manual interventions in the data
-pipeline". Half of that exists by accident rather than by design:
+pipeline". Two different mechanisms cover the two halves:
 
 - **User queries** are recorded, for signed-in callers only, by
   `ceynex/api/history.py`. That table was built for SRS 3.5.2 (the user's own
   history), so it is scoped to the caller and has no retention or tamper
   story. It is a feature that happens to leave a trail, not an audit log.
-- **Administrative actions are not recorded at all.** `POST /api/admin/retrain`,
-  `POST /api/admin/pipeline/ingest` and `POST /api/admin/dq-flags/{id}/resolve`
-  all mutate real state, all require the `admin` role — and none of them write
-  down who did it or when. After the fact there is no way to tell which admin
-  retrained a model or resolved a discrepancy flag.
+- **Administrative actions** are now recorded by `ceynex/api/audit.py`'s
+  `audit_log` table. `POST /api/admin/retrain`, `POST /api/admin/pipeline/ingest`
+  and `POST /api/admin/dq-flags/{id}/resolve` each write an `(actor_email,
+  action, target, logged_at)` row via `routes/admin.py`'s `_audit()` helper
+  **before** performing the mutation, and `GET /api/admin/audit-log` (also
+  behind `require_admin`) lists them back, newest first.
 
-The second half is the one that matters and the one to build: an append-only
-table written by `require_admin`'s callers, recording actor, action, target and
-timestamp. Left undone deliberately rather than half-built under time pressure,
-because an audit log that misses some actions is worse than none — it invites
-the reader to trust a record that is not complete.
+  This is deliberately not opportunistic the way `history.record()` is: a
+  lost history row costs nothing, but an admin mutation with no audit row is
+  exactly the failure this section used to warn about — "an audit log that
+  misses some actions is worse than none, it invites the reader to trust a
+  record that is not complete." So `audit.record()` lets `psycopg.Error`
+  propagate, and `_audit()` turns that into a 503 *before* the mutation runs —
+  a Postgres outage blocks the admin action rather than letting it through
+  unlogged. `tests/api/test_admin.py`'s
+  `test_an_unwritable_audit_log_blocks_retrain_rather_than_running_it_unlogged`
+  holds that line directly, spying on `_do_retrain` to prove it is never
+  called when the audit write fails.
+
+  Not covered by this table, deliberately out of scope for SRS 3.4.7's
+  "administrative actions" wording: login/logout, and the read-only admin
+  routes (`GET /models`, `/pipeline/status`, `/dq-flags`, `/llm/status`) —
+  none of them mutate state. No retention policy or export tooling exists yet
+  either; the table is append-only Postgres, nothing more.
 
 ## Rate limiting (SRS 3.4.6) — built, with one stated exposure
 

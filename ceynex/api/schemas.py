@@ -305,6 +305,18 @@ class ResolveDQFlagResponse(BaseModel):
     resolved: bool
 
 
+class AuditLogItem(BaseModel):
+    id: int
+    actor_email: str
+    action: str
+    target: str | None
+    logged_at: str
+
+
+class AuditLogResponse(BaseModel):
+    entries: list[AuditLogItem]
+
+
 class ProviderStatusItem(BaseModel):
     configured: bool
     status: str  # "not_configured" | "cap_reached" | "unknown" | "ok" | "down"
