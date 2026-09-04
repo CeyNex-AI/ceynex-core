@@ -32,7 +32,7 @@ from typing import Any
 
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.orchestrator.confidence import aggregate_confidence, confidence_band
-from ceynex.orchestrator.grounding import ungrounded_figures
+from ceynex.orchestrator.grounding import corpus_texts, ungrounded_figures
 
 log = logging.getLogger(__name__)
 
@@ -289,25 +289,20 @@ def _grounding_corpus(
 ) -> list[str]:
     """Everything the merge LLM was shown, as text to draw figures from.
 
-    Mirrors `_merge_prompt` plus the evidence. The figures are rendered in
-    several forms on purpose: the prompt shows `f"{value:,.4g}"`, so a large
-    number reaches the model as `1.235e+09` and can honestly come back as
-    "1.235 billion", while the same value's plain `str()` is what a summary
-    sentence would contain. Only offering one spelling would reject correct
-    prose for restating a figure in the form it was given.
-    """
+    Mirrors `_merge_prompt` plus the evidence. Rendering itself lives in
+    `orchestrator.grounding.corpus_texts` — shared with `agents.common.finish`'s
+    equivalent per-agent check, so the two scopes can't drift on what counts
+    as "the same figure, restated"."""
     texts: list[str] = [query]
     for output in outputs.values():
-        texts.append(output.get("summary") or "")
-        for value in (output.get("figures") or {}).values():
-            texts.append(str(value))
-            if isinstance(value, int | float):
-                texts.append(f"{value:,.4g}")
-                texts.append(f"{value:,.2f}")
-        texts.extend(output.get("assumptions") or [])
-    for item in evidence:
-        texts.append(str(item.get("claim", "")))
-        texts.append(str(item.get("detail", "")))
+        texts.extend(
+            corpus_texts(
+                summary=output.get("summary"),
+                figures=output.get("figures"),
+                assumptions=output.get("assumptions"),
+            )
+        )
+    texts.extend(corpus_texts(evidence=evidence))
     return texts
 
 
