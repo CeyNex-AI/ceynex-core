@@ -59,6 +59,43 @@ def numbers_in(text: str) -> set[str]:
     return {_normalise(match) for match in NUMBER.findall(text or "")}
 
 
+def corpus_texts(
+    *,
+    summary: str | None = None,
+    figures: dict[str, object] | None = None,
+    evidence: Iterable[dict[str, object]] | None = None,
+    assumptions: Iterable[str] | None = None,
+) -> list[str]:
+    """Every text form a set of findings could restate a figure in.
+
+    The one place this rendering lives, shared by `merger._grounding_corpus`
+    (checks the merge LLM's prose against every contributing finding) and
+    `agents.common.finish` (checks a single agent's own explanation prose
+    against that same agent's own findings, before the explanation ever
+    reaches the merger) — two different scopes, same figure-matching rule,
+    so the rendering can't drift between them.
+
+    Figures are rendered in multiple forms deliberately: a prompt shows a
+    large number as `f"{value:,.4g}"`, so it can honestly come back as
+    "1.235 billion", while a plain summary sentence would contain the same
+    value's `f"{value:,.2f}"` form. Offering only one spelling would reject
+    correct prose for restating a figure in the form it was actually given.
+    """
+    texts: list[str] = []
+    if summary:
+        texts.append(summary)
+    for value in (figures or {}).values():
+        texts.append(str(value))
+        if isinstance(value, int | float):
+            texts.append(f"{value:,.4g}")
+            texts.append(f"{value:,.2f}")
+    for item in evidence or []:
+        texts.append(str(item.get("claim", "")))
+        texts.append(str(item.get("detail", "")))
+    texts.extend(assumptions or [])
+    return texts
+
+
 def ungrounded_figures(answer: str, corpus: Iterable[str]) -> list[str]:
     """Figures in `answer` that appear nowhere in `corpus`, in source order.
 
@@ -90,4 +127,4 @@ def ungrounded_figures(answer: str, corpus: Iterable[str]) -> list[str]:
     return missing
 
 
-__all__ = ["NUMBER", "numbers_in", "ungrounded_figures"]
+__all__ = ["NUMBER", "corpus_texts", "numbers_in", "ungrounded_figures"]
