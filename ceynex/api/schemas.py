@@ -354,3 +354,11 @@ class CreateApiKeyResponse(BaseModel):
 class RevokeApiKeyResponse(BaseModel):
     id: int
     revoked: bool
+
+
+class SiteThemeResponse(BaseModel):
+    theme: str
+
+
+class SetSiteThemeRequest(BaseModel):
+    theme: str
