@@ -517,6 +517,79 @@ async def test_a_decline_nothing_else_covered_is_still_a_gap():
     assert "district" in result.answer.lower()
 
 
+async def test_a_volume_decline_answered_in_value_by_another_finding_is_not_a_gap():
+    """Regression, found live 2026-09-04: the Tea Board tea export-volume series
+    had zero usable observations on the host, so agriculture_commodity declined
+    ("no sourced export volume series"), but export_analytics still answered the
+    same question correctly in export *value*. The exact-word check in
+    `_covered_by_another_finding` can never see this as covered -- "volume"
+    never appears in a value-only answer -- which is exactly why this shape
+    (unlike the rubber/HHI case above, where both texts share "export" and the
+    named item is long enough to survive `_significant_words`' length filter)
+    needed `_same_item_already_answered`. 18/65 answers were affected.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Sri Lanka's tea exports grew to USD 1.4bn in 2025, up 6.2% from 2024.",
+            figures={"pct_change_export_value": 0.062},
+            evidence=[ev("KG", "Tea export value was USD 1,400,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are only 0 usable annual observations for tea export volume; a trend cannot be stated responsibly.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="How are Sri Lanka's tea exports performing?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "not covered" not in result.answer.lower()
+    assert "USD 1.4bn" in result.answer or "1,400,000,000" in result.answer
+
+
+async def test_a_price_decline_is_still_a_gap_even_when_value_is_answered():
+    """The other half of the volume/value fix: price is not substitutable by a
+    trade-value answer, so a missing cinnamon producer-price series must stay a
+    reported gap even when export_analytics answers the same question in export
+    value. Without the "volume"-only scope on `_same_item_already_answered`,
+    this would have been wrongly swallowed the same way the tea case above is
+    now correctly swallowed.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Cinnamon export value was USD 312m in 2025.",
+            figures={"export_value_usd": 312_000_000.0},
+            evidence=[ev("KG", "Cinnamon export value was USD 312,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are no usable annual observations for cinnamon producer prices in the FAOSTAT dataset.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="What is the producer price trend for Sri Lankan cinnamon?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert any("producer price" in gap.lower() for gap in result.unanswered)
+
+
 async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
     """`merge()` and this helper compute the same list by two paths, and the API
     route uses the helper. They diverged once already -- the bug this function's
