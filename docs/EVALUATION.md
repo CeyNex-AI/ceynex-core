@@ -381,6 +381,30 @@ report must quote the paper's reported MAPE with this target, frequency, and
 source difference stated beside it; it must not imply the same train/test split
 or data were used.
 
+### Agriculture agent end-to-end smoke evaluation
+
+Measured on **2026-09-06** against the local PostgreSQL `fact_trade` records,
+Neo4j graph, and registered M1 models. `python -m eval.agriculture_agent_e2e`
+runs five representative questions directly through the Agriculture & Commodity
+agent and writes its full local JSON record under `eval/results/`. It forces the
+LLM unavailable to make the run repeatable and to exercise SRS 3.4.3; therefore
+these are agent-level deterministic/degraded results, **not** a substitute for
+the orchestrator's 30-question evaluation.
+
+| Check | Required behaviour | Result |
+|---|---|---|
+| Cinnamon trend | Source-backed price trend with figures and two evidence records | Pass: 10.05 USD/kg in 2024, up 382.8% from 1991 |
+| Cinnamon forecast | Registered producer-price forecast with an 80% interval | Pass: 2025 point forecast 10.05 USD/kg; 8.96-11.15 interval; annual-frequency caveat stated |
+| Cinnamon districts | Do not invent a largest district without a sourced share | Pass: lists Matara, Galle, and Ratnapura; explicitly refuses a largest-share claim |
+| Tea export trend | Tea Board export-volume trend with figures and two evidence records | Pass: 257,440,000 kg in 2025, down 20.3% from 2011 |
+| Tea-to-rubber substitution | Do not infer a relationship without evidence | Pass: explicitly reports that the effect cannot be estimated responsibly |
+
+All **5 of 5** checks passed, with a mean of **2.0 evidence records** per
+answer. Each answer was correctly marked `degraded=True`, because no LLM prose
+was requested. The two refusal cases are passes, not missing functionality:
+they show the agent preserves evidence boundaries instead of manufacturing a
+district share or substitution effect.
+
 ### Registry release procedure
 
 The selected models are registered only from a clean, committed checkout:
