@@ -405,6 +405,33 @@ was requested. The two refusal cases are passes, not missing functionality:
 they show the agent preserves evidence boundaries instead of manufacturing a
 district share or substitution effect.
 
+### Agriculture cross-source validation
+
+`python -m eval.agriculture_validation --write-flags` validates only
+semantically equivalent, connector-normalised annual export-volume totals. It
+aggregates partner-level UN Comtrade rows to a national total, keeps an existing
+Tea Board or DEA/EAC world-total row as-is, and compares tea (`TEA_BOARD` vs
+`UN_COMTRADE`) and cinnamon (`CINNAMON` vs `UN_COMTRADE`) by item and year.
+The run is non-destructive: source facts are only read, and only material
+(5-20%) or severe (>20%) discrepancies are inserted into `dq_flag`. Exact
+existing flags are not inserted twice.
+
+The run measured on **2026-09-07**, after the documented 2015--2024 UN
+Comtrade import, found 121 FAOSTAT, 15 Tea Board, 5 Cinnamon, 2,413 UN
+Comtrade, and 0 EDB agriculture facts. It evaluated 12 overlapping annual
+commodity-source pairs: 11 were minor differences, one was material, and none
+were severe. The material finding was tea export volume for 2020: Tea Board
+reported 265,569,000 kg and the partner-aggregated UN Comtrade total was
+279,710,426.42 kg (5.32\% difference). The run inserted this one material
+finding as a `dq_flag`; source facts were not altered. Repeating the command
+does not insert the same flag again.
+
+FAOSTAT's current `fact_trade` rows are producer prices, so they are not
+compared with export volumes; Pink Sheet is an auction-price series and is
+likewise not an export-volume comparator. The configured EDB connector is
+apparel-only. WITS tariff ingestion remains deliberately deferred and is
+reported as unavailable rather than treated as validated agriculture data.
+
 ### Registry release procedure
 
 The selected models are registered only from a clean, committed checkout:
