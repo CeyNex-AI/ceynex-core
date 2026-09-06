@@ -372,6 +372,31 @@ GBM is retained only when it improves MAPE by at least 5% relative to the best
 simple candidate. It does not meet that threshold, so the annual naïve baseline
 is selected for both targets.
 
+### Fold-level forecast-error analysis
+
+`python -m eval.agriculture_forecast_errors` writes the three held-out
+predictions behind each selected annual-naïve model to a local, git-ignored JSON
+record. The following values were reproduced from the dated M1 snapshots on
+2026-09-07. Each fold trains only through the stated prior year and predicts the
+next year; it is not a random split.
+
+| Target | Test year | Actual | Forecast | Absolute percentage error | Inside 80% interval? |
+|---|---:|---:|---:|---:|---|
+| Tea export volume (kg) | 2023 | 241,912,000 | 250,191,000 | 3.42% | yes |
+| Tea export volume (kg) | 2024 | 245,787,000 | 241,912,000 | 1.58% | yes |
+| Tea export volume (kg) | 2025 | 257,440,000 | 245,787,000 | 4.53% | yes |
+| Cinnamon producer price (USD/kg) | 2022 | 9.9371 | 11.2900 | 13.61% | no |
+| Cinnamon producer price (USD/kg) | 2023 | 8.9257 | 9.9400 | 11.36% | yes |
+| Cinnamon producer price (USD/kg) | 2024 | 10.0533 | 8.9300 | 11.17% | no |
+
+Tea's largest held-out miss was 11,653,000 kg in 2025 (4.53%); all three
+actuals were inside the model's 80% intervals. This is **not** evidence of a
+calibrated 100% coverage rate: with only three folds, it can only indicate that
+the intervals were wide enough for these three outcomes. Cinnamon's 2022 price
+fall and 2024 rebound were both outside the intervals, giving 1/3 coverage
+against the nominal 80%. This undercoverage is a reason to present the interval
+as a limitation, not a guarantee.
+
 ### Cinnamon benchmark limitation
 
 The Liyanage/Silva/Marasinghe purchasing-price panel is unavailable. Therefore
@@ -431,6 +456,23 @@ compared with export volumes; Pink Sheet is an auction-price series and is
 likewise not an export-volume comparator. The configured EDB connector is
 apparel-only. WITS tariff ingestion remains deliberately deferred and is
 reported as unavailable rather than treated as validated agriculture data.
+
+### Agriculture testing and evaluation record
+
+The agriculture checks are intentionally separated by failure type so a passing
+unit test cannot be mistaken for a validated external figure:
+
+| Evidence | Reproducible command or scope | Outcome on 2026-09-07 |
+|---|---|---|
+| Forecast-error analysis | `python -m eval.agriculture_forecast_errors` | 6 held-out predictions recorded; no source or model artifact changed |
+| Model selection | `tests/models/agriculture/test_evaluation.py` and `tests/models/agriculture/test_baseline.py` | annual-naïve selected for tea and cinnamon; interval contains each point forecast |
+| Backtest rules | `tests/eval/test_backtest.py` | expanding windows, error metrics, and interval coverage checked |
+| Agent behaviour | `tests/eval/test_agriculture_agent_e2e.py` | five planned questions passed in deterministic degraded mode; see the smoke-evaluation table above |
+| Cross-source validation | `tests/eval/test_agriculture_validation.py` and `python -m eval.agriculture_validation --write-flags` | 12 comparable pairs; 11 minor, 1 material, 0 severe; one material flag retained without altering facts |
+
+These checks do not validate WITS or reproduce the unavailable published
+cinnamon purchasing-price benchmark. Those are explicit deferred/limitation
+states, rather than passing results.
 
 ### Registry release procedure
 
