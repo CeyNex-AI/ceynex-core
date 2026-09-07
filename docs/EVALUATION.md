@@ -397,6 +397,14 @@ fall and 2024 rebound were both outside the intervals, giving 1/3 coverage
 against the nominal 80%. This undercoverage is a reason to present the interval
 as a limitation, not a guarantee.
 
+Forecast confidence now includes an interval-coverage penalty in addition to
+the existing MAPE, training-observation, and staleness terms. For valid coverage
+`c < 0.80`, the penalty is `min(0.15, 0.30 * (0.80 - c))`; it is zero at or
+above nominal coverage. Thus cinnamon's 1/3 coverage reduces its self-reported
+forecast confidence by **0.14**. A model without a valid coverage metric is
+penalised by 0.10 rather than assumed calibrated. The forecast evidence and
+assumptions state this limitation whenever the penalty applies.
+
 ### Cinnamon benchmark limitation
 
 The Liyanage/Silva/Marasinghe purchasing-price panel is unavailable. Therefore

@@ -32,6 +32,19 @@ def test_refusal_check_accepts_the_explicit_data_limit():
     assert assess(check, output) == []
 
 
+def test_cinnamon_forecast_check_requires_the_undercoverage_evidence():
+    check = CHECKS[1]
+    output = _output(
+        forecast=[{"point": 10.05}],
+        evidence=[{"claim": "The interval is below nominal 80% coverage."}, {}],
+    )
+
+    assert assess(check, output) == []
+    assert "missing forecast-evidence limitation: 'below nominal 80%'" in assess(
+        check, _output(forecast=[{"point": 10.05}])
+    )
+
+
 def test_report_keeps_the_question_denominator():
     summary = report(
         [

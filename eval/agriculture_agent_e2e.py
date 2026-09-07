@@ -36,6 +36,7 @@ class Check:
     expected: str
     figure_key: str | None = None
     summary_fragment: str | None = None
+    evidence_fragment: str | None = None
     requires_forecast: bool = False
 
 
@@ -50,6 +51,7 @@ CHECKS = (
         id="A02",
         question="Will cinnamon prices rise or fall over the next two quarters?",
         expected="A target-matched cinnamon price forecast with an interval and annual-frequency caveat.",
+        evidence_fragment="below nominal 80%",
         requires_forecast=True,
     ),
     Check(
@@ -91,6 +93,10 @@ def assess(check: Check, output: dict[str, Any]) -> list[str]:
         failures.append("missing forecast")
     if check.summary_fragment and check.summary_fragment not in summary.lower():
         failures.append(f"missing required limitation: {check.summary_fragment!r}")
+    if check.evidence_fragment and not any(
+        check.evidence_fragment in str(record.get("claim", "")).lower() for record in evidence
+    ):
+        failures.append(f"missing forecast-evidence limitation: {check.evidence_fragment!r}")
     return failures
 
 
