@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ceynex.api.api_keys import ensure_table as ensure_api_keys_table
+from ceynex.api.audit import ensure_table as ensure_audit_table
 from ceynex.api.deps import Runtime, set_runtime
 from ceynex.api.history import ensure_table as ensure_history_table
 from ceynex.api.preferences import ensure_table as ensure_preferences_table
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_history_table()
     ensure_preferences_table()
     ensure_api_keys_table()
+    ensure_audit_table()
     ensure_site_settings_table()
     news_snapshot.ensure_table()
 
