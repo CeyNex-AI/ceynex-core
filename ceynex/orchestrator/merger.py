@@ -176,20 +176,41 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
         + _out_of_scope_gaps(state)
     )
     conflicts = detect_conflicts(contributing)
-    evidence = dedupe_evidence(succeeded)
+
+    # A decline (an honest SAD Section 4.1 refusal -- no error key, confidence
+    # <= DECLINE_CONFIDENCE_CEILING) is not a competing finding. _split_succeeded
+    # already keeps it out of the merge prose and detect_conflicts; it must also
+    # stay out of the merged evidence and the confidence aggregate whenever a
+    # real finding answered the question. Otherwise agriculture_commodity's
+    # bare-forecast deferral ("no M1 model target was requested", confidence
+    # 0.20, two agriculture-agent/data-gap evidence claims) both pollutes the
+    # evidence panel of an otherwise clean registry-model forecast and drags its
+    # aggregate confidence down from the forecast agent's own ~0.9 to ~0.6. When
+    # nothing contributed, the decline *is* the answer -- keep it, so the
+    # response still scores low and shows why. Declines are dropped from the
+    # confidence route too: a routed agent that chose not to answer is neither a
+    # contributor nor a coverage failure, so coverage_penalty must not fire for
+    # it.
+    scored_outputs, scored_route, evidence_outputs = outputs, route, succeeded
+    if contributing and declined:
+        scored_outputs = {n: o for n, o in outputs.items() if n not in declined}
+        scored_route = [n for n in route if n not in declined]
+        evidence_outputs = contributing
+
+    evidence = dedupe_evidence(evidence_outputs)
     forecast = _first_forecast(succeeded)
 
-    # aggregate_confidence(outputs=...) reads the *unfiltered* agent outputs,
-    # so it would otherwise score this on export_analytics's real (and often
-    # high) confidence in its own irrelevant-to-this-question answer -- a 90%
-    # -confidence "who is Euler" reply is worse than a wrong number, since it
-    # tells the reader to trust it.
+    # aggregate_confidence(outputs=...) reads the agent outputs unfiltered apart
+    # from the declines removed above, so it would otherwise score this on
+    # export_analytics's real (and often high) confidence in its own
+    # irrelevant-to-this-question answer -- a 90%-confidence "who is Euler" reply
+    # is worse than a wrong number, since it tells the reader to trust it.
     confidence = (
         NO_TOPIC_CONFIDENCE
         if no_topic
         else aggregate_confidence(
-            outputs,
-            route=route,
+            scored_outputs,
+            route=scored_route,
             relevance=relevance,
             months_since_latest_observation=_staleness_months(state),
             dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
