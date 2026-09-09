@@ -620,6 +620,119 @@ async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
     assert unanswered_from_outputs(final) == result.unanswered == []
 
 
+# --- a decline no longer leaks into confidence or evidence ------------
+
+
+def _tea_forecast_and_deferral():
+    """The bare "forecast tea export value" shape, traced live 2026-09-09: the
+    forecast agent serves the registry model at ~0.9, and agriculture_commodity
+    is routed too and defers (kind == "deferred_forecast" -> _unsupported_target,
+    a non-error output at confidence 0.20 carrying two `agriculture-agent/data-gap`
+    evidence claims).
+    """
+    return {
+        "forecast": output(
+            "forecast",
+            summary="Tea export value is projected at USD 1.40bn for 2026.",
+            figures={"forecast_next_export_value_usd": 1_401_518_520.92},
+            evidence=[ev("MODEL", "Forecast produced by registered model agriculture/tea/export_value_usd@v1.")],
+            confidence=0.9,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="This forecast is served by the export-value forecast agent; no M1 model target was requested.",
+            figures={},
+            evidence=[
+                ev(
+                    "MODEL",
+                    "This forecast is served by the export-value forecast agent; no M1 model target was requested.",
+                    "agriculture-agent/data-gap",
+                ),
+                ev(
+                    "MODEL",
+                    "No compatible price, volume, or export-value series was available to substitute for the requested target.",
+                    "agriculture-agent/data-gap",
+                ),
+            ],
+            confidence=0.20,
+        ),
+    }
+
+
+async def test_a_decline_does_not_dilute_the_confidence_of_a_real_finding():
+    """`_split_succeeded` kept the deferral out of the prose and
+    `detect_conflicts`, but `aggregate_confidence` was still handed the
+    unfiltered outputs and averaged its 0.20 in -- pulling a forecast the model
+    itself scored ~0.9 down to ~0.6 ("Moderate"). The decline now leaves the
+    score untouched whenever a real finding answered the question.
+    """
+    outputs = _tea_forecast_and_deferral()
+    forecast_only = {"forecast": outputs["forecast"]}
+
+    alone = await merge(
+        state(query="Forecast tea export value for 2026", outputs=forecast_only, route=["forecast"]),
+        FakeLLMClient(available=False),
+    )
+    both = await merge(
+        state(
+            query="Forecast tea export value for 2026",
+            outputs=outputs,
+            route=["forecast", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert both.confidence == pytest.approx(alone.confidence)
+    assert both.band == "High"
+
+
+async def test_a_decline_evidence_is_dropped_when_a_real_finding_answered():
+    """The same deferral also put two `agriculture-agent/data-gap` claims into
+    the public evidence panel next to the real model evidence, reading as if the
+    forecast had a data gap it did not have.
+    """
+    result = await merge(
+        state(
+            query="Forecast tea export value for 2026",
+            outputs=_tea_forecast_and_deferral(),
+            route=["forecast", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert "agriculture-agent/data-gap" not in [e.get("detail") for e in result.evidence]
+    assert any("registered model" in e["claim"] for e in result.evidence)
+
+
+async def test_a_lone_decline_still_scores_low_and_keeps_its_reason():
+    """The other half of the rule: when the decline is all there is, it *is* the
+    answer -- its reason must still reach the evidence panel and the score must
+    still be low. Only a decline standing next to a real finding is filtered.
+    """
+    outputs = {
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No registered national tea export volume model is available.",
+            figures={},
+            evidence=[
+                ev("MODEL", "No registered national tea export volume model is available.", "registry/tea/export_volume"),
+            ],
+            confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Forecast tea export volume for 2026",
+            outputs=outputs,
+            route=["agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.confidence < 0.5
+    assert any(e.get("detail") == "registry/tea/export_volume" for e in result.evidence)
+
+
 # --- a scope difference is not a disagreement ---------------------------
 
 
