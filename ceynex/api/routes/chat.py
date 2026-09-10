@@ -201,8 +201,10 @@ async def _resolve_turn(
     if prior_answer is None:
         return None, None, ""
 
+    # `asked`, not `content`: the transcript keeps what the reader typed, but a
+    # follow-up is about the question the system actually ran.
     prior_query = next(
-        (m.content for m in reversed(transcript) if m.role == "user" and m.seq < prior_answer.seq),
+        (m.asked for m in reversed(transcript) if m.role == "user" and m.seq < prior_answer.seq),
         "",
     )
     decision = await classify.llm_turn(query, prior_query, prior_answer.content, runtime.llm)
@@ -214,6 +216,8 @@ async def _maybe_clarify(
     query: str,
     conversation_id: int | None,
     user_email: str | None,
+    *,
+    typed: str | None = None,
 ) -> str | None:
     """One question back, or nothing at all. Never raises.
 
@@ -237,8 +241,12 @@ async def _maybe_clarify(
         return None
 
     try:
+        # `typed` rides along in the stored payload (never in the frame) so the
+        # resume can record the reader's own words even when the gate fired on
+        # a follow-up that had already been rewritten into `query`.
         pending_id = await store.record_clarification(
-            conversation_id, user_email, query, clarification.as_payload()
+            conversation_id, user_email, query,
+            {**clarification.as_payload(), "typed": typed or query},
         )
     except store.ChatStoreUnavailableError as exc:
         # Without somewhere to resume from, asking would strand the reader on a
@@ -260,10 +268,15 @@ async def _stream(
     conversation_id: int | None = None,
     *,
     skip_clarify: bool = False,
+    typed: str | None = None,
 ) -> AsyncIterator[str]:
+    """`typed` is what the reader actually wrote, when `query` is not it — the
+    clarify resume passes the original question and a composed `query`. The
+    transcript stores `typed`; the graph runs `query`."""
     loop = asyncio.get_running_loop()
     sink = trace.TraceSink(request_id="pending", loop=loop)
     user_email = user.email if user else None
+    typed = typed if typed is not None else query
 
     yield _frame("start", {"query": query, "budget_s": STREAM_BUDGET_S,
                            "conversation_id": conversation_id})
@@ -292,7 +305,7 @@ async def _stream(
         query = decision.standalone_query or query
 
     if not skip_clarify:
-        asked = await _maybe_clarify(runtime, query, conversation_id, user_email)
+        asked = await _maybe_clarify(runtime, query, conversation_id, user_email, typed=typed)
         if asked is not None:
             yield asked
             yield _frame("done", {"failed": False, "clarify": True,
@@ -356,10 +369,11 @@ async def _stream(
     # that reloads immediately finds the turn already there. Failures here are
     # logged, never surfaced: the answer has been produced, and losing its
     # transcript row is not worth turning a success into an error frame.
+    ids: list[int] = []
     if conversation_id is not None and user_email is not None:
-        await _persist_turn(
-            conversation_id, user_email, query, answer, outcome, usage, sink,
-            runtime.llm, mode="analyse"
+        ids = await _persist_turn(
+            conversation_id, user_email, typed, answer, outcome, usage, sink,
+            runtime.llm, mode="analyse", effective_query=query,
         )
 
     yield _frame(
@@ -370,9 +384,23 @@ async def _stream(
             "conversation_id": conversation_id,
             "usage": usage,
             "dropped_events": sink.dropped,
+            "query_history_id": outcome.history_id,
+            # What actually ran, when it is not what was typed — the same value
+            # the transcript stores as the user turn's `effective_query`.
+            "effective_query": query if query != typed else None,
+            **_message_ids(ids),
             "answer": answer,
         },
     )
+
+
+def _message_ids(ids: list[int]) -> dict[str, int | None]:
+    """The rows a finished turn was stored as, so the client can fold the live
+    turn into its transcript without a reload — and rate it, save it or
+    regenerate it straight away. Both None when the turn was not persisted."""
+    if len(ids) >= 2:
+        return {"user_message_id": ids[0], "message_id": ids[1]}
+    return {"user_message_id": None, "message_id": ids[0] if ids else None}
 
 
 async def _discuss_stream(
@@ -424,6 +452,7 @@ async def _discuss_stream(
         # nothing behind it.
         "confidence": prior.confidence,
         "confidence_band": prior.confidence_band,
+        "confidence_breakdown": prior.confidence_breakdown,
         "agents_used": prior.agents_used,
         "evidence": result.evidence,
         "forecast": prior.forecast,
@@ -436,8 +465,9 @@ async def _discuss_stream(
         "grounded": result.grounded,
     }
 
+    ids: list[int] = []
     if conversation_id is not None and user_email is not None:
-        await _persist_turn(
+        ids = await _persist_turn(
             conversation_id, user_email, follow_up, answer, None, usage, None,
             runtime.llm, mode="discuss"
         )
@@ -450,6 +480,9 @@ async def _discuss_stream(
             "conversation_id": conversation_id,
             "usage": usage,
             "dropped_events": 0,
+            # A discussion is not a new analysis and writes no history row.
+            "query_history_id": None,
+            **_message_ids(ids),
             "answer": answer,
         },
     )
@@ -466,20 +499,27 @@ async def _persist_turn(
     llm: Any,
     *,
     mode: str,
-) -> None:
+    effective_query: str | None = None,
+) -> list[int]:
     """Write the question, the answer and the trace. Never raises.
 
-    The turn has already been delivered by the time this runs, so a database
-    outage here costs a transcript row, not an answer — the same trade
+    Returns the new `[user, assistant]` message ids, or `[]` when nothing could
+    be written. The turn has already been delivered by the time this runs, so a
+    database outage here costs a transcript row, not an answer — the same trade
     `history.record` makes and for the same reason.
+
+    `question` is what the reader typed. `effective_query` is what the graph
+    ran, stored only when the two differ, so a reopened transcript shows the
+    reader's own words and the trace still says what was run.
     """
     request_id = outcome.request_id if outcome else None
+    ran = effective_query if effective_query and effective_query != question else None
     try:
-        await store.append(
+        ids = await store.append(
             conversation_id,
             user_email,
             [
-                store.Message(role="user", content=question),
+                store.Message(role="user", content=question, effective_query=ran),
                 store.Message(
                     role="assistant",
                     content=answer.get("answer", ""),
@@ -497,12 +537,15 @@ async def _persist_turn(
                     graph=answer.get("graph"),
                     elapsed_ms=answer.get("elapsed_ms"),
                     usage=usage,
+                    query_history_id=outcome.history_id if outcome else None,
+                    confidence_breakdown=answer.get("confidence_breakdown"),
+                    grounded=answer.get("grounded"),
                 ),
             ],
         )
     except store.ChatStoreUnavailableError as exc:
         log.warning("could not persist turn in conversation %s: %s", conversation_id, exc)
-        return
+        return []
 
     if sink is not None and request_id:
         await store.save_trace(request_id, conversation_id, sink.history)
@@ -511,6 +554,7 @@ async def _persist_turn(
     # model costs a plainer name rather than a slower turn.
     name = await titles.title_for(question, answer.get("answer", ""), llm)
     await store.set_title_if_unset(conversation_id, user_email, name)
+    return list(ids or [])
 
 
 @router.post("/api/chat/stream", dependencies=[Depends(enforce_chat_rate_limit)])
@@ -598,6 +642,7 @@ async def answer_clarification(
 
     original = str(pending["original_query"])
     query = original if request.skip else clarify.Clarification.compose(original, request.answers)
+    typed = str((pending.get("payload") or {}).get("typed") or original)
 
     return StreamingResponse(
         _stream(
@@ -607,6 +652,7 @@ async def answer_clarification(
             user,
             int(pending["conversation_id"]),
             skip_clarify=True,
+            typed=typed,
         ),
         media_type="text/event-stream",
         headers={
