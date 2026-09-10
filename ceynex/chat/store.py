@@ -583,7 +583,7 @@ async def last_answer(conversation_id: int, user_email: str) -> Message | None:
         return None
     # Not gated on evidence: an analysis that declined is still something a
     # follow-up can ask about, and gating on it makes "what do you mean?"
-    # re-run the fan-out for the same decline. See `routes/chat.py::_resolve_turn`.
+    # re-run the fan-out for the same decline. See `api/turn_runner.py::_resolve_turn`.
     for message in reversed(transcript):
         if message.role == "assistant":
             return message

@@ -91,11 +91,17 @@ async def run_query(
     trace_sink: trace.TraceSink | None = None,
     conversation_id: int | None = None,
     record_history: bool = True,
+    request_id: str | None = None,
 ) -> QueryOutcome:
     """Route, fan out, merge, and assemble the response.
 
     `trace_sink=None` is the `POST /api/query` case: no events go anywhere, but
     LLM spend is still accounted, because usage and tracing are independent.
+
+    `request_id` is supplied by a conversational turn, which mints it before the
+    first frame so the reader can resume by it (`api/turn_runner.py`); the
+    ledger, the trace and the transcript then all name the turn the same way.
+    Absent, a fresh one is minted here, as it always was.
     """
     started = time.perf_counter()
     # Read once per request, before anything installs it, so a single database
@@ -107,6 +113,8 @@ async def run_query(
         conversation_id=conversation_id,
         instruction=instruction if instruction_on else "",
     )
+    if request_id:
+        observation.request_id = request_id
     token = obs.install(observation)
     try:
         # Started before the graph and gathered after it, so it costs no wall
