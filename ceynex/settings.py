@@ -244,6 +244,45 @@ def policy_retrieval_enabled() -> bool:
     return value not in ("off", "0", "false", "no")
 
 
+def chat_enabled() -> bool:
+    """Kill switch for the conversational surface.
+
+    Off leaves `POST /api/query` answering exactly as it always has — the same
+    posture `policy_retrieval_enabled` takes, and for the same reason: a new
+    surface has to be removable without touching the one the evaluation measures.
+    """
+    value = (_env("CEYNEX_CHAT", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def clarify_enabled() -> bool:
+    """Whether the clarification gate may ask before answering.
+
+    Separate from `chat_enabled` on purpose: a demo may want conversation without
+    ever being interrupted by a question, and a reviewer comparing answers
+    against `queries.md` needs to turn it off without losing chat.
+    """
+    value = (_env("CEYNEX_CLARIFY", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def web_search_enabled() -> bool:
+    """Whether general web search may run at all (deviation D14).
+
+    Distinct from having a key: `tavily_api_key()` being None falls back to the
+    keyless provider, whereas this being off means no outbound search happens on
+    any provider. `off` is what makes "answers are byte-identical to the
+    pre-web-search system" a checkable claim.
+    """
+    value = (_env("CEYNEX_WEB_SEARCH", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def tavily_api_key() -> str | None:
+    """None is a supported state, not an error — the keyless tier covers it."""
+    return _env("TAVILY_API_KEY") or None
+
+
 def data_dir() -> Path:
     return Path(_env("CEYNEX_DATA_DIR", str(REPO_ROOT / "data")) or "data")
 
