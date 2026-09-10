@@ -13,6 +13,7 @@ import pytest
 
 from ceynex.api import rate_limit
 from ceynex.api import users as users_module
+from ceynex.api.routes import auth as auth_routes
 from ceynex.api.routes import news as news_routes
 from ceynex.api.routes import query as query_routes
 
@@ -31,11 +32,14 @@ def stub_token_epoch(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fresh_rate_limit_window():
-    # The news sidecar (D11) has its own allowance and its own window singleton;
-    # without resetting it too, the counter bleed this fixture exists to prevent
-    # comes straight back on the second endpoint.
+    # Every endpoint with its own allowance keeps its own window singleton;
+    # without resetting each, the counter bleed this fixture exists to prevent
+    # comes straight back on the next one. `test_auth.py` alone makes dozens of
+    # login/signup calls, so the auth window matters most here.
     query_routes.set_window(rate_limit.InProcessWindow())
     news_routes.set_window(rate_limit.InProcessWindow())
+    auth_routes.set_window(rate_limit.InProcessWindow())
     yield
     query_routes.set_window(None)
     news_routes.set_window(None)
+    auth_routes.set_window(None)
