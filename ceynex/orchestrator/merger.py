@@ -33,6 +33,7 @@ from typing import Any
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.orchestrator.confidence import aggregate_confidence, confidence_band
 from ceynex.orchestrator.grounding import ungrounded_figures
+from ceynex.settings import citations_enabled
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +58,18 @@ DECLINE_CONFIDENCE_CEILING = 0.25
 # a substantive conflict, not a rounding difference.
 DIRECTIONAL_SUFFIXES = ("_impact_pct", "_impact_usd", "cagr", "_change", "_growth")
 
-MERGE_SYSTEM = """You write the final answer for a Sri Lankan export intelligence platform.
-
-You are given findings from several specialist analyses of one question. Write ONE answer.
-
-Absolute rules:
-1. Never write "the X agent found" or otherwise name the internal analyses. The reader
+# The merge prompt is split in two, and the split is a safety boundary rather
+# than tidiness (D15). Rules 1-4 and 7 are the guarantees the SRS is about: never
+# name the internal analyses, never state a figure that is not in the findings
+# (SRS 3.1.3), surface disagreement rather than averaging it (SRS 3.1.2), say
+# what could not be answered (SRS 3.4.3), and never give financial or legal
+# advice. A user instruction must never reach these.
+#
+# Rules 5 and 6 are presentation — length and formatting — and are exactly what a
+# reader should be able to override. Without this split, "always answer in bullet
+# points" directly contradicts rule 6 and the model resolves the contradiction
+# unpredictably, which is the worst of both.
+MERGE_RULES_INVIOLABLE = """1. Never write "the X agent found" or otherwise name the internal analyses. The reader
    asked a question, not for a committee's minutes. Organise by finding, not by source.
 2. Every number you state must appear in the findings given to you. Never estimate,
    never extrapolate, never add a figure from your own knowledge.
@@ -75,10 +82,47 @@ Absolute rules:
    which figure is which -- "USD X in 2025 on the HS-code basis, USD Y in 2024 on the
    national reporting basis" -- and move on. Never call that a discrepancy between
    sources, never present it as something the data cannot resolve, and never lead with it.
-4. If something could not be answered, say which part and why, in one clause.
-5. Four to eight sentences. Plain English for a policymaker who is not an economist.
+4. If something could not be answered, say which part and why, in one clause."""
+
+MERGE_RULES_PRESENTATION = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
+6. No preamble, no bullet lists, no headings. Start with the answer."""
+
+#: The presentation rules when inline citations are on (§7). A `[n]` marker is a
+#: formatting change, which is why it lives here and not among the inviolable
+#: rules — and why it can be swapped in the same way a user instruction is.
+#:
+#: Off by default. Enabling it changes the prompt every answer is written from,
+#: and `docs/EVALUATION.md` §8 measures what an unmeasured prompt change is
+#: worth: nothing, until it is run against the 30-question set. `CEYNEX_CITATIONS`
+#: turns it on so that run can be done as a comparison rather than a leap.
+MERGE_RULES_PRESENTATION_CITED = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer.
-7. You describe data. You do not give financial, legal or investment advice."""
+6a. After each sentence containing a figure, cite the SOURCE it came from as a bracketed
+   number, like [1] or [3]. Use only the numbers in the SOURCES list below. Never cite a
+   number that is not in that list, and never cite a source for a sentence with no figure."""
+
+#: Also inviolable, and last because that is where it has always been. Kept
+#: separate only so the presentation rules can be swapped out from between the
+#: two without renumbering anything the model reads.
+MERGE_RULES_DISCLAIMER = """7. You describe data. You do not give financial, legal or investment advice."""
+
+MERGE_PREAMBLE = """You write the final answer for a Sri Lankan export intelligence platform.
+
+You are given findings from several specialist analyses of one question. Write ONE answer.
+
+Absolute rules:"""
+
+def merge_system(presentation: str = MERGE_RULES_PRESENTATION) -> str:
+    """Assemble the merge prompt, with the presentation rules swappable.
+
+    The default assembles the *exact* string this constant has always been —
+    asserted in `tests/orchestrator/test_merger.py`, because a prompt that
+    changes by accident changes every answer the evaluation measures.
+    """
+    return f"{MERGE_PREAMBLE}\n{MERGE_RULES_INVIOLABLE}\n{presentation}\n{MERGE_RULES_DISCLAIMER}"
+
+
+MERGE_SYSTEM = merge_system()
 
 
 @dataclass
@@ -130,8 +174,17 @@ class MergeResult:
         }
 
 
-async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # noqa: ANN001
-    """Combine every agent output in `state` into one answer."""
+async def merge(  # noqa: ANN001
+    state: AgentState, llm, *, dq_severities=(), presentation: str | None = None
+) -> MergeResult:
+    """Combine every agent output in `state` into one answer.
+
+    `presentation` swaps the *presentation* half of the merge prompt for one
+    carrying a reader's standing instruction (D15). It cannot reach the rules
+    around it: `merge_system()` assembles the inviolable rules and the advice
+    disclaimer either side of whatever is passed here. Default `None` reproduces
+    the exact prompt this module has always used.
+    """
     outputs = state.get("agent_outputs", {})
     route = list(state.get("route", []) or outputs.keys())
     relevance = state.get("relevance", {})
@@ -210,10 +263,15 @@ async def merge(state: AgentState, llm, *, dq_severities=()) -> MergeResult:  # 
 
     deterministic = compose_deterministic(state["query"], contributing, conflicts, unanswered)
 
+    cited = citations_enabled()
+    default_rules = MERGE_RULES_PRESENTATION_CITED if cited else MERGE_RULES_PRESENTATION
     prose = await llm.generate(
         "merge",
-        MERGE_SYSTEM,
-        _merge_prompt(state["query"], contributing, conflicts, unanswered),
+        merge_system(presentation if presentation is not None else default_rules),
+        _merge_prompt(
+            state["query"], contributing, conflicts, unanswered,
+            evidence if cited else None,
+        ),
     )
     degraded = not prose
 
@@ -670,6 +728,7 @@ def _merge_prompt(
     outputs: dict[AgentName, AgentOutput],
     conflicts: list[Conflict],
     unanswered: list[str],
+    evidence: list[Evidence] | None = None,
 ) -> str:
     """Findings as structured context, deliberately not labelled by agent name.
 
@@ -677,6 +736,15 @@ def _merge_prompt(
     first place is the stronger guarantee.
     """
     blocks = [f"QUESTION: {query}", ""]
+    if evidence is not None:
+        # Numbered exactly as `merged_evidence` is ordered in the response, so a
+        # `[n]` the model writes indexes the entry the reader will actually see.
+        # Web results (D14) are appended *after* merge and so are never in this
+        # list — a scraped snippet must not become a citable source.
+        blocks.append("SOURCES (cite these by number):")
+        for index, item in enumerate(evidence, start=1):
+            blocks.append(f"  [{index}] {item.get('source_id')}: {item.get('claim', '').strip()}")
+        blocks.append("")
 
     for index, (_, output) in enumerate(
         sorted(outputs.items(), key=lambda kv: kv[1].get("confidence", 0.0), reverse=True), start=1
