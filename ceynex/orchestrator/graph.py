@@ -38,10 +38,12 @@ from ceynex.agents.common import AgentDeps
 from ceynex.agents.export_analytics import export_analytics_node
 from ceynex.agents.forecast import forecast_node
 from ceynex.agents.trade_economics import trade_economics_node
+from ceynex.chat import instructions
 from ceynex.contracts import ALL_AGENTS, AgentName, AgentState, failed_output
+from ceynex.observability import context as obs
 from ceynex.observability import trace
 from ceynex.orchestrator import planner
-from ceynex.orchestrator.merger import merge
+from ceynex.orchestrator.merger import MERGE_RULES_PRESENTATION, merge
 from ceynex.orchestrator.router import RouteDecision, keyword_route, llm_route
 
 log = logging.getLogger(__name__)
@@ -160,10 +162,29 @@ def build_graph(deps: AgentDeps, *, use_llm_router: bool = True) -> Any:
 
     async def merge_node(state: AgentState) -> dict[str, Any]:
         with trace.node("merge"):
-            result = await merge(state, deps.llm)
+            # Read from ambient request context rather than passed down the
+            # graph: `AgentState` is frozen and this node's shape is not the
+            # place to carry a presentation preference (D15). Empty outside a
+            # request and for every reader who has not set one, which is the
+            # common case and reproduces the original prompt exactly.
+            instruction = obs.current_instruction()
+            presentation = (
+                instructions.presentation_block(instruction, MERGE_RULES_PRESENTATION)
+                if instruction
+                else None
+            )
+            if instruction:
+                trace.emit("instruction", applied=True, chars=len(instruction))
+            result = await merge(state, deps.llm, presentation=presentation)
             patch = result.as_state_patch()
+            # `AgentState` is frozen at three keys out of merge, so the working
+            # behind the score travels on the request rather than the state.
+            observation = obs.current()
+            if observation is not None:
+                observation.confidence_breakdown = result.confidence_breakdown
             trace.emit(
                 "merge",
+                confidence_breakdown=result.confidence_breakdown,
                 confidence=round(float(patch.get("final_confidence", 0.0)), 3),
                 evidence_count=len(patch.get("merged_evidence", []) or []),
                 degraded=bool(patch.get("degraded", False)),

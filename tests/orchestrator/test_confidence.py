@@ -7,6 +7,8 @@ from ceynex.orchestrator.confidence import (
     CEILING,
     FLOOR,
     aggregate_confidence,
+    aggregate_confidence_breakdown,
+    clamp,
     confidence_band,
     coverage_penalty,
     dq_penalty,
@@ -181,3 +183,33 @@ def test_bands(score, band):
 )
 def test_bands_at_the_exact_thresholds(score, band):
     assert confidence_band(score) == band
+
+
+def test_the_breakdown_always_adds_up_to_the_score_beside_it():
+    """A waterfall that disagreed with the number it explains would be worse
+    than no waterfall — it would make the most predictable question this project
+    is asked (SRS 3.1.4) look like it has two answers. `aggregate_confidence`
+    delegates to the breakdown so the two cannot drift apart."""
+    outputs = {
+        "export_analytics": {"confidence": 0.8, "degraded": False},
+        "forecast": {"confidence": 0.6, "degraded": True},
+    }
+    route = ["export_analytics", "forecast"]
+    breakdown = aggregate_confidence_breakdown(
+        outputs, route, None, 18.0, ["material", "severe"]
+    )
+    assert breakdown.final == aggregate_confidence(outputs, route, None, 18.0, ["material", "severe"])
+    # And the terms are the formula, not a re-derivation of it.
+    assert breakdown.final == clamp(
+        breakdown.weighted - breakdown.staleness - breakdown.dq - breakdown.coverage
+    )
+
+
+def test_the_breakdown_names_the_penalty_that_actually_bit():
+    """The point of showing the working is that a reader can see *which* term
+    cost them, not just that something did."""
+    outputs = {"export_analytics": {"confidence": 0.9, "degraded": True}}
+    breakdown = aggregate_confidence_breakdown(outputs, ["export_analytics"], None, 0.0, [])
+    assert breakdown.coverage > 0
+    assert breakdown.staleness == 0
+    assert breakdown.dq == 0

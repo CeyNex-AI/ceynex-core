@@ -35,6 +35,7 @@ from ceynex.agents.common import evidence_from_web, parse_intent
 from ceynex.api import history
 from ceynex.api.deps import Runtime
 from ceynex.api.schemas import AnswerGraph, QueryResponse
+from ceynex.chat import instructions
 from ceynex.contracts import new_state
 from ceynex.kg import queries as kg_queries
 from ceynex.kg import subgraph as kg_subgraph
@@ -93,10 +94,14 @@ async def run_query(
     LLM spend is still accounted, because usage and tracing are independent.
     """
     started = time.perf_counter()
+    # Read once per request, before anything installs it, so a single database
+    # round trip serves the whole turn rather than one per merge.
+    instruction, instruction_on = await instructions.get(user_email)
     observation = obs.RequestObservability(
         trace=trace_sink,
         user_email=user_email,
         conversation_id=conversation_id,
+        instruction=instruction if instruction_on else "",
     )
     token = obs.install(observation)
     try:
@@ -137,7 +142,7 @@ async def run_query(
             except Exception:  # noqa: BLE001 - a web result never fails an answer
                 log.warning("web search task failed", exc_info=True)
 
-        response = await _assemble(runtime, query, final, started, web_results)
+        response = await _assemble(runtime, query, final, started, web_results, observation)
     finally:
         obs.reset(token)
 
@@ -175,6 +180,7 @@ async def _assemble(
     final: dict,
     started: float,
     web_results=(),
+    observation: obs.RequestObservability | None = None,
 ) -> QueryResponse:
     outputs = final.get("agent_outputs", {})
     confidence = float(final.get("final_confidence", 0.0))
@@ -188,6 +194,9 @@ async def _assemble(
         answer=final.get("final_answer", ""),
         confidence=confidence,
         confidence_band=confidence_band(confidence),
+        # SRS 3.1.4's working, when there is any. Absent for an out-of-scope
+        # question, whose score is a fixed floor rather than a computation.
+        confidence_breakdown=(observation.confidence_breakdown if observation else None),
         agents_used=agents_used_from_outputs(final),
         # Merged evidence first, web last and clearly separate. By the time this
         # runs, merge has written its prose, grounding has checked it and

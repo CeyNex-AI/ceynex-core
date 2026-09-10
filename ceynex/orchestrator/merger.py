@@ -31,7 +31,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
-from ceynex.orchestrator.confidence import aggregate_confidence, confidence_band
+from ceynex.orchestrator.confidence import (
+    aggregate_confidence_breakdown,
+    confidence_band,
+)
 from ceynex.orchestrator.grounding import ungrounded_figures
 from ceynex.settings import citations_enabled
 
@@ -165,6 +168,12 @@ class MergeResult:
     # `_reject_ungrounded_prose`. Empty on every normal answer, including
     # every degraded one, since the deterministic path cannot invent a figure.
     ungrounded: list[str] = field(default_factory=list)
+    #: Every term in the SRS 3.1.4 formula, so "why this confidence?" can be
+    #: answered from the answer rather than from the docstring. None when the
+    #: question named nothing CeyNex covers, where the score is a fixed floor
+    #: rather than a computation and a waterfall would imply working that does
+    #: not exist.
+    confidence_breakdown: dict[str, float] | None = None
 
     def as_state_patch(self) -> dict[str, Any]:
         return {
@@ -236,10 +245,10 @@ async def merge(  # noqa: ANN001
     # high) confidence in its own irrelevant-to-this-question answer -- a 90%
     # -confidence "who is Euler" reply is worse than a wrong number, since it
     # tells the reader to trust it.
-    confidence = (
-        NO_TOPIC_CONFIDENCE
+    breakdown = (
+        None
         if no_topic
-        else aggregate_confidence(
+        else aggregate_confidence_breakdown(
             outputs,
             route=route,
             relevance=relevance,
@@ -247,6 +256,9 @@ async def merge(  # noqa: ANN001
             dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
         )
     )
+    # Kept, not recomputed: the number shown and the working shown beside it come
+    # from the same call, so they cannot disagree.
+    confidence = NO_TOPIC_CONFIDENCE if breakdown is None else breakdown.final
 
     if not succeeded:
         answer = _nothing_succeeded(unanswered)
@@ -294,6 +306,7 @@ async def merge(  # noqa: ANN001
     return MergeResult(
         answer=answer.strip(),
         confidence=confidence,
+        confidence_breakdown=breakdown.as_dict() if breakdown else None,
         band=confidence_band(confidence),
         evidence=evidence,
         agents_used=sorted(succeeded),

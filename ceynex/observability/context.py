@@ -130,6 +130,17 @@ class RequestObservability:
     usage: RequestLLMUsage = field(default_factory=RequestLLMUsage)
     user_email: str | None = None
     conversation_id: int | None = None
+    #: This reader's standing instruction about how answers should read (D15).
+    #: Carried here rather than on `AgentState` for the same reason the trace
+    #: sink is: it is per-request ambient context, the contract is frozen, and
+    #: `graph.py` stays exactly `route -> fan-out -> merge -> END`. Empty is the
+    #: overwhelmingly common case and reproduces the original prompt exactly.
+    instruction: str = ""
+    #: The SRS 3.1.4 confidence terms, written by `merge_node` and read by the
+    #: response assembler. Here for the same reason `instruction` is: the state
+    #: contract is frozen at three keys out of merge, and this is per-request
+    #: ambient data rather than something the graph should carry.
+    confidence_breakdown: dict | None = None
 
 
 _current: ContextVar[RequestObservability | None] = ContextVar(
@@ -171,6 +182,12 @@ def reset_node(token: Token[str | None]) -> None:
     _current_node.reset(token)
 
 
+def current_instruction() -> str:
+    """This request's user instruction, or `""` outside a request."""
+    obs = current()
+    return obs.instruction if obs is not None else ""
+
+
 def record_llm_call(call: LLMCall) -> None:
     """Ambient, no-op when no request is active. Called from `llm/client.py`."""
     obs = _current.get()
@@ -184,6 +201,7 @@ __all__ = [
     "RequestLLMUsage",
     "RequestObservability",
     "current",
+    "current_instruction",
     "current_node",
     "install",
     "record_llm_call",
