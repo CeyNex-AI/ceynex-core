@@ -1,9 +1,10 @@
-"""GET/PUT notification preferences and API-key management — Account.tsx's
-two remaining "planned, not built yet" stub items, now built.
+"""Account self-service: notification preferences, API-key management, and
+password change.
 
-All routes require a signed-in user (`require_user`); preferences and keys
-are always scoped to the caller's own email, the same ownership pattern as
-`routes/history.py`.
+All routes require a signed-in user (`require_user`) and act only on the
+caller's own account — same ownership pattern as `routes/history.py`. An admin
+changing *someone else's* password is a separate route on the admin router
+(`routes/admin.py`), behind `require_admin` and audited.
 """
 
 from __future__ import annotations
@@ -11,18 +12,51 @@ from __future__ import annotations
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
-from ceynex.api import api_keys, preferences
+from ceynex.api import api_keys, preferences, users
+from ceynex.api.auth import authenticate
 from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import (
     ApiKeyItem,
     ApiKeyListResponse,
+    ChangePasswordRequest,
     CreateApiKeyRequest,
     CreateApiKeyResponse,
     NotificationPreferences,
+    PasswordChangedResponse,
     RevokeApiKeyResponse,
 )
 
 router = APIRouter(tags=["account"])
+
+
+@router.post("/api/account/password", response_model=PasswordChangedResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> PasswordChangedResponse:
+    """Self-service password change. Requires the current password (proof the
+    session isn't just a stolen token); the new one goes through the same
+    8-char floor as signup. Existing tokens — including this one — stay valid
+    until they expire (see `users.set_password`)."""
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=422, detail="new password must be different")
+    try:
+        current = authenticate(user.email, body.current_password)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="password change unavailable") from exc
+    if current is None:
+        # Wrong current password, or the account was disabled/deleted since the
+        # token was issued — one outcome, same reasoning as `users.authenticate`.
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    try:
+        updated = users.set_password(current.id, body.new_password)
+    except users.WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not change password") from exc
+    if updated is None:
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    return PasswordChangedResponse(email=updated.email)
 
 
 @router.get("/api/account/preferences", response_model=NotificationPreferences)
