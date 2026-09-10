@@ -390,6 +390,19 @@ class PasswordChangedResponse(BaseModel):
     token: str
 
 
+class ChangeEmailRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_email: str = Field(min_length=3, max_length=200)
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+
+
+class AccountDeletedResponse(BaseModel):
+    deleted: bool = True
+
+
 class NotificationPreferences(BaseModel):
     dq_flag_alerts: bool
     forecast_updates: bool

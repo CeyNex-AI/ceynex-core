@@ -134,6 +134,27 @@ def store(monkeypatch):
         bump = user.token_epoch + 1 if disabled else user.token_epoch
         return _put(user, disabled=disabled, token_epoch=bump)
 
+    def fake_set_email(user_id, new_email):
+        new_email = new_email.strip().lower()
+        user = rows.get(user_id)
+        if user is None:
+            return None
+        if user.email == new_email:
+            return user
+        if _by_email(new_email):
+            raise users_module.EmailTakenError(new_email)
+        return _put(user, email=new_email, token_epoch=user.token_epoch + 1)
+
+    def fake_delete_user(user_id):
+        user = rows.get(user_id)
+        if user is None:
+            return False
+        if user.role == "admin" and not user.disabled and not _enabled_admins(excluding_id=user_id):
+            raise users_module.LastAdminError("cannot delete the last enabled admin")
+        del rows[user_id]
+        passwords.pop(user_id, None)
+        return True
+
     # The `admin@ceynex.dev` account the module-level ADMIN token belongs to,
     # at id 1, with `counter` past it so `create_user` never collides.
     rows[1] = users_module.User(
@@ -149,6 +170,8 @@ def store(monkeypatch):
     monkeypatch.setattr(users_module, "set_disabled", fake_set_disabled)
     monkeypatch.setattr(users_module, "authenticate", fake_authenticate)
     monkeypatch.setattr(users_module, "set_password", fake_set_password)
+    monkeypatch.setattr(users_module, "set_email", fake_set_email)
+    monkeypatch.setattr(users_module, "delete_user", fake_delete_user)
     # `current_token_epoch` is left as the conftest stub (→ 0 for everyone) so
     # the module-level RESEARCHER token keeps verifying without a row. The
     # invalidation tests opt into a store-aware version via `live_epoch`.
@@ -457,3 +480,98 @@ def test_disabling_a_user_cuts_their_existing_session(client, store, audit_calls
     # re-enable does not resurrect the old token
     client.post(f"/api/admin/users/{uid}/enable", headers=ADMIN)
     assert client.get("/api/auth/me", headers=worker).status_code == 401
+
+
+# --- change email (/api/account/email) -------------------------------
+
+
+def test_change_email_moves_the_account_and_returns_a_fresh_token(client, store, live_epoch):
+    token = _signup(client, email="old@ceynex.dev", password="origpass12")
+    r = client.post(
+        "/api/account/email",
+        json={"current_password": "origpass12", "new_email": "New@Ceynex.dev"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["email"] == "new@ceynex.dev"  # normalised
+    fresh = r.json()["token"]
+    # old token dies (its sub is the old email + old epoch); fresh one works
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {fresh}"}).json()["email"] == "new@ceynex.dev"
+    # can log in under the new address, not the old
+    assert client.post("/api/auth/login", json={"email": "new@ceynex.dev", "password": "origpass12"}).status_code == 200
+    assert client.post("/api/auth/login", json={"email": "old@ceynex.dev", "password": "origpass12"}).status_code == 401
+
+
+def test_change_email_to_a_taken_address_is_409(client, store):
+    _signup(client, email="taken@ceynex.dev", password="takenpass1")
+    token = _signup(client, email="me@ceynex.dev", password="mypass1234")
+    r = client.post(
+        "/api/account/email",
+        json={"current_password": "mypass1234", "new_email": "taken@ceynex.dev"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 409
+
+
+def test_change_email_with_a_wrong_password_is_403(client, store):
+    token = _signup(client, email="me@ceynex.dev", password="mypass1234")
+    r = client.post(
+        "/api/account/email",
+        json={"current_password": "nope", "new_email": "new@ceynex.dev"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+def test_change_email_needs_a_token(client, store):
+    assert client.post(
+        "/api/account/email", json={"current_password": "x", "new_email": "a@b.dev"}
+    ).status_code == 401
+
+
+# --- delete account (DELETE /api/account) ----------------------------
+
+
+def test_delete_account_removes_it_and_the_password_stops_working(client, store):
+    token = _signup(client, email="bye@ceynex.dev", password="byepass123")
+    r = client.request(
+        "DELETE", "/api/account",
+        json={"current_password": "byepass123"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["deleted"] is True
+    assert client.post(
+        "/api/auth/login", json={"email": "bye@ceynex.dev", "password": "byepass123"}
+    ).status_code == 401
+
+
+def test_delete_account_with_a_wrong_password_is_403(client, store):
+    token = _signup(client, email="stay@ceynex.dev", password="staypass12")
+    r = client.request(
+        "DELETE", "/api/account",
+        json={"current_password": "wrong"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+    assert client.post(
+        "/api/auth/login", json={"email": "stay@ceynex.dev", "password": "staypass12"}
+    ).status_code == 200
+
+
+def test_deleting_the_last_admin_is_409(client, store):
+    # the fixture-seeded admin (id 1) is the only admin; give the test a way to
+    # authenticate as it
+    r = client.request(
+        "DELETE", "/api/account",
+        json={"current_password": "admin-fixture-pw"},
+        headers=ADMIN,
+    )
+    assert r.status_code == 409
+
+
+def test_delete_account_needs_a_token(client, store):
+    assert client.request(
+        "DELETE", "/api/account", json={"current_password": "x"}
+    ).status_code == 401
