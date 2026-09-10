@@ -688,3 +688,165 @@ that unstable, and nothing in D10 targeted latency.
   stable across runs because routing does not depend on the switch; the evidence
   columns are not, and a second pair of runs would be worth taking before these
   land in the Testing and Evaluation Document.
+
+---
+
+## 8. The conversational layer, and the noise floor nobody had measured
+
+**Measured 2026-09-10, M2**, against the same local stack §1 used — verified
+identical before running: 4,625 `fact_trade` rows spanning 2015–2024, 4,625
+`EXPORTS_TO` relationships mirroring them, 901 chunks in `ceynex_policy`. The LLM
+cache was cleared before **every** run below, because a warm `.cache/llm` gives
+the false 65 ms p50 §1 warns about.
+
+The question this section answers: **did the conversational layer (D12/D13)
+change the orchestration path the 30-question set measures?** If it did, that is a
+defect, not a feature.
+
+### The committed baseline was two weeks stale, and comparing against it would have lied
+
+`eval_results.json` in this repo was last written 2026-08-28. `main` has since
+merged the out-of-scope routing fix. A fresh run of `main` today scores materially
+better than the committed file:
+
+| Metric | committed 2026-08-28 | `main` 2026-09-10 |
+|---|---:|---:|
+| routing exact match | 0.50 of 30 | 0.60 of 30 |
+| routing recall | 0.825 | 0.925 |
+| answers fully grounded | 0.8148 of 27 | 0.8519 of 27 |
+| ungrounded figures | 5 | 4 |
+| mean evidence per answer | 3.85 | 4.33 |
+| answers with no evidence | 1 | 0 |
+
+Diffing the feature branch against the committed file would have credited the
+conversational layer with a routing fix it had nothing to do with. **A comparison
+is only meaningful against a run of the code you are comparing to, taken now.**
+
+### The noise floor: ±1 question on routing and grounding, and p95 is not usable at n=1
+
+Two runs of **identical `main` code**, both cold-cache:
+
+| Metric | main run 1 | main run 2 |
+|---|---:|---:|
+| routing exact match | 0.60 | 0.5667 |
+| ungrounded figures | 4 | 5 |
+| single-sector p95 | 8,567.8 ms | 5,581.9 ms |
+
+Routing moved by one question and the ungrounded count by one figure with no code
+change at all. **Single-sector p95 moved by 35%.** Per-question, run 1 was the
+outlier on three questions (X11's route, M01's and M03's ungrounded figures) where
+run 2 and the branch agreed with each other.
+
+Two consequences worth carrying into the Testing and Evaluation Document:
+
+- **A single-run difference of one question is not a result.** The LLM path has a
+  noise floor of roughly ±3.3 pp on routing exact match and ±1 on ungrounded
+  figures. Report a difference only if it survives repetition.
+- **Latency p95 from one run of 12 samples should not be quoted at all.** §1
+  already flags the tail as unstable; this quantifies it. The 14.6 s and 29.0 s
+  figures in §1 and the 8.1 s in §7 are all single runs and should be read as
+  draws from a wide distribution, not as measurements.
+
+### S07 is nondeterministic on both branches, and that took 21 runs to establish
+
+The branch's full run differed from `main` on one structurally important
+question — S07, *"Which markets buy the most Sri Lankan knitted apparel?"*, where
+the route dropped `export_analytics` and the answer came back with **no evidence
+at all**. That is exactly the kind of thing this check exists to catch, so it was
+run down rather than waved through as noise.
+
+`keyword_route` returns the correct two-agent route for S07, so the failure is not
+a fallback — it is `llm_route` itself choosing a single agent. Sampling the
+question in isolation:
+
+| | correct | wrong |
+|---|---:|---:|
+| `main` | 11 | 2 |
+| feature branch | 6 | 3 |
+
+Fisher's exact p ≈ 0.36. **`main` fails S07 too, roughly one run in five.** The
+two branches are statistically indistinguishable on it. It is a real weakness of
+the LLM router on this phrasing and it belongs on the defect list — but it is not
+a regression, and it predates this work.
+
+### One genuine defect, found by this check and fixed
+
+`_plan_steps` ran **unconditionally** inside `route_node`, concurrently with
+routing. But `trace.emit("thought", ...)` is a no-op without a trace sink, so on
+`POST /api/query` and throughout `eval/harness.py` the planner's LLM call was
+made, paid for, and its result discarded — an extra call on every query, and extra
+concurrent load on the client during the one node whose output decides which
+agents run.
+
+Gated on `trace.active()`, the module's own "is anyone listening" helper. Measured
+effect on the two questions that had moved, sampled in isolation:
+
+| | S07 correct | X09 clean |
+|---|---:|---:|
+| before the gate | 2 of 3 | 0 of 3 |
+| after the gate | 4 of 4 | 3 of 4 |
+
+and on the full set, the ungrounded-figure count returned from 7 to 5 — inside
+`main`'s own observed range of 4–5. `tests/orchestrator/test_planner.py::
+test_no_planner_call_is_made_when_nothing_is_listening` guards it in both
+directions.
+
+### Verdict
+
+| Metric | `main` (2 runs) | branch, planner gated |
+|---|---:|---:|
+| routing exact match | 0.60 / 0.5667 | 0.5667 |
+| routing recall | 0.925 / 0.925 | 0.8917 |
+| answers fully grounded | 0.8519 / 0.8519 | 0.8148 |
+| ungrounded figures | 4 / 5 | 5 |
+| answers with no evidence | 0 / 0 | 1 *(S07, above)* |
+| crashed | 0 / 0 | 0 |
+| single-sector p95 | 8,568 / 5,582 ms | 5,353 ms *(within budget)* |
+
+**Degraded mode is byte-identical between `main` and the branch** — routing exact
+0.4667, recall 0.9667, grounded 0.9259, 30 of 30 degraded, 0 crashed, on both.
+That is the strongest single line here: degraded mode is the fully deterministic
+path, so if the orchestration had actually changed, it would show there first and
+without ambiguity. It does not.
+
+Every remaining difference on the LLM path sits inside the run-to-run variance
+measured above, and the one difference large enough to be worth chasing was
+chased and found to be present on `main` as well.
+
+**Not yet re-run:** the 21 GREEN questions in `queries.md`, and `make coherence`.
+
+### After all four phases — measured 2026-09-10
+
+Re-run with the clarification gate, web-search enrichment, the usage ledger,
+custom instructions and the confidence breakdown all in place, cold cache:
+
+| Metric | `main` run 1 | `main` run 2 | all phases |
+|---|---:|---:|---:|
+| routing exact match | 0.60 | 0.5667 | **0.60** |
+| routing recall | 0.925 | 0.925 | **0.925** |
+| answers fully grounded | 0.8519 | 0.8519 | 0.8148 |
+| ungrounded figures | 4 | 5 | 6 |
+| mean evidence per answer | 4.33 | 4.33 | **4.33** |
+| answers with no evidence | 0 | 0 | **0** |
+| crashed | 0 | 0 | **0** |
+| single-sector p95 | 8,568 ms | 5,582 ms | 5,867 ms *(within budget)* |
+
+Routing, mean evidence and the no-evidence count land exactly on `main`. Grounding
+is one question below it and the ungrounded count one figure above the observed
+`main` range of 4-5 — both inside the noise floor measured above, and neither
+worth reporting as a result on a single run.
+
+**Degraded mode remains byte-identical**: routing exact 0.4667, recall 0.9667,
+grounded 0.9259, 30 of 30 degraded, 0 crashed — the same figures `main` produces.
+Since degraded mode is the fully deterministic path, this is the line that says
+the orchestration itself is unchanged, and it says it without ambiguity.
+
+**None of this measures the new features**, and it is not meant to. The 30
+questions are one-shot queries: they never open a conversation, never trigger the
+clarification gate (asserted separately — it is silent on all 30), and never make
+an outbound web call. What this run establishes is the thing that mattered most —
+that adding all of it did not disturb the path the published numbers describe.
+Measuring the conversational features needs a multi-turn harness, which
+`DEFERRED.md` records as not built.
+
+**Still not re-run:** the 21 GREEN questions in `queries.md`, and `make coherence`.
