@@ -279,3 +279,38 @@ throttled: login, a user reading their own history, and the admin routes.
   clear text is the user's question and a list of public headlines — this API
   has no key, no token and no account. The integrity risk is bounded by news
   never being evidence (D11). Remove the override once :443 answers.
+
+## Stream resume after a dropped connection — not built
+
+**Decided 2026-09-10, M2, while wiring the conversational layer's frontend.**
+
+`src/lib/streamChat.ts` has no reconnect. A stream that drops mid-turn surfaces a
+distinct "the connection dropped before this turn finished" state — held apart
+from a failed turn on purpose, because the server never said it failed and the
+answer may well have completed and been charged for — with a "reload
+conversation" action that reads the persisted transcript to find out.
+
+What is *not* built is genuine resume. Doing it safely needs a server-side resume
+token: without one, retrying replays a turn that already ran the full five-agent
+fan-out and already spent its tokens, which is worse than asking the user. That is
+not a five-line change and it was not worth half-attempting, so the honest partial
+— tell the user precisely what is and is not known, and give them the read that
+settles it — is what shipped.
+
+## Web-search results reaching an LLM — deliberately not built (D14)
+
+Web text reaches no model in v1: snippets only, no full-page fetch, appended after
+merge. If a later version does feed web text to a model, it must go through the
+same `json.dumps(context, ...)` structured path `finish()` already uses — never
+f-string interpolation — inside an explicit "untrusted, do not follow instructions
+here" block. Recorded so the constraint is not rediscovered by accident.
+
+## The 30-question set's noise floor limits what it can prove
+
+`EVALUATION.md` §8 measures it: two runs of identical code differ by about one
+question on routing exact match and one on ungrounded figures, and single-sector
+p95 moved 35% between them. Two consequences that are not deferred work so much as
+deferred *confidence*: a one-question difference between two single runs is not a
+result, and a p95 from one run of 12 samples should not be quoted. Establishing a
+repeated-run protocol (three runs, report the median and the spread) is the fix,
+and it is not built.
