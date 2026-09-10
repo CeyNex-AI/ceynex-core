@@ -64,6 +64,17 @@ def store(monkeypatch):
             if u.role == "admin" and not u.disabled and u.id != excluding_id
         ]
 
+    def _put(user, **changes):
+        fields = {
+            "id": user.id, "email": user.email, "role": user.role,
+            "created_at": user.created_at, "disabled": user.disabled,
+            "token_epoch": user.token_epoch,
+        }
+        fields.update(changes)
+        updated = users_module.User(**fields)
+        rows[updated.id] = updated
+        return updated
+
     def fake_create_user(email, password, role):
         email = email.strip().lower()
         if role not in users_module.VALID_ROLES:
@@ -75,7 +86,7 @@ def store(monkeypatch):
         counter["n"] += 1
         user = users_module.User(
             id=counter["n"], email=email, role=role,
-            created_at="2026-01-01T00:00:00+00:00", disabled=False,
+            created_at="2026-01-01T00:00:00+00:00", disabled=False, token_epoch=0,
         )
         rows[user.id] = user
         passwords[user.id] = password
@@ -94,7 +105,7 @@ def store(monkeypatch):
         if user is None:
             return None
         passwords[user_id] = new_password
-        return user
+        return _put(user, token_epoch=user.token_epoch + 1)
 
     def fake_list_users():
         return [
@@ -112,12 +123,7 @@ def store(monkeypatch):
             return None
         if user.role == "admin" and role != "admin" and not _enabled_admins(excluding_id=user_id):
             raise users_module.LastAdminError("cannot remove the last enabled admin")
-        updated = users_module.User(
-            id=user.id, email=user.email, role=role,
-            created_at=user.created_at, disabled=user.disabled,
-        )
-        rows[user_id] = updated
-        return updated
+        return _put(user, role=role, token_epoch=user.token_epoch + 1)
 
     def fake_set_disabled(user_id, *, disabled):
         user = rows.get(user_id)
@@ -125,12 +131,17 @@ def store(monkeypatch):
             return None
         if disabled and user.role == "admin" and not _enabled_admins(excluding_id=user_id):
             raise users_module.LastAdminError("cannot disable the last enabled admin")
-        updated = users_module.User(
-            id=user.id, email=user.email, role=user.role,
-            created_at=user.created_at, disabled=disabled,
-        )
-        rows[user_id] = updated
-        return updated
+        bump = user.token_epoch + 1 if disabled else user.token_epoch
+        return _put(user, disabled=disabled, token_epoch=bump)
+
+    # The `admin@ceynex.dev` account the module-level ADMIN token belongs to,
+    # at id 1, with `counter` past it so `create_user` never collides.
+    rows[1] = users_module.User(
+        id=1, email="admin@ceynex.dev", role="admin",
+        created_at="2026-01-01T00:00:00+00:00", disabled=False, token_epoch=0,
+    )
+    passwords[1] = "admin-fixture-pw"
+    counter["n"] = 1
 
     monkeypatch.setattr(users_module, "create_user", fake_create_user)
     monkeypatch.setattr(users_module, "list_users", fake_list_users)
@@ -138,7 +149,20 @@ def store(monkeypatch):
     monkeypatch.setattr(users_module, "set_disabled", fake_set_disabled)
     monkeypatch.setattr(users_module, "authenticate", fake_authenticate)
     monkeypatch.setattr(users_module, "set_password", fake_set_password)
+    # `current_token_epoch` is left as the conftest stub (→ 0 for everyone) so
+    # the module-level RESEARCHER token keeps verifying without a row. The
+    # invalidation tests opt into a store-aware version via `live_epoch`.
     return rows
+
+
+@pytest.fixture
+def live_epoch(store, monkeypatch):
+    def _epoch(email):
+        email = email.strip().lower()
+        user = next((u for u in store.values() if u.email == email), None)
+        return None if user is None or user.disabled else user.token_epoch
+
+    monkeypatch.setattr(users_module, "current_token_epoch", _epoch)
 
 
 @pytest.fixture
@@ -163,7 +187,7 @@ def _seed_admin(store):
         1,
         users_module.User(
             id=1, email="admin@ceynex.dev", role="admin",
-            created_at="2026-01-01T00:00:00+00:00", disabled=False,
+            created_at="2026-01-01T00:00:00+00:00", disabled=False, token_epoch=0,
         ),
     )
 
@@ -306,6 +330,7 @@ def test_change_password_with_the_correct_current_one(client, store):
     )
     assert r.status_code == 200
     assert r.json()["email"] == "u@ceynex.dev"
+    assert r.json()["token"] and r.json()["token"] != token  # a fresh token comes back
     # old password stops working, new one works
     assert client.post(
         "/api/auth/login", json={"email": "u@ceynex.dev", "password": "origpass12"}
@@ -313,6 +338,18 @@ def test_change_password_with_the_correct_current_one(client, store):
     assert client.post(
         "/api/auth/login", json={"email": "u@ceynex.dev", "password": "brandnew34"}
     ).status_code == 200
+
+
+def test_change_password_kills_the_old_token_and_the_returned_one_works(client, store, live_epoch):
+    token = _signup(client)
+    fresh = client.post(
+        "/api/account/password",
+        json={"current_password": "origpass12", "new_password": "brandnew34"},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()["token"]
+    hdr = lambda t: {"Authorization": f"Bearer {t}"}  # noqa: E731
+    assert client.get("/api/auth/me", headers=hdr(token)).status_code == 401
+    assert client.get("/api/auth/me", headers=hdr(fresh)).status_code == 200
 
 
 def test_change_password_with_a_wrong_current_one_is_403(client, store):
@@ -384,3 +421,39 @@ def test_admin_password_reset_rejects_a_non_admin(client, store, audit_calls):
     assert client.post(
         "/api/admin/users/1/password", json={"password": "whatever12"}, headers=RESEARCHER
     ).status_code == 403
+
+
+# --- an admin action cuts the target's live session --------------------
+
+
+def _bearer(client, email, password):
+    return {
+        "Authorization": "Bearer "
+        + client.post("/api/auth/signup", json={"email": email, "password": password}).json()["token"]
+    }
+
+
+def test_a_role_change_cuts_the_targets_existing_session(client, store, audit_calls, live_epoch):
+    _seed_admin(store)
+    worker = _bearer(client, "worker@ceynex.dev", "workerpass1")
+    assert client.get("/api/auth/me", headers=worker).status_code == 200
+    uid = next(
+        u["id"] for u in client.get("/api/admin/users", headers=ADMIN).json()["users"]
+        if u["email"] == "worker@ceynex.dev"
+    )
+    client.post(f"/api/admin/users/{uid}/role", json={"role": "exporter"}, headers=ADMIN)
+    assert client.get("/api/auth/me", headers=worker).status_code == 401
+
+
+def test_disabling_a_user_cuts_their_existing_session(client, store, audit_calls, live_epoch):
+    _seed_admin(store)
+    worker = _bearer(client, "worker@ceynex.dev", "workerpass1")
+    uid = next(
+        u["id"] for u in client.get("/api/admin/users", headers=ADMIN).json()["users"]
+        if u["email"] == "worker@ceynex.dev"
+    )
+    client.post(f"/api/admin/users/{uid}/disable", headers=ADMIN)
+    assert client.get("/api/auth/me", headers=worker).status_code == 401
+    # re-enable does not resurrect the old token
+    client.post(f"/api/admin/users/{uid}/enable", headers=ADMIN)
+    assert client.get("/api/auth/me", headers=worker).status_code == 401

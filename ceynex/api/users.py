@@ -23,13 +23,17 @@ already exist; `python -m ceynex.api.users create-admin <email> <password>`
 does the same thing by hand. Neither ever overwrites an existing row, so
 leaving the env var set across restarts is harmless.
 
-**Role on a live token.** The role is copied into the login JWT (8 h TTL, see
-`ceynex/api/auth.py`), so an admin changing someone's role or disabling their
-account takes up to 8 h to catch a session that is already signed in. It is
-immediate for new logins and for API keys, which re-derive the role from here
-on every request (`auth.role_for_email`). Checking the DB on every authed
-request instead would be the stricter design; at this project's scale the TTL
-lag is an acceptable trade for keeping token verification a pure function.
+**Session invalidation.** `token_epoch` is an integer on each row, bumped by
+`set_password`, `set_role`, and `set_disabled(disabled=True)`. The login JWT
+carries the value it was issued against; `auth.verify_token` reads
+`current_token_epoch` once per authed request and rejects a token whose epoch
+no longer matches (or whose account is gone/disabled). So a password change,
+role change or disable cuts every existing session for that account at its
+next request — not 8 h later. The self-service password route
+(`routes/account.py`) hands the caller a fresh token in the same response so
+their own device stays signed in while every other session drops. If the
+per-request lookup can't reach Postgres the token is accepted on its
+signature alone — a datastore blip must not sign everyone out.
 """
 
 from __future__ import annotations
@@ -60,9 +64,15 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    disabled_at TIMESTAMPTZ
+    disabled_at TIMESTAMPTZ,
+    token_epoch INTEGER NOT NULL DEFAULT 0
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_epoch INTEGER NOT NULL DEFAULT 0;
 """
+
+# Every SELECT/RETURNING that feeds `_row_to_user` uses exactly this list, in
+# this order — one place to change if a column is added.
+_COLS = "id, email, password_hash, role, created_at, disabled_at, token_epoch"
 
 
 class EmailTakenError(Exception):
@@ -91,6 +101,11 @@ class User:
     role: str
     created_at: str
     disabled: bool
+    #: Bumped on every password change, role change, and disable. The login JWT
+    #: carries the value it was issued against; `auth.verify_token` rejects a
+    #: token whose epoch no longer matches, so those actions cut existing
+    #: sessions instead of waiting out the 8 h token TTL.
+    token_epoch: int
 
 
 def _norm_email(email: str) -> str:
@@ -117,6 +132,7 @@ def _row_to_user(row: tuple) -> User:
         role=row[3],
         created_at=row[4].isoformat(),
         disabled=row[5] is not None,
+        token_epoch=row[6],
     )
 
 
@@ -164,11 +180,11 @@ def create_user(email: str, password: str, role: str) -> User:
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         try:
             cur.execute(
-                """
+                f"""
                 INSERT INTO users (email, password_hash, role)
                 VALUES (%s, %s, %s)
-                RETURNING id, email, password_hash, role, created_at, disabled_at
-                """,
+                RETURNING {_COLS}
+                """,  # noqa: S608 - _COLS is a fixed module constant, no input
                 (email, _hash_password(password), role),
             )
         except psycopg.errors.UniqueViolation as exc:
@@ -181,12 +197,25 @@ def create_user(email: str, password: str, role: str) -> User:
 def get_by_email(email: str) -> User | None:
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, role, created_at, disabled_at "
-            "FROM users WHERE email = %s",
+            f"SELECT {_COLS} FROM users WHERE email = %s",  # noqa: S608 - _COLS is a fixed constant
             (_norm_email(email),),
         )
         row = cur.fetchone()
     return _row_to_user(row) if row else None
+
+
+def current_token_epoch(email: str) -> int | None:
+    """The `token_epoch` an enabled account's tokens must currently match, or
+    None if there is no such account or it is disabled. `auth.verify_token`
+    calls this once per authed request — a single indexed lookup, the same
+    per-request DB cost `api_keys.authenticate` already pays for key auth."""
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT token_epoch FROM users WHERE email = %s AND disabled_at IS NULL",
+            (_norm_email(email),),
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
 
 
 def authenticate(email: str, password: str) -> User | None:
@@ -196,8 +225,7 @@ def authenticate(email: str, password: str) -> User | None:
     or which accounts are disabled."""
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, role, created_at, disabled_at "
-            "FROM users WHERE email = %s",
+            f"SELECT {_COLS} FROM users WHERE email = %s",  # noqa: S608 - _COLS is a fixed constant
             (_norm_email(email),),
         )
         row = cur.fetchone()
@@ -254,8 +282,7 @@ def set_role(user_id: int, role: str) -> User | None:
         raise InvalidRoleError(f"role must be one of {VALID_ROLES}, got {role!r}")
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, role, created_at, disabled_at "
-            "FROM users WHERE id = %s",
+            f"SELECT {_COLS} FROM users WHERE id = %s",  # noqa: S608 - _COLS is a fixed constant
             (user_id,),
         )
         row = cur.fetchone()
@@ -266,9 +293,11 @@ def set_role(user_id: int, role: str) -> User | None:
             cur, excluding_id=user_id
         ) == 0:
             raise LastAdminError("cannot remove the last enabled admin")
+        # Bump token_epoch so any session already signed in as this user is cut
+        # at its next request — a role change has to take effect now, not in 8 h.
         cur.execute(
-            "UPDATE users SET role = %s WHERE id = %s "
-            "RETURNING id, email, password_hash, role, created_at, disabled_at",
+            f"UPDATE users SET role = %s, token_epoch = token_epoch + 1 "
+            f"WHERE id = %s RETURNING {_COLS}",  # noqa: S608 - _COLS is a fixed constant
             (role, user_id),
         )
         updated = cur.fetchone()
@@ -284,10 +313,14 @@ def set_disabled(user_id: int, *, disabled: bool) -> User | None:
     # separate literal statements rather than a bound parameter because now()
     # has to be evaluated by the database, not passed as a value.
     new_disabled_at_sql = "now()" if disabled else "NULL"
+    # Disabling also bumps token_epoch so existing sessions die immediately (not
+    # just at the next request, which `current_token_epoch` already covers) and,
+    # more importantly, so a later re-enable does not resurrect them. Re-enable
+    # does not bump — a fresh login is required either way.
+    epoch_bump_sql = ", token_epoch = token_epoch + 1" if disabled else ""
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT id, email, password_hash, role, created_at, disabled_at "
-            "FROM users WHERE id = %s",
+            f"SELECT {_COLS} FROM users WHERE id = %s",  # noqa: S608 - _COLS is a fixed constant
             (user_id,),
         )
         row = cur.fetchone()
@@ -301,8 +334,8 @@ def set_disabled(user_id: int, *, disabled: bool) -> User | None:
         ):
             raise LastAdminError("cannot disable the last enabled admin")
         cur.execute(
-            f"UPDATE users SET disabled_at = {new_disabled_at_sql} WHERE id = %s "  # noqa: S608 - fixed literal, no input
-            "RETURNING id, email, password_hash, role, created_at, disabled_at",
+            f"UPDATE users SET disabled_at = {new_disabled_at_sql}{epoch_bump_sql} "  # noqa: S608 - fixed literals, no input
+            f"WHERE id = %s RETURNING {_COLS}",
             (user_id,),
         )
         updated = cur.fetchone()
@@ -317,16 +350,16 @@ def set_password(user_id: int, new_password: str) -> User | None:
 
     Does not check the *old* password — that is the caller's job (the
     self-service route checks it via `authenticate`; the admin reset route
-    deliberately does not). Existing JWTs stay valid until they expire: the
-    token carries no reference to the hash, and adding a check would put a DB
-    read back on every authed request (see this module's docstring). The 8 h
-    TTL bounds the window."""
+    deliberately does not). Bumps `token_epoch`, so every existing session for
+    this account — including the one that made the change — is cut at its next
+    request; the self-service route hands the caller a fresh token in the same
+    response so their own device stays signed in."""
     if len(new_password) < MIN_PASSWORD_LENGTH:
         raise WeakPasswordError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE users SET password_hash = %s WHERE id = %s "
-            "RETURNING id, email, password_hash, role, created_at, disabled_at",
+            f"UPDATE users SET password_hash = %s, token_epoch = token_epoch + 1 "
+            f"WHERE id = %s RETURNING {_COLS}",  # noqa: S608 - _COLS is a fixed constant
             (_hash_password(new_password), user_id),
         )
         updated = cur.fetchone()
