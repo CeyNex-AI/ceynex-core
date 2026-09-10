@@ -31,12 +31,15 @@ from ceynex.api.routes import (
     auth,
     chat,
     conversations,
+    data,
     graph,
     health,
     history,
     news,
     query,
+    usage,
 )
+from ceynex.chat.instructions import ensure_table as ensure_instruction_table
 from ceynex.chat.store import ensure_table as ensure_chat_tables
 from ceynex.news import refresh as news_refresh
 from ceynex.news import snapshot as news_snapshot
@@ -71,6 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     news_snapshot.ensure_table()
     ensure_usage_table()
     ensure_chat_tables()
+    ensure_instruction_table()
 
     warm = asyncio.create_task(runtime.warmup())
     # Waits for `warm` before its first pass — a refresh that starts ahead of the
@@ -125,3 +129,5 @@ app.include_router(admin.router)
 app.include_router(account.router)
 app.include_router(news.router)
 app.include_router(graph.router)
+app.include_router(usage.router)
+app.include_router(data.router)
