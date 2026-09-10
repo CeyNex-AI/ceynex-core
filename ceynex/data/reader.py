@@ -14,6 +14,7 @@ aggregation, joins and analysis belong to the caller.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
 from typing import Any
 
@@ -21,6 +22,7 @@ import pandas as pd
 import psycopg
 from psycopg.rows import dict_row
 
+from ceynex.observability import trace
 from ceynex.settings import postgres_dsn
 
 log = logging.getLogger(__name__)
@@ -125,14 +127,40 @@ def annual_series(
         ORDER BY 1
     """
 
+    started = time.perf_counter()
     try:
         with psycopg.connect(dsn or postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             rows = cur.fetchall()
     except psycopg.Error as exc:
+        trace.emit(
+            "sql_query",
+            table="fact_trade",
+            item=item,
+            target=target,
+            status="failed",
+            error=str(exc),
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
         raise DatasetUnavailableError(f"could not read fact_trade: {exc}") from exc
 
     frame = pd.DataFrame(rows, columns=["period", "value"])
+    # The SQL itself, not just a label: the trace makes the same traceability
+    # claim the KG path already makes by returning its Cypher (SRS 3.1.4), and a
+    # step that only said "queried Postgres" would not be checkable.
+    trace.emit(
+        "sql_query",
+        table="fact_trade",
+        sql=" ".join(sql.split()),
+        item=item,
+        target=target,
+        sector=sector,
+        partner_iso3=partner_iso3,
+        source_id=source_id,
+        row_count=len(frame),
+        status="ok" if len(frame) else "empty",
+        elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+    )
     log.info("%s: %d annual observations of %s", item, len(frame), target)
     return frame
 
