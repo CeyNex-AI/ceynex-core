@@ -283,6 +283,36 @@ def evidence_from_policy(
     return evidence
 
 
+def evidence_from_web(
+    claim: str,
+    detail: str,
+    url: str,
+    period: str | None = None,
+) -> Evidence:
+    """Evidence for a general web result (D14). `source_id` is `"WEB"`.
+
+    **This is not the same kind of thing as the four constructors above**, and the
+    difference is the point. A KG, dataset, policy or model claim names something
+    that was queried and can be re-queried. A web result names something somebody
+    published, which nobody here has verified.
+
+    That is why web evidence is appended *after* `merge()` has already returned:
+    it never reaches the merge LLM, never enters
+    `orchestrator/grounding.py::ungrounded_figures()`, and cannot move
+    `aggregate_confidence()`. Those are structural consequences of when it is
+    created, not checks that could be forgotten — which is why this docstring is
+    the only place they are written down, and why moving this call earlier would
+    quietly undo all three at once.
+
+    `url` is required rather than optional, unlike `evidence_from_policy`. An
+    unverified claim a reader cannot go and check is not evidence at all.
+    """
+    evidence = Evidence(source_id="WEB", claim=_as_sentence(claim), detail=detail, url=url)
+    if period:
+        evidence["period"] = period
+    return evidence
+
+
 def evidence_from_model(claim: str, model_id: str, period: str | None = None) -> Evidence:
     evidence = Evidence(source_id="MODEL", claim=_as_sentence(claim), detail=model_id)
     if period:
@@ -404,6 +434,7 @@ __all__ = [
     "evidence_from_model",
     "evidence_from_policy",
     "evidence_from_query",
+    "evidence_from_web",
     "figures_evidence",
     "find_region",
     "finish",
