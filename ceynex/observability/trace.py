@@ -97,7 +97,9 @@ class TraceSink:
             self._queue = asyncio.Queue(maxsize=self.max_queued)
         return self._queue
 
-    def emit(self, kind: str, node: str | None, payload: Mapping[str, Any]) -> None:
+    def emit(
+        self, kind: str, node: str | None, payload: Mapping[str, Any], *, persist: bool = True
+    ) -> None:
         """Record an event. Never blocks, never raises into the caller.
 
         `seq` is assigned under a lock in the calling thread, so ordering is true
@@ -105,8 +107,16 @@ class TraceSink:
         and worker threads (`retrieval/client.py` runs its ONNX embed and rerank
         through `asyncio.to_thread`). The queue put is then marshalled onto the
         loop when the caller is not already on it.
+
+        `persist=False` is for the answer text itself (`answer_delta`): it is
+        streamed and kept for a resume, but not written to the stored trace —
+        the message row is the durable copy of the answer, and a second one in
+        `chat_trace_event` would be a transcript nobody reconciles. Nor is it
+        clipped: `MAX_TEXT` exists to keep a pathological Cypher string off the
+        wire, and cutting a sentence of the answer mid-word would show the
+        reader a draft the model never wrote.
         """
-        clipped = {key: _clip(value) for key, value in payload.items()}
+        values = dict(payload) if not persist else {k: _clip(v) for k, v in payload.items()}
         with self._lock:
             self._seq += 1
             event = TraceEvent(
@@ -115,9 +125,10 @@ class TraceSink:
                 ts=time.time(),
                 kind=kind,
                 node=node,
-                payload=clipped,
+                payload=values,
             )
-            self.history.append(event)
+            if persist:
+                self.history.append(event)
 
         try:
             on_loop = asyncio.get_running_loop() is self.loop
@@ -147,6 +158,18 @@ def emit(kind: str, /, **payload: Any) -> None:
     if obs is None or obs.trace is None:
         return
     obs.trace.emit(kind, context.current_node(), payload)
+
+
+def emit_live(kind: str, /, **payload: Any) -> None:
+    """Like `emit`, for the live stream and a resume only — never the stored trace.
+
+    The answer text as it arrives (`orchestrator/answer_stream.py`). See
+    `TraceSink.emit` for why it is kept out of `history`.
+    """
+    obs = context.current()
+    if obs is None or obs.trace is None:
+        return
+    obs.trace.emit(kind, context.current_node(), payload, persist=False)
 
 
 def active() -> bool:
@@ -181,4 +204,4 @@ def node(name: str, **start_payload: Any) -> Iterator[None]:
         context.reset_node(token)
 
 
-__all__ = ["MAX_TEXT", "TraceEvent", "TraceSink", "active", "emit", "node"]
+__all__ = ["MAX_TEXT", "TraceEvent", "TraceSink", "active", "emit", "emit_live", "node"]
