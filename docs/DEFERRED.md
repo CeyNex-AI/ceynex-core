@@ -55,9 +55,10 @@ something new from a bare request.
 gone.** `ceynex/api/users.py` is a real `users` table (bcrypt password hashes,
 a `role` column over the same four roles, a `disabled_at` flag), additive to
 the frozen contracts schema the same way `query_history` is. `POST
-/api/auth/signup` self-registers an account at the default role
-(`researcher`) and logs it straight in; `POST /api/auth/login` checks the
-stored hash. A signed-in user manages their own account under `/api/account`:
+/api/auth/signup` self-registers an account — at whichever of
+`users.SIGNUP_ROLES` (`researcher` / `exporter` / `policymaker`) the request
+names, `researcher` by default, **never `admin`** (403) — and logs it straight
+in; `POST /api/auth/login` checks the stored hash. A signed-in user manages their own account under `/api/account`:
 change password (`POST /api/account/password`), change email (`POST
 /api/account/email` — moves their history / keys / preferences to the new
 address), or delete it outright (`DELETE /api/account` — removes those rows

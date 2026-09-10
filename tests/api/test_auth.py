@@ -133,6 +133,39 @@ def test_a_short_password_is_rejected_before_the_route_body_runs(client, store):
     ).status_code == 422
 
 
+@pytest.mark.parametrize("role", ["researcher", "exporter", "policymaker"])
+def test_signup_takes_the_requested_non_admin_role(client, store, role):
+    body = client.post(
+        "/api/auth/signup",
+        json={"email": f"{role}@ceynex.dev", "password": PASSWORD, "role": role},
+    ).json()
+    assert body["role"] == role
+
+
+def test_signup_cannot_self_assign_admin(client, store):
+    r = client.post(
+        "/api/auth/signup",
+        json={"email": "wannabe@ceynex.dev", "password": PASSWORD, "role": "admin"},
+    )
+    assert r.status_code == 403
+    assert "admin" in r.json()["detail"]
+
+
+def test_signup_with_an_unknown_role_is_422(client, store):
+    r = client.post(
+        "/api/auth/signup",
+        json={"email": "x@ceynex.dev", "password": PASSWORD, "role": "superuser"},
+    )
+    assert r.status_code == 422
+
+
+def test_signup_with_no_role_still_defaults_to_researcher(client, store):
+    body = client.post(
+        "/api/auth/signup", json={"email": "norole@ceynex.dev", "password": PASSWORD}
+    ).json()
+    assert body["role"] == users_module.DEFAULT_ROLE == "researcher"
+
+
 # --- login --------------------------------------------------------------
 
 
