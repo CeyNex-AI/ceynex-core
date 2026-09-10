@@ -309,3 +309,16 @@ def llm_config() -> dict[str, Any]:
 def elasticity_config() -> dict[str, Any]:
     """SRS 3.1.5 — the simulation assumptions, in a table a marker can read."""
     return load_config("elasticities")
+
+
+def citations_enabled() -> bool:
+    """Inline `[n]` citation markers in merge prose (execution plan §7).
+
+    **Default off**, unlike the other feature switches here, and deliberately so.
+    Turning it on changes the prompt every answer is written from, and
+    `docs/EVALUATION.md` §8 is explicit that an unmeasured prompt change is worth
+    nothing until it has been run against the 30-question set. The flag exists so
+    that run is a comparison rather than a leap.
+    """
+    value = (_env("CEYNEX_CITATIONS", "off") or "off").lower()
+    return value in ("on", "1", "true", "yes")

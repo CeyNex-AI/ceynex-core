@@ -60,3 +60,22 @@ chat_rate_limit:
   enabled: true
   turns_per_minute: 45
   window_seconds: 60
+
+# General web search (docs/ARCHITECTURE_DELTA.md D14). Deliberately NOT a
+# per-user allowance like the four blocks above, and that difference is the whole
+# point of it existing: the per-user limits already bound how often any one
+# account can trigger a search, but they say nothing about the total. A hundred
+# accounts inside their own limits still add up to a bill on somebody else's API.
+#
+# So the identity here is a single fixed key shared by every caller and, through
+# Redis, by both uvicorn workers — a global ceiling on outbound calls per minute
+# rather than a fairness rule. Without REDIS_URL it degrades to per-process,
+# which is the same caveat rate_limit.py already documents for everything else.
+#
+# Sized against the recency gate: `wants_current_context()` means only a
+# minority of questions are eligible at all, so this bounds the tail rather than
+# the common case.
+websearch_rate_limit:
+  enabled: true
+  searches_per_minute: 60
+  window_seconds: 60
