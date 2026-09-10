@@ -33,10 +33,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import replace
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
+from ceynex.observability import trace
 from ceynex.retrieval.schema import (
     DENSE_MODEL,
     DENSE_VECTOR,
@@ -253,12 +255,21 @@ class PolicyRetriever:
         # process is warm. `warmup()` at wiring time is the intended path; this
         # await is the safety net for a caller that skipped it.
         models = await _models_ready()
+        started = time.perf_counter()
 
         try:
             chunks = await asyncio.wait_for(
                 self._search(models, query, filters, limit), timeout=self._timeout_s
             )
         except TimeoutError as exc:
+            trace.emit(
+                "vector_search",
+                collection=self._collection,
+                filter=filters.describe(),
+                status="failed",
+                error=f"exceeded its {self._timeout_s:.1f}s budget",
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            )
             raise PolicyRetrieverUnavailableError(
                 f"policy retrieval exceeded its {self._timeout_s:.1f}s budget"
             ) from exc
@@ -282,10 +293,32 @@ class PolicyRetriever:
                     self._search(models, query, widened, limit), timeout=self._timeout_s
                 )
             except TimeoutError as exc:
+                trace.emit(
+                    "vector_search",
+                    collection=self._collection,
+                    filter=widened.describe(),
+                    widened=True,
+                    status="failed",
+                    error=f"exceeded its {self._timeout_s:.1f}s budget",
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                )
                 raise PolicyRetrieverUnavailableError(
                     f"policy retrieval exceeded its {self._timeout_s:.1f}s budget"
                 ) from exc
 
+        # `kept=0` is a real, correct outcome here, not a failure — the rerank
+        # floor returns nothing rather than the least-bad passage — so the
+        # timeline says so explicitly instead of showing an empty step.
+        trace.emit(
+            "vector_search",
+            collection=self._collection,
+            filter=widened.describe(),
+            widened=widened is not filters,
+            kept=len(chunks),
+            top_score=round(chunks[0].score, 4) if chunks else None,
+            status="ok" if chunks else "empty",
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+        )
         return chunks, widened.describe()
 
     async def warmup(self) -> None:
