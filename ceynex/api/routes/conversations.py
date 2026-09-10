@@ -82,6 +82,11 @@ def _message(message: store.Message) -> ChatMessageItem:
         elapsed_ms=message.elapsed_ms,
         usage=message.usage,
         query_history_id=message.query_history_id,
+        saved=message.saved,
+        confidence_breakdown=message.confidence_breakdown,
+        grounded=message.grounded,
+        effective_query=message.effective_query,
+        regenerated_from=message.regenerated_from,
     )
 
 

@@ -152,6 +152,20 @@ CREATE TABLE IF NOT EXISTS chat_feedback (
 ALTER TABLE chat_conversation ADD COLUMN IF NOT EXISTS share_token TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS chat_conversation_share_idx
     ON chat_conversation (share_token) WHERE share_token IS NOT NULL;
+
+-- So a reopened conversation shows what the live turn showed: the working behind
+-- the confidence score, whether a discussion's prose survived grounding, and —
+-- on a user turn — the query actually run when it differs from what was typed.
+ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS confidence_breakdown JSONB;
+ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS grounded BOOLEAN;
+ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS effective_query TEXT;
+
+-- Regenerate keeps every version. SET NULL rather than CASCADE: no path deletes
+-- a single message today, but if one ever does, removing an old version must
+-- not take the newer one with it. Deleting the conversation still removes all
+-- of them through `conversation_id`.
+ALTER TABLE chat_message ADD COLUMN IF NOT EXISTS regenerated_from BIGINT
+    REFERENCES chat_message(id) ON DELETE SET NULL;
 """
 
 
@@ -199,6 +213,30 @@ class Message:
     usage: dict[str, Any] | None = None
     query_history_id: int | None = None
     created_at: str | None = None
+    #: SRS 3.1.4's working behind the score. Stored so "why this confidence?"
+    #: survives a reload — without it the panel beside a reopened answer was
+    #: silently missing, which reads as "there was no working".
+    confidence_breakdown: dict[str, Any] | None = None
+    #: A `discuss` turn only: False when its prose was withheld for stating a
+    #: figure the analysis never produced. None on everything else.
+    grounded: bool | None = None
+    #: A *user* turn only: the query the system actually ran, when it differs
+    #: from `content` — a follow-up rewritten as a standalone question, or a
+    #: clarified question composed with the reader's choice. `content` stays
+    #: what the reader typed, so a reopened transcript never puts words in their
+    #: mouth. None means the two are the same.
+    effective_query: str | None = None
+    #: An assistant turn produced by Regenerate: the id of the version it
+    #: replaces. Older versions are kept, never overwritten.
+    regenerated_from: int | None = None
+    #: Read-only, joined from `query_history.saved` through `query_history_id`,
+    #: so the chat's save star shows the state the History panel shows.
+    saved: bool = False
+
+    @property
+    def asked(self) -> str:
+        """The question as the system ran it: the rewrite if there was one."""
+        return self.effective_query or self.content
 
 
 class ChatStoreUnavailableError(RuntimeError):
@@ -396,9 +434,11 @@ _MESSAGE_COLUMNS = (
     # `id` travels so a reader can rate an answer (§5). `seq` orders a
     # transcript; it does not identify a row across conversations, and the
     # feedback endpoint needs something that does.
-    "id, seq, role, content, mode, request_id, confidence, confidence_band, degraded, "
-    "agents_used, route, sectors, unanswered, evidence, forecast, graph, elapsed_ms, "
-    "usage, query_history_id, created_at"
+    "m.id, m.seq, m.role, m.content, m.mode, m.request_id, m.confidence, "
+    "m.confidence_band, m.degraded, m.agents_used, m.route, m.sectors, m.unanswered, "
+    "m.evidence, m.forecast, m.graph, m.elapsed_ms, m.usage, m.query_history_id, "
+    "m.created_at, m.confidence_breakdown, m.grounded, m.effective_query, "
+    "m.regenerated_from, coalesce(qh.saved, false) AS saved"
 )
 
 
@@ -425,8 +465,10 @@ def _append_sync(conversation_id: int, user_email: str, messages: list[Message])
                 INSERT INTO chat_message (
                     conversation_id, seq, role, content, mode, request_id,
                     confidence, confidence_band, degraded, agents_used, route, sectors,
-                    unanswered, evidence, forecast, graph, elapsed_ms, usage, query_history_id
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    unanswered, evidence, forecast, graph, elapsed_ms, usage, query_history_id,
+                    confidence_breakdown, grounded, effective_query, regenerated_from
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                          %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -439,6 +481,12 @@ def _append_sync(conversation_id: int, user_email: str, messages: list[Message])
                     message.elapsed_ms,
                     Jsonb(message.usage) if message.usage is not None else None,
                     message.query_history_id,
+                    Jsonb(message.confidence_breakdown)
+                    if message.confidence_breakdown is not None
+                    else None,
+                    message.grounded,
+                    message.effective_query,
+                    message.regenerated_from,
                 ),
             )
             ids.append(int(cur.fetchone()[0]))
@@ -472,9 +520,13 @@ def _messages_sync(conversation_id: int, user_email: str) -> list[Message] | Non
         if cur.fetchone() is None:
             return None
 
+        # The join is the documented cross-link (see the module docstring), read
+        # so the save star in chat and the one in the History panel can never
+        # disagree about the same row.
         cur.execute(
-            f"SELECT {_MESSAGE_COLUMNS} FROM chat_message "  # noqa: S608 - fixed column list
-            "WHERE conversation_id = %s ORDER BY seq",
+            f"SELECT {_MESSAGE_COLUMNS} FROM chat_message m "  # noqa: S608 - fixed column list
+            "LEFT JOIN query_history qh ON qh.id = m.query_history_id "
+            "WHERE m.conversation_id = %s ORDER BY m.seq",
             (conversation_id,),
         )
         rows = cur.fetchall()
@@ -501,6 +553,11 @@ def _messages_sync(conversation_id: int, user_email: str) -> list[Message] | Non
             usage=row["usage"],
             query_history_id=row["query_history_id"],
             created_at=row["created_at"].isoformat(),
+            confidence_breakdown=row.get("confidence_breakdown"),
+            grounded=row.get("grounded"),
+            effective_query=row.get("effective_query"),
+            regenerated_from=row.get("regenerated_from"),
+            saved=bool(row.get("saved")),
         )
         for row in rows
     ]

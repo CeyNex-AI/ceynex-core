@@ -435,6 +435,16 @@ class ChatMessageItem(BaseModel):
     #: Cross-link to the existing `query_history` row, so the chat UI's save
     #: button calls the untouched `/api/history/{id}/save` rather than a parallel one.
     query_history_id: int | None = None
+    #: That row's `saved` flag, read through the join rather than stored twice.
+    saved: bool = False
+    #: SRS 3.1.4's working behind `confidence`, when it was computed.
+    confidence_breakdown: dict[str, float] | None = None
+    #: A `discuss` turn only: False when its prose was withheld as ungrounded.
+    grounded: bool | None = None
+    #: A user turn only: the query actually run, when it differs from `content`.
+    effective_query: str | None = None
+    #: A regenerated answer: the id of the version it replaces.
+    regenerated_from: int | None = None
 
 
 class ConversationDetail(BaseModel):

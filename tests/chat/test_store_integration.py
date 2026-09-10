@@ -15,6 +15,7 @@ from __future__ import annotations
 import psycopg
 import pytest
 
+from ceynex.api import history
 from ceynex.chat import store
 from ceynex.observability import ledger
 from ceynex.observability.trace import TraceEvent
@@ -28,6 +29,9 @@ OTHER_USER = "chat-store-other@ceynex.invalid"
 
 @pytest.fixture(autouse=True)
 def clean_user():
+    # The transcript read joins `query_history` for the save state, so the
+    # table the API's lifespan creates has to exist here too.
+    history.ensure_table()
     store.ensure_table()
     ledger.ensure_table()
     _purge()
@@ -41,6 +45,8 @@ def _purge() -> None:
             "DELETE FROM chat_conversation WHERE user_email = ANY(%s)",
             ([TEST_USER, OTHER_USER],),
         )
+        cur.execute("DELETE FROM query_history WHERE user_email = ANY(%s)",
+                    ([TEST_USER, OTHER_USER],))
         cur.execute("DELETE FROM llm_usage WHERE user_email = ANY(%s)",
                     ([TEST_USER, OTHER_USER],))
         # Trace events written against no conversation are not reachable by the
@@ -284,3 +290,77 @@ async def test_deleting_a_conversation_also_removes_its_pending_question():
     )
     await store.delete(conversation_id, TEST_USER)
     assert (await store.resolve_clarification(pending_id, TEST_USER)) is None
+
+
+# --- what a reopened transcript must still show (W0) -----------------------
+
+
+async def test_the_working_behind_the_score_survives_a_reload():
+    """"Why this confidence?" was shown on the live turn and silently missing on
+    the same turn reopened a minute later."""
+    conversation_id = await store.create(TEST_USER)
+    answer = _answer_message()
+    answer.confidence_breakdown = {"base": 0.7, "staleness": -0.05, "final": 0.61}
+    await store.append(conversation_id, TEST_USER,
+                       [store.Message(role="user", content="q"), answer])
+
+    reloaded = (await store.messages(conversation_id, TEST_USER))[1]
+    assert reloaded.confidence_breakdown == {"base": 0.7, "staleness": -0.05, "final": 0.61}
+
+
+async def test_a_withheld_discussion_is_still_marked_as_withheld():
+    conversation_id = await store.create(TEST_USER)
+    discussion = store.Message(role="assistant", content="withheld", mode="discuss",
+                               grounded=False)
+    await store.append(conversation_id, TEST_USER,
+                       [store.Message(role="user", content="summarise"), discussion])
+
+    reloaded = (await store.messages(conversation_id, TEST_USER))[1]
+    assert reloaded.grounded is False
+
+
+async def test_the_transcript_keeps_what_was_typed_beside_what_was_run():
+    """A follow-up is rewritten before the graph runs. The reader typed "now do
+    rubber", and a reopened chat must not show them a question they never asked."""
+    conversation_id = await store.create(TEST_USER)
+    typed = store.Message(role="user", content="now do rubber",
+                          effective_query="What are Sri Lanka's rubber export trends?")
+    await store.append(conversation_id, TEST_USER, [typed, _answer_message()])
+
+    reloaded = (await store.messages(conversation_id, TEST_USER))[0]
+    assert reloaded.content == "now do rubber"
+    assert reloaded.asked == "What are Sri Lanka's rubber export trends?"
+
+
+async def test_the_save_state_is_read_from_the_history_row_it_links_to():
+    """One saved flag, read in two places. The chat star and the History panel
+    cannot disagree because there is only one row to disagree about."""
+    history_id = history.record(user_email=TEST_USER, query="q", answer="a",
+                                confidence=0.6, degraded=False)
+    assert isinstance(history_id, int)
+
+    conversation_id = await store.create(TEST_USER)
+    answer = _answer_message()
+    answer.query_history_id = history_id
+    await store.append(conversation_id, TEST_USER,
+                       [store.Message(role="user", content="q"), answer])
+    assert (await store.messages(conversation_id, TEST_USER))[1].saved is False
+
+    history.set_saved(history_id, TEST_USER, saved=True)
+    assert (await store.messages(conversation_id, TEST_USER))[1].saved is True
+
+
+async def test_a_regenerated_answer_links_to_the_version_it_replaces():
+    conversation_id = await store.create(TEST_USER)
+    first_ids = await store.append(conversation_id, TEST_USER,
+                                   [store.Message(role="user", content="q"),
+                                    _answer_message("r1")])
+    second = _answer_message("r2")
+    second.regenerated_from = first_ids[1]
+    await store.append(conversation_id, TEST_USER, [second])
+
+    messages = await store.messages(conversation_id, TEST_USER)
+    assert [m.role for m in messages] == ["user", "assistant", "assistant"]
+    assert messages[2].regenerated_from == messages[1].id
+    # Both versions are kept: Regenerate adds, it never overwrites.
+    assert {m.request_id for m in messages[1:]} == {"r1", "r2"}
