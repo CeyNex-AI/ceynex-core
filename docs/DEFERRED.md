@@ -245,20 +245,30 @@ pipeline". Two different mechanisms cover the two halves:
 
 ## Rate limiting (SRS 3.4.6) — built, with one stated exposure
 
-`ceynex/api/rate_limit.py`, wired onto `POST /api/query` only. Redis-backed
-when `REDIS_URL` is set (the deployed image runs two uvicorn workers, so a
-per-process counter would permit double the configured limit), per-process
-otherwise.
+`ceynex/api/rate_limit.py`, wired onto `POST /api/query`, the news sidecar,
+`GET /api/graph/expand`, and — since RBAC — `POST /api/auth/login` and
+`/api/auth/signup`. Redis-backed when `REDIS_URL` is set (the deployed image
+runs two uvicorn workers, so a per-process counter would permit double the
+configured limit), per-process otherwise. Each surface has its own config
+block in `config/api.yaml` and its own identity-key prefix so one endpoint's
+traffic can't spend another's allowance.
+
+**Auth limiter shape** (`routes/auth.py`, `auth_rate_limit` config): every
+login/signup attempt is counted against **both** the client address
+(`auth:ip:<host>`) and the email in the body (`auth:email:<addr>`), so neither
+"one IP, many emails" nor "one email, many IPs" gets a free pass. 10/minute —
+generous for a person, tight for a script on top of bcrypt's own per-attempt
+cost.
 
 **It fails open.** If Redis is unreachable the request is allowed and a warning
 is logged, so a Redis outage means abuse is unthrottled until it is restored.
 That is the deliberate direction — the alternative is a rate-limit store outage
-taking down query submission entirely, which causes the unavailability the
-limiter exists to prevent — but it is an exposure and is recorded here rather
-than left to be discovered.
+taking down query submission (or login) entirely, which causes the
+unavailability the limiter exists to prevent — but it is an exposure and is
+recorded here rather than left to be discovered.
 
-Also unlimited by design, each needing its own justification before being
-throttled: login, a user reading their own history, and the admin routes.
+Still unlimited by design: a user reading their own history, and the admin
+routes (a valid admin token is already the gate there).
 
 ## Operational
 

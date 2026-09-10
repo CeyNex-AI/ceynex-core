@@ -19,6 +19,20 @@ rate_limit:
   # spent in one burst and then nothing for minutes.
   window_seconds: 60
 
+# POST /api/auth/login and /api/auth/signup. A separate block and identity
+# namespace (routes/auth.py) because this is not about serving capacity like
+# the query limit above — it is about credential stuffing and signup spam.
+# Every attempt is counted against BOTH the client address and the email in
+# the body, so "one IP, many emails" and "one email, many IPs" both trip it.
+#
+# 10/minute is generous for a person (a mistyped password is two or three
+# attempts, not ten) and tight for a script. bcrypt already costs ~100 ms per
+# attempt; this bounds a caller who does not mind paying that.
+auth_rate_limit:
+  enabled: true
+  attempts_per_minute: 10
+  window_seconds: 60
+
 # The news sidecar's own allowance (docs/ARCHITECTURE_DELTA.md D11). A separate
 # block, and a separate identity namespace in routes/news.py, because the
 # browser fires a news search on every submitted query — counting both against
