@@ -17,6 +17,7 @@ the same 404, the same posture as `history.set_saved`.
 from __future__ import annotations
 
 import logging
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -28,6 +29,11 @@ from ceynex.api.schemas import (
     ConversationDetail,
     ConversationPatchRequest,
     ConversationSummary,
+    FeedbackRequest,
+    FeedbackResponse,
+    SharedConversationResponse,
+    ShareRequest,
+    ShareResponse,
     TraceEventItem,
 )
 from ceynex.chat import store
@@ -56,6 +62,7 @@ def _summary(conversation: store.Conversation) -> ConversationSummary:
 
 def _message(message: store.Message) -> ChatMessageItem:
     return ChatMessageItem(
+        id=message.id,
         seq=message.seq,
         role=message.role,
         content=message.content,
@@ -231,3 +238,79 @@ async def get_trace(
         )
         for event in events
     ]
+
+
+@router.post("/messages/{message_id}/feedback", response_model=FeedbackResponse)
+async def rate_answer(
+    message_id: int,
+    request: FeedbackRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008 - FastAPI's dependency idiom
+) -> FeedbackResponse:
+    """Rate an answer 👍/👎, optionally with a reason (§5).
+
+    Worth more than it looks: `eval/questions.yaml` is a fixed set of 30
+    questions written before the harness ever ran, and it has no growth path.
+    Real questions readers marked wrong are the closest thing to a stream of
+    candidate eval cases this project can get.
+
+    Scoped through a join on the owning conversation, not by trusting
+    `message_id` — a `BIGSERIAL` is guessable, and rating someone else's answer
+    would poison exactly the data this exists to collect.
+    """
+    _require_enabled()
+    try:
+        ok = await store.record_feedback(message_id, user.email, request.rating, request.reason)
+    except store.ChatStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="message not found")
+    return FeedbackResponse(message_id=message_id, rating=request.rating)
+
+
+@router.post("/conversations/{conversation_id}/share", response_model=ShareResponse)
+async def share_conversation(
+    conversation_id: int,
+    request: ShareRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> ShareResponse:
+    """Mint or revoke a read-only link to a finished conversation (§5).
+
+    **Opt-in, revocable, and off by default** — `share_token` is NULL until this
+    is called. The token is `secrets.token_urlsafe`, not the conversation id, so
+    a link cannot be guessed by counting.
+
+    The shared view is unauthenticated by design. SRS 3.1.11 requires an account
+    before *submitting a query*, which a read-only transcript is not; and the
+    value of the feature is showing someone exactly what the system did, which is
+    lost if they need an account first.
+    """
+    _require_enabled()
+    token = secrets.token_urlsafe(24) if request.shared else None
+    try:
+        if not await store.owns(conversation_id, user.email):
+            raise HTTPException(status_code=404, detail="conversation not found")
+        await store.set_share_token(conversation_id, user.email, token)
+    except store.ChatStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return ShareResponse(shared=request.shared, token=token)
+
+
+@router.get("/shared/{token}", response_model=SharedConversationResponse)
+async def read_shared(token: str) -> SharedConversationResponse:
+    """A shared conversation, to anyone holding the link. No auth, by design.
+
+    `user_email` is never selected by the query behind this: a shared link shows
+    what the system did, not who asked it.
+    """
+    _require_enabled()
+    try:
+        conversation = await store.shared_conversation(token)
+    except store.ChatStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="no such shared conversation")
+    return SharedConversationResponse(
+        title=conversation.get("title"),
+        created_at=str(conversation.get("created_at")),
+        messages=conversation.get("messages") or [],
+    )
