@@ -244,7 +244,18 @@ async def _plan_steps(query: str, deps: AgentDeps) -> tuple[list[str], str]:
     Wrapped rather than called directly because `planner.plan` is the one thing
     in this node whose only job is presentation — a query must still be answered
     if it raises.
+
+    **Skipped entirely when nothing is listening.** The plan exists to be
+    streamed; `trace.emit("thought", ...)` is a no-op without a sink, so on
+    `POST /api/query` and in `eval/harness.py` this call was paid for and its
+    result discarded — an extra LLM call per query, and extra concurrent load on
+    the client during the one node whose output decides which agents run.
+    `trace.active()` is the module's own answer to "is anyone listening", and it
+    is what keeps the non-streaming path exactly as expensive as it was before
+    the plan existed.
     """
+    if not trace.active():
+        return [], "none"
     try:
         return await planner.plan(query, deps.llm)
     except Exception:  # noqa: BLE001 - a plan must never fail a query

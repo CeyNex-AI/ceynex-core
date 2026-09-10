@@ -172,3 +172,51 @@ async def test_the_method_is_reported_so_the_ui_can_say_which_it_was():
     assert llm_method == "llm"
     assert det_method == "deterministic"
     assert llm_steps != det_steps
+
+
+async def test_no_planner_call_is_made_when_nothing_is_listening():
+    """The plan exists to be streamed. Producing one for nobody is pure cost.
+
+    `trace.emit("thought", ...)` is a no-op without a sink, so on
+    `POST /api/query` and in `eval/harness.py` the planner's answer was built
+    and discarded — an extra LLM call on every query, and extra concurrent load
+    on the client during the one node that decides which agents run. Measured:
+    with the planner ungated, the routing of S07 ("which markets buy the most
+    Sri Lankan knitted apparel?") dropped `export_analytics` on one run in three
+    and returned an answer with no evidence at all; gated, it was correct four
+    times out of four.
+    """
+    from ceynex.agents.common import AgentDeps
+    from ceynex.contracts import new_state
+    from ceynex.observability import context, trace
+    from ceynex.orchestrator.graph import build_graph
+
+    class DeadKG:
+        async def run(self, cypher, params=None):
+            from ceynex.kg.client import KnowledgeGraphUnavailableError
+
+            raise KnowledgeGraphUnavailableError("not the subject of this test")
+
+        async def run_one(self, cypher, params=None):
+            from ceynex.kg.client import KnowledgeGraphUnavailableError
+
+            raise KnowledgeGraphUnavailableError("not the subject of this test")
+
+    llm = FakeLLMClient(json.dumps({"steps": ["a", "b", "c"]}))
+    deps = AgentDeps(kg=DeadKG(), llm=llm, dsn="postgresql://ceynex@127.0.0.1:1/nonexistent")
+    graph = build_graph(deps, use_llm_router=False)
+
+    await graph.ainvoke(new_state("cinnamon export trend", "u"))
+    assert not [role for role, _, _ in llm.calls if role == "planner"]
+
+    # ...and with a sink installed it is made, so the gate is what decides,
+    # not some other reason the call never happened.
+    import asyncio
+
+    sink = trace.TraceSink(request_id="listening", loop=asyncio.get_running_loop())
+    token = context.install(context.RequestObservability(request_id="listening", trace=sink))
+    try:
+        await graph.ainvoke(new_state("cinnamon export trend", "u"))
+    finally:
+        context.reset(token)
+    assert [role for role, _, _ in llm.calls if role == "planner"]
