@@ -51,17 +51,35 @@ true. Retrain only works on an already-registered `sector/item/target` (404
 otherwise) — it refits the same model class on fresh data, it does not train
 something new from a bare request.
 
-**Login exists now; `POST /api/query` itself still does not require a token.**
-`require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs
-one, but wiring it onto `/api/query` was a deliberate choice left for later:
-the frontend's four demo roles don't currently gate *what* a query can see,
-only which UI pages render, so requiring a token there today would add a login
-wall without changing any behaviour behind it. `POST /api/query` instead takes
-an *optional* token (`get_optional_user`) — signed in or not, a query still
-answers; being signed in only additionally attributes it to that user for
-history. Revisit the hard requirement once a route actually needs to tell
-users apart to change *what* it returns (the admin routes above are the first
-candidate).
+**Real user accounts and RBAC are built; the four fixed demo accounts are
+gone.** `ceynex/api/users.py` is a real `users` table (bcrypt password hashes,
+a `role` column over the same four roles, a `disabled_at` flag), additive to
+the frozen contracts schema the same way `query_history` is. `POST
+/api/auth/signup` self-registers an account at the default role
+(`researcher`) and logs it straight in; `POST /api/auth/login` checks the
+stored hash. Admin-only routes on the admin router provision an account at any
+role (`POST /api/admin/users`), list every account (`GET /api/admin/users`),
+move one between roles (`POST /api/admin/users/{id}/role`), and disable or
+re-enable one (`POST /api/admin/users/{id}/{disable,enable}`) — each audited
+first, with a last-enabled-admin guard so a deployment can't lock itself out.
+A fresh deployment starts with zero users: seed the first admin with
+`CEYNEX_BOOTSTRAP_ADMIN=email:password` (read once by `ensure_table()` at
+startup) or `python -m ceynex.api.users create-admin <email> <password>`. The
+login JWT still carries the role as a claim (8 h TTL), so a role change or
+disable catches an already-signed-in session only within that window;
+immediate for new logins and for API keys (`auth.role_for_email` re-derives
+live).
+
+**`POST /api/query` itself still does not require a token.** `require_user`
+(`ceynex/api/routes/auth.py`) gates every route that needs a signed-in user,
+but wiring it onto `/api/query` was a deliberate choice left for later: the
+four roles gate which UI pages render and the admin routes, not *what* a query
+can see, so requiring a token there today would add a login wall without
+changing any behaviour behind it. `POST /api/query` instead takes an *optional*
+token (`get_optional_user`) — signed in or not, a query still answers; being
+signed in only additionally attributes it to that user for history. Revisit
+the hard requirement once a route needs to tell users apart to change *what*
+it returns.
 
 **Query history (SRS 3.5.2, first half) is built**: `ceynex/api/history.py`
 records every authenticated query into a `query_history` table (additive to

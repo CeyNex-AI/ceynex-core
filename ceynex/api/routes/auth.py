@@ -1,31 +1,50 @@
-"""POST /api/auth/login and GET /api/auth/me — SRS 3.1.11.
+"""POST /api/auth/signup, POST /api/auth/login and GET /api/auth/me — SRS 3.1.11.
 
-Login checks a fixed demo account (see `ceynex/api/auth.py`) and issues a
-signed JWT. `/me` exists so any future protected route (the admin routes in
-docs/DEFERRED.md, when they're built) can share `require_user` as one
-verification path instead of each re-deriving it.
+Signup creates a real `users` row at the default role and logs the new account
+straight in; login checks a stored bcrypt hash (see `ceynex/api/users.py`) and
+issues a signed JWT. `/me` exists so any protected route can share
+`require_user` as one verification path instead of each re-deriving it.
+Admin-provisioned accounts and role changes live on the admin router
+(`routes/admin.py`), behind `require_admin`.
 """
 
 from __future__ import annotations
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from ceynex.api import api_keys
+from ceynex.api import api_keys, users
 from ceynex.api.auth import TokenPayload, authenticate, issue_token, verify_token
-from ceynex.api.schemas import LoginRequest, LoginResponse, UserResponse
+from ceynex.api.schemas import LoginRequest, LoginResponse, SignupRequest, UserResponse
 
 router = APIRouter(tags=["auth"])
 
 _bearer = HTTPBearer(auto_error=False)
 
 
+@router.post("/api/auth/signup", response_model=LoginResponse, status_code=201)
+async def signup(request: SignupRequest) -> LoginResponse:
+    try:
+        user = users.create_user(request.email, request.password, users.DEFAULT_ROLE)
+    except users.EmailTakenError as exc:
+        raise HTTPException(status_code=409, detail="an account with that email already exists") from exc
+    except users.WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not create account") from exc
+    return LoginResponse(token=issue_token(user.email, user.role), email=user.email, role=user.role)
+
+
 @router.post("/api/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest) -> LoginResponse:
-    user = authenticate(request.email, request.password)
+    try:
+        user = authenticate(request.email, request.password)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="login temporarily unavailable") from exc
     if user is None:
         raise HTTPException(status_code=401, detail="invalid email or password")
-    return LoginResponse(token=issue_token(user), email=user.email, role=user.role)
+    return LoginResponse(token=issue_token(user.email, user.role), email=user.email, role=user.role)
 
 
 def _verify_bearer(token: str) -> TokenPayload | None:

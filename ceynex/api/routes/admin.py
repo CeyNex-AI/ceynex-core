@@ -27,12 +27,13 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
-from ceynex.api import admin, audit
+from ceynex.api import admin, audit, users
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.routes.auth import TokenPayload, require_admin
 from ceynex.api.schemas import (
     AuditLogItem,
     AuditLogResponse,
+    CreateUserRequest,
     DQFlagItem,
     DQFlagsResponse,
     IngestRequest,
@@ -46,6 +47,10 @@ from ceynex.api.schemas import (
     ProviderStatusItem,
     ResolveDQFlagResponse,
     RetrainRequest,
+    SetRoleRequest,
+    UserAdminItem,
+    UserMutationResponse,
+    UsersResponse,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -289,3 +294,97 @@ async def audit_log(_admin: TokenPayload = Depends(require_admin)) -> AuditLogRe
             for e in entries
         ]
     )
+
+
+# --- user accounts + roles (SRS 3.5.4, RBAC) -----------------------------
+#
+# Self-service signup (`routes/auth.py`) only ever creates an account at the
+# default role. Everything that grants privilege — provisioning an account at a
+# chosen role, moving an existing account between roles, disabling one — is
+# here, behind `require_admin`, and every mutation writes an audit row first
+# via `_audit` (SRS 3.4.7), the same as retrain/ingest/resolve above.
+
+
+def _user_item(u: object) -> UserAdminItem:  # users.UserSummary | users.User
+    return UserAdminItem(
+        id=u.id, email=u.email, role=u.role, created_at=u.created_at, disabled=u.disabled
+    )
+
+
+@router.get("/users", response_model=UsersResponse)
+async def list_users(_admin: TokenPayload = Depends(require_admin)) -> UsersResponse:  # noqa: B008
+    try:
+        entries = await asyncio.to_thread(users.list_users)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="users unavailable") from exc
+    return UsersResponse(users=[_user_item(u) for u in entries])
+
+
+@router.post("/users", response_model=UserMutationResponse, status_code=201)
+async def create_user(
+    body: CreateUserRequest,
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> UserMutationResponse:
+    await _audit(admin_user, "create_user", f"{body.email} as {body.role}")
+    try:
+        user = await asyncio.to_thread(
+            users.create_user, body.email, body.password, body.role
+        )
+    except users.InvalidRoleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except users.WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except users.EmailTakenError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not create user") from exc
+    return UserMutationResponse(id=user.id, email=user.email, role=user.role, disabled=user.disabled)
+
+
+@router.post("/users/{user_id}/role", response_model=UserMutationResponse)
+async def set_user_role(
+    user_id: int,
+    body: SetRoleRequest,
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> UserMutationResponse:
+    await _audit(admin_user, "set_user_role", f"user {user_id} -> {body.role}")
+    try:
+        user = await asyncio.to_thread(users.set_role, user_id, body.role)
+    except users.InvalidRoleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except users.LastAdminError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not change role") from exc
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"no user with id {user_id}")
+    return UserMutationResponse(id=user.id, email=user.email, role=user.role, disabled=user.disabled)
+
+
+async def _set_disabled(user_id: int, admin_user: TokenPayload, *, disabled: bool) -> UserMutationResponse:
+    await _audit(admin_user, "disable_user" if disabled else "enable_user", f"user {user_id}")
+    try:
+        user = await asyncio.to_thread(users.set_disabled, user_id, disabled=disabled)
+    except users.LastAdminError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not update user") from exc
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"no user with id {user_id}")
+    return UserMutationResponse(id=user.id, email=user.email, role=user.role, disabled=user.disabled)
+
+
+@router.post("/users/{user_id}/disable", response_model=UserMutationResponse)
+async def disable_user(
+    user_id: int,
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> UserMutationResponse:
+    return await _set_disabled(user_id, admin_user, disabled=True)
+
+
+@router.post("/users/{user_id}/enable", response_model=UserMutationResponse)
+async def enable_user(
+    user_id: int,
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> UserMutationResponse:
+    return await _set_disabled(user_id, admin_user, disabled=False)
