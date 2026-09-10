@@ -5,25 +5,27 @@ exercised against a live database instead of monkeypatched.
 `preferences` has no notion of "valid account" (see its module docstring), so
 these use a synthetic pytest-only email like `test_history_integration.py`
 does. `api_keys.authenticate()` is different: it derives a role from
-`auth.role_for_email`, so a key only ever authenticates for one of the four
-real fixed demo accounts -- these tests use one (`researcher@ceynex.dev`) but
-scope cleanup to a distinctive label rather than deleting the account's rows
-outright, so a real key someone else created for that demo account survives.
+`auth.role_for_email`, which is DB-backed since RBAC -- so `clean_pytest_keys`
+creates a real `users` row for `KEY_USER` (a distinctive pytest-only email,
+not a demo account -- those are gone) and removes it afterwards along with the
+keys.
 """
 
 from __future__ import annotations
+
+import contextlib
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from ceynex.api import api_keys, preferences
+from ceynex.api import api_keys, preferences, users
 from ceynex.api.auth import role_for_email
 from ceynex.api.main import app
 from ceynex.settings import postgres_dsn
 
 PREFS_USER = "pytest-account@ceynex.dev"
-KEY_USER = "researcher@ceynex.dev"
+KEY_USER = "pytest-account-integration@ceynex.dev"
 KEY_LABEL = "pytest-account-integration key"
 
 
@@ -42,16 +44,22 @@ def clean_prefs_user():
 
 @pytest.fixture
 def clean_pytest_keys():
-    """Deletes only rows this test file itself created (matched by label),
-    leaving any other key on `KEY_USER` (a real fixed demo account) alone."""
+    """`KEY_USER` is a pytest-only account this fixture owns end to end: a real
+    `users` row (so `api_keys.authenticate` can resolve a role), its keys, and
+    its preferences row, all created here and removed afterwards."""
 
     def purge():
         with psycopg.connect(postgres_dsn()) as conn:
-            conn.execute("DELETE FROM api_keys WHERE user_email = %s AND label = %s", (KEY_USER, KEY_LABEL))
+            conn.execute("DELETE FROM api_keys WHERE user_email = %s", (KEY_USER,))
+            conn.execute("DELETE FROM notification_preferences WHERE user_email = %s", (KEY_USER,))
+            conn.execute("DELETE FROM users WHERE email = %s", (KEY_USER,))
             conn.commit()
 
+    users.ensure_table()
     api_keys.ensure_table()
     purge()
+    with contextlib.suppress(users.EmailTakenError):
+        users.create_user(KEY_USER, "pytest-account-int-pw", "researcher")
     yield
     purge()
 

@@ -68,11 +68,18 @@ each audited first, with a last-enabled-admin guard so a deployment can't lock
 itself out.
 A fresh deployment starts with zero users: seed the first admin with
 `CEYNEX_BOOTSTRAP_ADMIN=email:password` (read once by `ensure_table()` at
-startup) or `python -m ceynex.api.users create-admin <email> <password>`. The
-login JWT still carries the role as a claim (8 h TTL), so a role change or
-disable catches an already-signed-in session only within that window;
-immediate for new logins and for API keys (`auth.role_for_email` re-derives
-live).
+startup) or `python -m ceynex.api.users create-admin <email> <password>`.
+
+A password change, role change or disable **cuts existing sessions
+immediately**, not at the 8 h token TTL: `users` has a `token_epoch` column
+bumped by those three operations, the login JWT carries the epoch it was
+issued against, and `auth.verify_token` makes one indexed lookup
+(`current_token_epoch`) per authed request and 401s a token whose epoch has
+moved on (or whose account is gone/disabled). The self-service password route
+returns a fresh token so the caller's own device is not logged out. The
+lookup fails open on a Postgres outage (token accepted on signature alone).
+API keys were already live — `auth.role_for_email` re-derives their role every
+request.
 
 **`POST /api/query` itself still does not require a token.** `require_user`
 (`ceynex/api/routes/auth.py`) gates every route that needs a signed-in user,
