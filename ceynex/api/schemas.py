@@ -195,6 +195,9 @@ class SignupRequest(BaseModel):
     # 8 is `users.MIN_PASSWORD_LENGTH`; the domain layer re-checks so the CLI
     # and tests can't slip a weak one past.
     password: str = Field(min_length=8, max_length=200)
+    # Optional; omitted -> `users.DEFAULT_ROLE`. Must be one of
+    # `users.SIGNUP_ROLES` (everything except `admin`) — the route enforces it.
+    role: str | None = Field(default=None, max_length=40)
 
 
 class LoginResponse(BaseModel):
