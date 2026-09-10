@@ -271,16 +271,27 @@ async def by_role_and_model(user_email: str | None, *, days: int = 30) -> list[U
     return _rows_to_rollups(await asyncio.to_thread(_query, sql, params))
 
 
-async def spent_today() -> float:
-    """Today's spend across every worker — what the process-local cap cannot see."""
-    rows = await asyncio.to_thread(
-        _query,
-        """
-        SELECT coalesce(sum(cost_usd), 0) FROM llm_usage
-        WHERE called_at >= date_trunc('day', now())
-        """,
-        (),
-    )
+async def spent_today(user_email: str | None = None) -> float:
+    """Today's spend across every worker, or one reader's when `user_email` is given.
+
+    The accounting figure. Enforcement reads `observability/spend.py`'s counter,
+    which must answer before every paid call and so cannot be a query; the two
+    agree when that counter is shared through Redis. The day is the database's
+    (UTC in the deployed image), the same day the counter keys by.
+    """
+    if user_email is None:
+        sql, params = (
+            "SELECT coalesce(sum(cost_usd), 0) FROM llm_usage "
+            "WHERE called_at >= date_trunc('day', now())",
+            (),
+        )
+    else:
+        sql, params = (
+            "SELECT coalesce(sum(cost_usd), 0) FROM llm_usage "
+            "WHERE user_email = %s AND called_at >= date_trunc('day', now())",
+            (user_email,),
+        )
+    rows = await asyncio.to_thread(_query, sql, params)
     return float(rows[0][0]) if rows else 0.0
 
 

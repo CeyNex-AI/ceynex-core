@@ -521,12 +521,22 @@ class UsageLimitsResponse(BaseModel):
     limits: list[UsageRollupItem] = Field(default_factory=list)
     daily_spend_cap_usd: float
     spent_today_usd: float
-    #: True, and deliberately in the response rather than hidden: the cap is
-    #: enforced per uvicorn worker, so real spend can reach `worker_count` times
-    #: it. Showing the cap as exact would be the silent enforcement the
-    #: requirement forbids.
+    #: True when the cap is counted per uvicorn worker — no Redis to share the
+    #: count — so real spend can reach `worker_count` times it. Said in the
+    #: response rather than hidden: showing a per-worker cap as exact would be
+    #: the silent enforcement the requirement forbids. False once D16's shared
+    #: counter carries it.
     cap_is_per_worker: bool = True
     worker_count: int = 2
+    #: This reader's own daily model budget (D16). 0 means none is set.
+    per_user_daily_cap_usd: float = 0.0
+    spent_today_by_you_usd: float = 0.0
+    #: When both daily limits start again: the next 00:00 UTC.
+    resets_at: str | None = None
+    #: Whether a limit is spent right now, so the page can say what it means:
+    #: answers carry figures and evidence, without model-written prose.
+    your_budget_spent: bool = False
+    deployment_cap_spent: bool = False
 
 
 class UserInstructionResponse(BaseModel):

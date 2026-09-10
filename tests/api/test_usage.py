@@ -9,11 +9,14 @@ mostly about that disclosure being honest, including about its own weakness.
 
 from __future__ import annotations
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api.auth import DemoUser, issue_token
 from ceynex.api.main import app
+from ceynex.observability import spend
+from ceynex.observability.spend import InProcessSpendCounter, RedisSpendCounter
 
 USER = "policymaker@ceynex.dev"
 ADMIN = "admin@ceynex.dev"
@@ -22,6 +25,41 @@ ADMIN = "admin@ceynex.dev"
 def auth(email: str, role: str) -> dict[str, str]:
     token = issue_token(DemoUser(email=email, role=role, password_hash=b""))
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture(autouse=True)
+def ledger_and_counter(monkeypatch):
+    """No database and no Redis: the ledger's reads answer from memory and the
+    spend counter is a fresh one per test. These tests used to read the real
+    ledger, so with the docker stack down the first of them failed — a unit test
+    that needs a database is not a unit test."""
+    from ceynex.observability.ledger import UsageRollup
+
+    state = {"spent": {None: 0.0}, "down": False}
+
+    async def by_day(user_email, *, days=30):
+        if state["down"]:
+            raise psycopg.OperationalError("ledger down")
+        return [UsageRollup(key="2026-09-10", calls=2, tokens_in=10, tokens_out=5,
+                            cost_usd=0.002)]
+
+    async def by_role_and_model(user_email, *, days=30):
+        if state["down"]:
+            raise psycopg.OperationalError("ledger down")
+        return []
+
+    async def spent_today(user_email=None):
+        if state["down"]:
+            raise psycopg.OperationalError("ledger down")
+        return state["spent"].get(user_email, 0.0)
+
+    monkeypatch.setattr("ceynex.observability.ledger.by_day", by_day)
+    monkeypatch.setattr("ceynex.observability.ledger.by_role_and_model", by_role_and_model)
+    monkeypatch.setattr("ceynex.observability.ledger.spent_today", spent_today)
+    counter = InProcessSpendCounter()
+    spend.set_shared_counter(counter)
+    yield state, counter
+    spend.set_shared_counter(None)
 
 
 @pytest.fixture
@@ -95,3 +133,56 @@ def test_instructions_round_trip_and_are_capped(client):
 def test_instructions_require_a_signed_in_user(client):
     assert client.get("/api/account/instructions").status_code == 401
     assert client.put("/api/account/instructions", json={"content": "hi"}).status_code == 401
+
+
+# --- D16: the per-reader budget, and the shared count -----------------------
+
+
+def test_the_limits_page_states_the_readers_own_budget_and_when_it_resets(client):
+    body = client.get("/api/usage/limits", headers=auth(USER, "policymaker")).json()
+    assert body["per_user_daily_cap_usd"] == 1.0
+    assert body["resets_at"].endswith("T00:00:00+00:00")
+    assert body["your_budget_spent"] is False
+
+
+async def test_a_spent_budget_is_disclosed_rather_than_enforced_silently(client,
+                                                                        ledger_and_counter):
+    _, counter = ledger_and_counter
+    await counter.add(1.25, USER)
+    body = client.get("/api/usage/limits", headers=auth(USER, "policymaker")).json()
+    assert body["your_budget_spent"] is True
+    assert body["deployment_cap_spent"] is False
+
+
+def test_the_page_reports_the_ledgers_accounting(client, ledger_and_counter):
+    state, _ = ledger_and_counter
+    state["spent"] = {None: 2.5, USER: 0.4}
+    body = client.get("/api/usage/limits", headers=auth(USER, "policymaker")).json()
+    assert body["spent_today_usd"] == 2.5
+    assert body["spent_today_by_you_usd"] == 0.4
+
+
+async def test_a_ledger_outage_reports_the_counter_rather_than_a_false_zero(
+    client, ledger_and_counter
+):
+    state, counter = ledger_and_counter
+    state["down"] = True
+    await counter.add(0.7, USER)
+    body = client.get("/api/usage/limits", headers=auth(USER, "policymaker")).json()
+    assert body["spent_today_by_you_usd"] == pytest.approx(0.7)
+
+
+def test_reading_spend_during_a_ledger_outage_is_a_503_not_a_zero(client, ledger_and_counter):
+    """"You have spent nothing" is a claim, and during an outage a false one."""
+    state, _ = ledger_and_counter
+    state["down"] = True
+    response = client.get("/api/usage/summary", headers=auth(USER, "policymaker"))
+    assert response.status_code == 503
+
+
+def test_a_shared_counter_is_not_described_as_per_worker(client):
+    """D16's point: once Redis carries the count, the cap is one number across
+    workers, and the page stops warning that it is not."""
+    spend.set_shared_counter(RedisSpendCounter(client=None))
+    body = client.get("/api/usage/limits", headers=auth(USER, "policymaker")).json()
+    assert body["cap_is_per_worker"] is False
