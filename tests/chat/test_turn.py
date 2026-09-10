@@ -214,3 +214,34 @@ async def test_a_discussion_may_restate_the_question_it_is_about():
 
     assert result.grounded, result.rejected_figures
     assert "2025" in result.answer
+
+
+async def test_a_web_figure_cannot_be_laundered_into_a_follow_up():
+    """D14's ordering protects the *first* turn. This protects every one after.
+
+    Web evidence is appended after `merge()`, so it never reaches the merge LLM
+    and never enters grounding on the turn that produced it. But it is persisted
+    on the message, and a `discuss` turn grounds against that stored list — so
+    without an explicit exclusion, "summarise that" could restate a scraped
+    figure as though the analysis had produced it.
+    """
+    prior = Message(
+        role="assistant",
+        content="Cinnamon exports were steady.",
+        evidence=[
+            {"source_id": "KG", "claim": "Exports were USD 100.", "detail": "MATCH ..."},
+            {
+                "source_id": "WEB",
+                "claim": "A blog says exports hit USD 987,654,321.",
+                "detail": "https://example.test/post",
+                "url": "https://example.test/post",
+            },
+        ],
+    )
+    result = await discuss(
+        "restate that with the figure",
+        prior,
+        "how did cinnamon exports do?",
+        FakeLLMClient("Exports reached USD 987,654,321 according to the analysis."),
+    )
+    assert result.grounded is False, "a web figure must not pass the grounding check"

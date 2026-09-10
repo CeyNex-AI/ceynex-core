@@ -86,6 +86,15 @@ def _corpus(prior: Message, prior_query: str = "") -> list[str]:
     """
     corpus = [prior.content, prior_query]
     for item in prior.evidence or []:
+        # WEB evidence is excluded, and this is not a detail (D14). Web results
+        # are appended after `merge()` precisely so they can never launder a
+        # figure into prose the graph did not support — but a *follow-up* reads
+        # the stored evidence list, where they sit beside verified entries. Left
+        # in, "summarise that" could restate a number from a scraped page as
+        # though the analysis had produced it, one turn later and through the
+        # back door.
+        if item.get("source_id") == "WEB":
+            continue
         corpus.append(str(item.get("claim", "")))
         corpus.append(str(item.get("detail", "")))
     for point in prior.forecast or []:
