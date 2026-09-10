@@ -45,3 +45,18 @@ graph_rate_limit:
   # no outbound call on anyone else's API.
   expand_per_minute: 120
   window_seconds: 60
+
+# POST /api/chat/stream — a turn in a conversation (docs/ARCHITECTURE_DELTA.md
+# D13). A fourth block and a fourth identity namespace, for the same reason news
+# and graph have their own: sharing Redis keys with the query allowance would
+# mean a conversation silently spends someone's ability to ask a fresh question.
+#
+# Higher than query_per_minute, because the unit is smaller. A conversation is
+# several short turns where a one-shot query is one long one, and most of those
+# turns take the `discuss` path — no fan-out, no Cypher, no LLM beyond one cheap
+# call. Turns that DO re-run the graph cost exactly what a query costs, which is
+# why this is 45 and not 200: the ceiling still has to bound the expensive case.
+chat_rate_limit:
+  enabled: true
+  turns_per_minute: 45
+  window_seconds: 60
