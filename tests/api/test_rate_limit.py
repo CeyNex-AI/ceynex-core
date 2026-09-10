@@ -153,6 +153,31 @@ def test_the_two_namespaces_cannot_collide():
     assert rate_limit.identity_of("10.0.0.1", None) != rate_limit.identity_of(None, "10.0.0.1")
 
 
+# --- client_ip (behind the nginx proxy) --------------------------------
+
+
+class _Req:
+    def __init__(self, headers: dict, host: str = "10.0.0.9"):
+        self.headers = headers
+        self.client = type("C", (), {"host": host})()
+
+
+def test_client_ip_prefers_x_real_ip_over_forwarded_for():
+    req = _Req({"x-real-ip": "203.0.113.7", "x-forwarded-for": "1.2.3.4"})
+    assert rate_limit.client_ip(req) == "203.0.113.7"
+
+
+def test_client_ip_takes_the_last_forwarded_for_hop_only():
+    """`$proxy_add_x_forwarded_for` appends to a client-supplied value, so only
+    the last hop — the one our nginx added — can be trusted."""
+    req = _Req({"x-forwarded-for": "1.1.1.1, 2.2.2.2, 9.9.9.9"})
+    assert rate_limit.client_ip(req) == "9.9.9.9"
+
+
+def test_client_ip_falls_back_to_the_socket_peer_with_no_proxy_headers():
+    assert rate_limit.client_ip(_Req({}, host="10.0.0.5")) == "10.0.0.5"
+
+
 # --- the endpoint --------------------------------------------------------
 
 
