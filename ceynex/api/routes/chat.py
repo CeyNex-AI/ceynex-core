@@ -53,9 +53,9 @@ from ceynex import settings
 from ceynex.api import rate_limit
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.query_runner import OrchestrationError, QueryOutcome, run_query
-from ceynex.api.routes.auth import TokenPayload, get_optional_user
-from ceynex.api.schemas import ChatStreamRequest
-from ceynex.chat import classify, store, titles, turn
+from ceynex.api.routes.auth import TokenPayload, get_optional_user, require_user
+from ceynex.api.schemas import ChatStreamRequest, ClarifyAnswerRequest
+from ceynex.chat import clarify, classify, store, titles, turn
 from ceynex.observability import context as obs
 from ceynex.observability import ledger, trace
 
@@ -209,12 +209,57 @@ async def _resolve_turn(
     return decision, prior_answer, prior_query
 
 
+async def _maybe_clarify(
+    runtime: Runtime,
+    query: str,
+    conversation_id: int | None,
+    user_email: str | None,
+) -> str | None:
+    """One question back, or nothing at all. Never raises.
+
+    Stage A is free and silent on every question in `eval/questions.yaml`, so the
+    common path costs one keyword pass and returns here immediately. Only when it
+    fires does anything else happen — and only then is an LLM call made.
+
+    Needs somewhere to remember the pending question, so an anonymous turn (no
+    conversation) is never clarified: there would be nowhere to resume to.
+    """
+    if not settings.clarify_enabled() or conversation_id is None or user_email is None:
+        return None
+
+    trigger = clarify.clarification_needed(query)
+    if trigger is None:
+        return None
+
+    clarification = await clarify.llm_clarify(trigger, runtime.llm)
+    if clarification is None:  # the model vetoed a gate the syntax check opened
+        trace.emit("clarify", kind=trigger.kind, asked=False, method="llm-veto")
+        return None
+
+    try:
+        pending_id = await store.record_clarification(
+            conversation_id, user_email, query, clarification.as_payload()
+        )
+    except store.ChatStoreUnavailableError as exc:
+        # Without somewhere to resume from, asking would strand the reader on a
+        # question whose answer goes nowhere. Answering the original is strictly
+        # better than that.
+        log.warning("could not store a clarification; answering as asked: %s", exc)
+        return None
+
+    trace.emit("clarify", kind=trigger.kind, asked=True, method=clarification.method,
+               question=clarification.question)
+    return _frame("clarify", {"pending_id": pending_id, **clarification.as_payload()})
+
+
 async def _stream(
     http_request: Request,
     runtime: Runtime,
     query: str,
     user: TokenPayload | None,
     conversation_id: int | None = None,
+    *,
+    skip_clarify: bool = False,
 ) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     sink = trace.TraceSink(request_id="pending", loop=loop)
@@ -245,6 +290,14 @@ async def _stream(
                               "reason": decision.reason,
                               "standalone_query": decision.standalone_query})
         query = decision.standalone_query or query
+
+    if not skip_clarify:
+        asked = await _maybe_clarify(runtime, query, conversation_id, user_email)
+        if asked is not None:
+            yield asked
+            yield _frame("done", {"failed": False, "clarify": True,
+                                  "conversation_id": conversation_id})
+            return
 
     task = asyncio.create_task(
         run_query(
@@ -494,6 +547,63 @@ async def chat_stream(
         headers={
             # nginx honours this and stops buffering — the difference between a
             # live trace and one whole response arriving at the end.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.post(
+    "/api/chat/clarify/{pending_id}/answer",
+    dependencies=[Depends(enforce_chat_rate_limit)],
+)
+async def answer_clarification(
+    pending_id: int,
+    request: ClarifyAnswerRequest,
+    http_request: Request,
+    runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> StreamingResponse:
+    """Resume a turn the gate paused, and stream the answer.
+
+    **Rate-limited by the same dependency as the stream itself.** This runs the
+    identical five-agent fan-out, so omitting it would leave a bypass around
+    SRS 3.4.6 through the one route added last.
+
+    **`skip_clarify=True`, always.** The gate is not on this path at all, which is
+    what makes the one-round cap structural rather than a counter — there is
+    nothing to keep in sync across the two uvicorn workers. Claiming the pending
+    row is a conditional `UPDATE ... RETURNING`, so a double submission resolves
+    once and 404s the second time rather than running the turn twice.
+    """
+    if not settings.chat_enabled():
+        raise HTTPException(status_code=404, detail="chat is not enabled on this deployment")
+
+    try:
+        pending = await store.resolve_clarification(pending_id, user.email)
+    except store.ChatStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if pending is None:
+        raise HTTPException(
+            status_code=404, detail="that question is no longer waiting for an answer"
+        )
+
+    original = str(pending["original_query"])
+    query = original if request.skip else clarify.Clarification.compose(original, request.answers)
+
+    return StreamingResponse(
+        _stream(
+            http_request,
+            runtime,
+            query,
+            user,
+            int(pending["conversation_id"]),
+            skip_clarify=True,
+        ),
+        media_type="text/event-stream",
+        headers={
             "X-Accel-Buffering": "no",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",

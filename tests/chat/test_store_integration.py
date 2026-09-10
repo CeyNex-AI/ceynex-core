@@ -242,3 +242,45 @@ async def test_deleting_a_conversation_also_removes_its_trace():
 
     await store.delete(conversation_id, TEST_USER)
     assert await store.trace_for("rq-cascade") == []
+
+
+async def test_a_pending_clarification_can_only_be_claimed_once():
+    """The one-round cap is a row, not a counter, and this is why.
+
+    `resolve_clarification` is a conditional `UPDATE ... RETURNING`, so under the
+    deployed image's two uvicorn workers the first request to claim the row gets
+    the query back and the second gets nothing — rather than both deciding the
+    question is unanswered and running the five-agent fan-out twice. An
+    in-memory fake can be written to pass either way, so this is asserted against
+    real Postgres.
+    """
+    conversation_id = await store.create(TEST_USER)
+    pending_id = await store.record_clarification(
+        conversation_id, TEST_USER, "tea and cinnamon?", {"question": "Which?"}
+    )
+
+    assert (await store.open_clarification(conversation_id, TEST_USER)) is not None
+    assert (await store.resolve_clarification(pending_id, TEST_USER)) is not None
+    assert (await store.resolve_clarification(pending_id, TEST_USER)) is None
+    # And it is no longer open, so a reload does not re-ask.
+    assert (await store.open_clarification(conversation_id, TEST_USER)) is None
+
+
+async def test_another_user_cannot_claim_a_pending_clarification():
+    conversation_id = await store.create(TEST_USER)
+    pending_id = await store.record_clarification(
+        conversation_id, TEST_USER, "tea and cinnamon?", {"question": "Which?"}
+    )
+    assert (await store.resolve_clarification(pending_id, OTHER_USER)) is None
+    assert (await store.resolve_clarification(pending_id, TEST_USER)) is not None
+
+
+async def test_deleting_a_conversation_also_removes_its_pending_question():
+    """Same reasoning as the trace cascade above: a question about a conversation
+    that no longer exists has nothing to resume into."""
+    conversation_id = await store.create(TEST_USER)
+    pending_id = await store.record_clarification(
+        conversation_id, TEST_USER, "tea and cinnamon?", {"question": "Which?"}
+    )
+    await store.delete(conversation_id, TEST_USER)
+    assert (await store.resolve_clarification(pending_id, TEST_USER)) is None
