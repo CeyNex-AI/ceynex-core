@@ -97,6 +97,13 @@ class QueryResponse(BaseModel):
     # answer did not come from the graph: a diagram beside an answer the graph
     # did not produce would claim a provenance that isn't there.
     graph: AnswerGraph | None = None
+    #: What the answer cost (D15). Additive, and optional so an older client is
+    #: unaffected. The ledger has recorded this since the observability layer
+    #: shipped; this is the first surface that shows it.
+    usage: dict[str, Any] | None = None
+    #: Every term in the SRS 3.1.4 confidence formula — weighted, staleness, dq,
+    #: coverage, final — so "why this confidence?" is answerable from the answer.
+    confidence_breakdown: dict[str, float] | None = None
 
 
 class GraphFragment(BaseModel):
@@ -404,6 +411,9 @@ class ChatMessageItem(BaseModel):
     turn carries the whole answer payload so reopening a conversation redisplays
     the evidence panel, the forecast and the graph rather than just the prose."""
 
+    #: The row id, so a reader can rate this answer (§5). `seq` orders the
+    #: transcript; it does not identify the row.
+    id: int | None = None
     seq: int
     role: str
     content: str
@@ -456,3 +466,110 @@ class ChatStreamRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=2000, description="A question in plain English.")
     conversation_id: int | None = None
+
+
+class ClarifyAnswerRequest(BaseModel):
+    """The reader's reply to a clarifying question (D13).
+
+    `skip` is the "just answer it" escape, and it is not the same as sending no
+    answers: it says the reader looked at the question and decided the original
+    wording was what they meant.
+    """
+
+    answers: list[str] = Field(default_factory=list, max_length=8)
+    skip: bool = False
+
+
+# --- usage and cost (docs/ARCHITECTURE_DELTA.md D15) -------------------------
+
+
+class UsageRollupItem(BaseModel):
+    """One grouped row — a day, or a role/model pair. `key` says which."""
+
+    key: str
+    calls: int
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+
+
+class UsageSummaryResponse(BaseModel):
+    days: int
+    #: "user" (the caller's own) or "all" (admin-only, everyone's).
+    scope: str
+    by_day: list[UsageRollupItem] = Field(default_factory=list)
+    by_role: list[UsageRollupItem] = Field(default_factory=list)
+    total_cost_usd: float
+    total_calls: int
+    total_tokens_in: int
+    total_tokens_out: int
+
+
+class UsageLimitsResponse(BaseModel):
+    """SRS 3.4.6's disclosure: the restrictions, said out loud."""
+
+    limits: list[UsageRollupItem] = Field(default_factory=list)
+    daily_spend_cap_usd: float
+    spent_today_usd: float
+    #: True, and deliberately in the response rather than hidden: the cap is
+    #: enforced per uvicorn worker, so real spend can reach `worker_count` times
+    #: it. Showing the cap as exact would be the silent enforcement the
+    #: requirement forbids.
+    cap_is_per_worker: bool = True
+    worker_count: int = 2
+
+
+class UserInstructionResponse(BaseModel):
+    content: str
+    enabled: bool
+    max_chars: int
+
+
+class UserInstructionRequest(BaseModel):
+    content: str = Field(default="", max_length=2000)
+    enabled: bool = True
+
+
+class DataFreshnessResponse(BaseModel):
+    """How current the trade record is. Always HTTP 200 — see the route."""
+
+    available: bool
+    #: The most recent period the dataset actually holds, not "now".
+    latest_observation: str | None = None
+    observations: int = 0
+    #: The last ingest that *finished successfully*; a failed run says nothing
+    #: about how current the data is.
+    last_ingest_at: str | None = None
+
+
+# --- answer feedback and shared conversations (execution plan §5) ------------
+
+
+class FeedbackRequest(BaseModel):
+    #: 1 for 👍, -1 for 👎. Not a 5-point scale: a rating nobody can interpret
+    #: consistently is not eval data.
+    rating: int = Field(ge=-1, le=1)
+    reason: str = Field(default="", max_length=2000)
+
+
+class FeedbackResponse(BaseModel):
+    message_id: int
+    rating: int
+
+
+class ShareRequest(BaseModel):
+    shared: bool
+
+
+class ShareResponse(BaseModel):
+    shared: bool
+    #: None when sharing was turned off — the link is revoked, not hidden.
+    token: str | None = None
+
+
+class SharedConversationResponse(BaseModel):
+    """A read-only transcript. Carries no `user_email`, by design."""
+
+    title: str | None = None
+    created_at: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
