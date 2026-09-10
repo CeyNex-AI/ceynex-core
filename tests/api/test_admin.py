@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from ceynex.api import admin as admin_module
 from ceynex.api import audit as audit_module
 from ceynex.api import deps as deps_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.deps import Runtime
 from ceynex.api.main import app
 from ceynex.llm import ProviderStatus
@@ -87,7 +87,7 @@ def llm_status_client(request):
 
 
 def token_for(email: str, role: str) -> str:
-    return issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    return issue_token(email, role)
 
 
 def admin_headers() -> dict[str, str]:

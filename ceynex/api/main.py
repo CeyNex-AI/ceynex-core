@@ -28,6 +28,7 @@ from ceynex.api.history import ensure_table as ensure_history_table
 from ceynex.api.preferences import ensure_table as ensure_preferences_table
 from ceynex.api.routes import account, admin, auth, graph, health, history, news, query, site
 from ceynex.api.site_settings import ensure_table as ensure_site_settings_table
+from ceynex.api.users import ensure_table as ensure_users_table
 from ceynex.news import refresh as news_refresh
 from ceynex.news import snapshot as news_snapshot
 
@@ -54,6 +55,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     runtime = Runtime.build()
     set_runtime(runtime)
+    ensure_users_table()
     ensure_history_table()
     ensure_preferences_table()
     ensure_api_keys_table()
