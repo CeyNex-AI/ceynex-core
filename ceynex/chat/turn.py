@@ -29,6 +29,7 @@ from ceynex.chat import instructions
 from ceynex.chat.store import Message
 from ceynex.observability import context as obs
 from ceynex.observability import trace
+from ceynex.orchestrator.answer_stream import SentenceGate
 from ceynex.orchestrator.grounding import ungrounded_figures
 
 log = logging.getLogger(__name__)
@@ -203,18 +204,31 @@ async def discuss(follow_up: str, prior: Message, prior_query: str, llm) -> Disc
         return DiscussResult(_degraded_answer(prior), degraded=True, evidence=evidence)
 
     user = f"{_context(prior, prior_query)}\n\nFollow-up: {follow_up}"
+    corpus = _corpus(prior, prior_query)
+    # Streamed sentence by sentence against the same corpus the check below
+    # uses, and only when someone is watching — see `orchestrator/answer_stream`.
+    gate = SentenceGate(corpus) if trace.active() else None
     try:
-        text = await llm.generate("chat", _system_for_this_reader(), user)
+        text = await llm.generate(
+            "chat", _system_for_this_reader(), user,
+            **({"stream": gate} if gate is not None else {}),
+        )
     except Exception as exc:  # noqa: BLE001 - a follow-up must never fail the conversation
         log.warning("discuss call raised: %s", exc)
         trace.emit("discuss", status="degraded", reason=str(exc))
+        if gate is not None:
+            gate.close(accepted=False, reason="degraded")
         return DiscussResult(_degraded_answer(prior), degraded=True, evidence=evidence)
 
     if not text:
         trace.emit("discuss", status="degraded", reason="model returned nothing")
+        if gate is not None:
+            gate.close(accepted=False, reason="degraded")
         return DiscussResult(_degraded_answer(prior), degraded=True, evidence=evidence)
 
-    rejected = ungrounded_figures(text, _corpus(prior, prior_query))
+    rejected = ungrounded_figures(text, corpus)
+    if gate is not None:
+        gate.close(accepted=not rejected, reason="ungrounded")
     if rejected:
         # Same posture as `merger._reject_ungrounded_prose`: the prose is
         # discarded whole rather than patched. A summary that invented a figure

@@ -50,9 +50,11 @@ class ScriptedLLM:
         self.user: str = ""
         self.system: str = ""
 
-    async def generate(self, role, system, user, *, json_mode=False):
+    async def generate(self, role, system, user, *, json_mode=False, stream=None):
         self.roles.append(role)
         self.system = system
+        if stream is not None and self.text:
+            stream.feed(self.text)
         self.user = user
         return self.text
 
@@ -340,3 +342,43 @@ async def test_the_trace_records_that_an_instruction_applied_but_not_its_text():
     applied = [e.payload for e in sink.history if e.kind == "instruction"]
     assert applied == [{"applied": True, "chars": len("Be terse.")}]
     assert all("Be terse." not in str(e.payload) for e in sink.history)
+
+
+# --- a discussion streams under the same gate as an answer ---------------------
+
+
+def _drained(sink):
+    queued = []
+    while not sink.queue.empty():
+        queued.append(sink.queue.get_nowait())
+    return queued
+
+
+async def test_a_grounded_discussion_streams_sentence_by_sentence():
+    sink = trace.TraceSink(request_id="r2", loop=asyncio.get_running_loop())
+    reply = "Exports reached USD 4.2m. That was a rise of 12% on the year."
+    result = await _discuss_as("", ScriptedLLM(reply), sink)
+
+    shown = "".join(e.payload["text"] for e in _drained(sink) if e.kind == "answer_delta")
+    assert shown == reply == result.answer
+
+
+async def test_an_ungrounded_discussion_is_withdrawn_before_its_replacement():
+    """The same guarantee the merge gives: the invented figure is never shown,
+    and what was shown before it is withdrawn with a reason."""
+    sink = trace.TraceSink(request_id="r3", loop=asyncio.get_running_loop())
+    reply = "Exports reached USD 4.2m. France took 8,400,000 of it."
+    result = await _discuss_as("", ScriptedLLM(reply), sink)
+
+    shown = "".join(e.payload["text"] for e in _drained(sink) if e.kind == "answer_delta")
+    assert "8,400,000" not in shown
+    assert [e.payload for e in sink.history if e.kind == "answer_reset"] == [
+        {"reason": "ungrounded"}
+    ]
+    assert result.grounded is False
+
+
+async def test_a_discussion_nobody_is_watching_is_not_streamed():
+    llm = FakeLLMClient("Exports reached USD 4.2m.")
+    await discuss("summarise that", PRIOR, PRIOR_QUERY, llm)
+    assert llm.streamed == [False]

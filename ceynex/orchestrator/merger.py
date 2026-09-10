@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
+from ceynex.observability import trace
+from ceynex.orchestrator.answer_stream import SentenceGate
 from ceynex.orchestrator.confidence import (
     aggregate_confidence_breakdown,
     confidence_band,
@@ -277,6 +279,16 @@ async def merge(  # noqa: ANN001
 
     cited = citations_enabled()
     default_rules = MERGE_RULES_PRESENTATION_CITED if cited else MERGE_RULES_PRESENTATION
+
+    # The prose streams to a reader sentence by sentence, each one grounded
+    # before it is shown (`answer_stream.py`) — but only when someone is
+    # watching. With no listener no stream is passed at all, so the call below
+    # is byte-for-byte the one `POST /api/query` and `make eval` always made.
+    gate = (
+        SentenceGate(_grounding_corpus(state["query"], contributing, evidence))
+        if trace.active()
+        else None
+    )
     prose = await llm.generate(
         "merge",
         merge_system(presentation if presentation is not None else default_rules),
@@ -284,6 +296,7 @@ async def merge(  # noqa: ANN001
             state["query"], contributing, conflicts, unanswered,
             evidence if cited else None,
         ),
+        **({"stream": gate} if gate is not None else {}),
     )
     degraded = not prose
 
@@ -294,6 +307,10 @@ async def merge(  # noqa: ANN001
     ungrounded = _reject_ungrounded_prose(prose, state["query"], contributing, evidence)
     if ungrounded:
         prose = ""
+    if gate is not None:
+        # The same verdict, told to the reader: a draft of prose that will not be
+        # served is withdrawn before `done` delivers what replaces it.
+        gate.close(accepted=bool(prose), reason="ungrounded" if ungrounded else "degraded")
 
     answer = prose or deterministic
     if prose:
