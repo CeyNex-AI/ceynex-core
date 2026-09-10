@@ -141,14 +141,23 @@ def test_the_floor_is_the_models_own_relevance_boundary():
 # --- degradation ---------------------------------------------------------
 
 
-def test_a_search_that_overruns_its_budget_raises_rather_than_hanging():
+def test_a_search_that_overruns_its_budget_raises_rather_than_hanging(monkeypatch):
     """The 2-second ceiling is a requirement, not a nicety.
 
     `orchestrator/graph.py` gives each agent a 12 s slice of a budget
     single-sector queries already breach (EVALUATION.md §1). A retriever that
     blocks instead of raising spends the agent's whole slice and turns an
     enhancement into a timeout.
+
+    The process-wide model handles are pre-seeded. `search()` loads the real ONNX
+    models *before* its budget starts, by design, so without this the test
+    downloaded ~200 MB from Hugging Face whenever fastembed's `/tmp` cache was
+    cold — and on 2026-09-10, after a reboot, the download stalled and hung the
+    whole unit suite. A unit test that needs the network is not a unit test.
     """
+    from ceynex.retrieval import client as client_module
+
+    monkeypatch.setattr(client_module, "_models", {"dense": None, "sparse": None, "rerank": None})
 
     async def scenario():
         retriever = PolicyRetriever(url="http://localhost:1", timeout_s=0.05)
