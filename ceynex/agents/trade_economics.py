@@ -532,7 +532,19 @@ async def _describe_policy(
         )
         where = f"for {partner}" if partner else "for the market named"
 
-        if context.chunks:
+        # A named foreign market's policy can only be answered by a document
+        # that market issued. `policy_documents_for` also allow-lists any
+        # document that merely *covers the item's HS code* (its OR branch,
+        # deliberate for the no-country case), so a question about China's tea
+        # policy otherwise gets "answered" from Sri Lanka's own National Export
+        # Strategy — the E09 misattribution. When a specific market is named,
+        # require at least one allow-listed document actually issued by it.
+        if partner:
+            has_own_document = any(partner in (r.get("iso3") or []) for r in context.documents)
+        else:
+            has_own_document = True
+
+        if context.chunks and has_own_document:
             answered.append(partner or "the market named")
             sources = sorted({c.title for c in context.chunks})
             scope = f" {where}" if len(destinations) > 1 else ""
@@ -554,17 +566,27 @@ async def _describe_policy(
             else f"No policy document {where} in the corpus addresses this, so the question "
             "cannot be answered from the documents CeyNex holds."
         )
+        reason = (
+            f"Policy retrieval returned nothing {where}: {context.detail}."
+            if not context.chunks
+            else (
+                f"Passages came back {where}, but from documents not issued by that market "
+                "(allow-listed only because they cover the item's HS code)."
+            )
+        )
         assumptions.append(
-            f"Policy retrieval returned nothing {where}: {context.detail}. "
-            "Reporting the gap rather than answering from the wrong country's document."
+            f"{reason} Reporting the gap rather than answering from the wrong country's document."
         )
         if context.cypher:
-            held = ", ".join(sorted(r["doc_id"] for r in context.documents)) or "none"
+            own = sorted(
+                r["doc_id"] for r in context.documents if not partner or partner in (r.get("iso3") or [])
+            )
+            held = ", ".join(own) or "none"
             doc_evidence.append(
                 evidence_from_query(
                     claim=(
-                        f"The knowledge graph's indexed policy documents {where} are: {held}. "
-                        "None of them contains a passage answering this question."
+                        f"The knowledge graph holds no policy document issued {where}: "
+                        f"documents attributed to that market are: {held}."
                     ),
                     cypher=context.cypher,
                 )
