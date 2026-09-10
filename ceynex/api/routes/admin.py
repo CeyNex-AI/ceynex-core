@@ -48,6 +48,7 @@ from ceynex.api.schemas import (
     ResolveDQFlagResponse,
     RetrainRequest,
     SetRoleRequest,
+    SetUserPasswordRequest,
     UserAdminItem,
     UserMutationResponse,
     UsersResponse,
@@ -388,3 +389,23 @@ async def enable_user(
     admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
 ) -> UserMutationResponse:
     return await _set_disabled(user_id, admin_user, disabled=False)
+
+
+@router.post("/users/{user_id}/password", response_model=UserMutationResponse)
+async def set_user_password(
+    user_id: int,
+    body: SetUserPasswordRequest,
+    admin_user: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> UserMutationResponse:
+    """Admin password reset — no current-password check (that's the point: it's
+    for a user who's locked out). Audited; the new value is never logged."""
+    await _audit(admin_user, "set_user_password", f"user {user_id}")
+    try:
+        user = await asyncio.to_thread(users.set_password, user_id, body.password)
+    except users.WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not set password") from exc
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"no user with id {user_id}")
+    return UserMutationResponse(id=user.id, email=user.email, role=user.role, disabled=user.disabled)

@@ -51,6 +51,7 @@ def test_verify_password_on_a_garbage_hash_is_false_not_an_error():
 @pytest.fixture
 def store(monkeypatch):
     rows: dict[int, users_module.User] = {}
+    passwords: dict[int, str] = {}
     counter = {"n": 0}
 
     def _by_email(email):
@@ -77,6 +78,22 @@ def store(monkeypatch):
             created_at="2026-01-01T00:00:00+00:00", disabled=False,
         )
         rows[user.id] = user
+        passwords[user.id] = password
+        return user
+
+    def fake_authenticate(email, password):
+        user = _by_email(email)
+        if user is None or user.disabled:
+            return None
+        return user if passwords.get(user.id) == password else None
+
+    def fake_set_password(user_id, new_password):
+        if len(new_password) < users_module.MIN_PASSWORD_LENGTH:
+            raise users_module.WeakPasswordError("too short")
+        user = rows.get(user_id)
+        if user is None:
+            return None
+        passwords[user_id] = new_password
         return user
 
     def fake_list_users():
@@ -119,6 +136,8 @@ def store(monkeypatch):
     monkeypatch.setattr(users_module, "list_users", fake_list_users)
     monkeypatch.setattr(users_module, "set_role", fake_set_role)
     monkeypatch.setattr(users_module, "set_disabled", fake_set_disabled)
+    monkeypatch.setattr(users_module, "authenticate", fake_authenticate)
+    monkeypatch.setattr(users_module, "set_password", fake_set_password)
     return rows
 
 
@@ -267,3 +286,101 @@ def test_disabling_an_unknown_user_is_a_404(client, store, audit_calls):
 def test_disabling_the_last_admin_is_a_409(client, store, audit_calls):
     _seed_admin(store)
     assert client.post("/api/admin/users/1/disable", headers=ADMIN).status_code == 409
+
+
+# --- self-service password change (/api/account/password) --------------
+
+
+def _signup(client, email="u@ceynex.dev", password="origpass12"):
+    r = client.post("/api/auth/signup", json={"email": email, "password": password})
+    assert r.status_code == 201
+    return r.json()["token"]
+
+
+def test_change_password_with_the_correct_current_one(client, store):
+    token = _signup(client)
+    r = client.post(
+        "/api/account/password",
+        json={"current_password": "origpass12", "new_password": "brandnew34"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert r.json()["email"] == "u@ceynex.dev"
+    # old password stops working, new one works
+    assert client.post(
+        "/api/auth/login", json={"email": "u@ceynex.dev", "password": "origpass12"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"email": "u@ceynex.dev", "password": "brandnew34"}
+    ).status_code == 200
+
+
+def test_change_password_with_a_wrong_current_one_is_403(client, store):
+    token = _signup(client)
+    r = client.post(
+        "/api/account/password",
+        json={"current_password": "not-it", "new_password": "brandnew34"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+def test_change_password_to_the_same_value_is_422(client, store):
+    token = _signup(client)
+    r = client.post(
+        "/api/account/password",
+        json={"current_password": "origpass12", "new_password": "origpass12"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+def test_change_password_below_the_length_floor_is_422(client, store):
+    token = _signup(client)
+    r = client.post(
+        "/api/account/password",
+        json={"current_password": "origpass12", "new_password": "short"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+def test_change_password_needs_a_token(client, store):
+    assert client.post(
+        "/api/account/password",
+        json={"current_password": "x", "new_password": "longenough1"},
+    ).status_code == 401
+
+
+# --- admin password reset (/api/admin/users/{id}/password) ------------
+
+
+def test_admin_resets_a_users_password_without_the_old_one(client, store, audit_calls):
+    _seed_admin(store)
+    created = client.post(
+        "/api/admin/users",
+        json={"email": "locked@ceynex.dev", "password": "forgotten1", "role": "exporter"},
+        headers=ADMIN,
+    ).json()
+    r = client.post(
+        f"/api/admin/users/{created['id']}/password",
+        json={"password": "freshpass99"},
+        headers=ADMIN,
+    )
+    assert r.status_code == 200
+    assert audit_calls[-1]["action"] == "set_user_password"
+    assert client.post(
+        "/api/auth/login", json={"email": "locked@ceynex.dev", "password": "freshpass99"}
+    ).status_code == 200
+
+
+def test_admin_password_reset_of_an_unknown_user_is_404(client, store, audit_calls):
+    assert client.post(
+        "/api/admin/users/999/password", json={"password": "whatever12"}, headers=ADMIN
+    ).status_code == 404
+
+
+def test_admin_password_reset_rejects_a_non_admin(client, store, audit_calls):
+    assert client.post(
+        "/api/admin/users/1/password", json={"password": "whatever12"}, headers=RESEARCHER
+    ).status_code == 403
