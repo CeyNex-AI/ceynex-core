@@ -57,8 +57,12 @@ a `role` column over the same four roles, a `disabled_at` flag), additive to
 the frozen contracts schema the same way `query_history` is. `POST
 /api/auth/signup` self-registers an account at the default role
 (`researcher`) and logs it straight in; `POST /api/auth/login` checks the
-stored hash. A signed-in user changes their own password at `POST
-/api/account/password` (current password required). Admin-only routes on the
+stored hash. A signed-in user manages their own account under `/api/account`:
+change password (`POST /api/account/password`), change email (`POST
+/api/account/email` — moves their history / keys / preferences to the new
+address), or delete it outright (`DELETE /api/account` — removes those rows
+too, refused for the last enabled admin). All three re-check the current
+password. Admin-only routes on the
 admin router provision an account at any role (`POST /api/admin/users`), list
 every account (`GET /api/admin/users`), move one between roles (`POST
 /api/admin/users/{id}/role`), disable or re-enable one (`POST
