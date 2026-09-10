@@ -27,7 +27,9 @@ A fixed window lets a caller send `limit` requests at the end of one window and
 accepted deliberately: the sliding-window alternative costs a sorted set and a
 read-modify-write per request, and the requirement is about sustained abuse
 rather than instantaneous burst shaping. The burst is bounded, and
-`REQUEST_TIMEOUT_S` in the query route bounds what any one request can consume.
+`query_runner.REQUEST_TIMEOUT_S` bounds what any one request can consume — as of
+the conversational layer it is genuinely applied, having previously been declared
+and never passed to a timeout, so this sentence was aspirational until then.
 
 Failing open
 ------------
