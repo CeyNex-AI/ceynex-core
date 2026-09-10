@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import site_settings as site_settings_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 
 
@@ -24,7 +24,7 @@ def client():
 
 
 def token_for(email: str, role: str) -> str:
-    return issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    return issue_token(email, role)
 
 
 def admin_headers() -> dict[str, str]:

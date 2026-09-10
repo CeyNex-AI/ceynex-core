@@ -190,6 +190,13 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class SignupRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    # 8 is `users.MIN_PASSWORD_LENGTH`; the domain layer re-checks so the CLI
+    # and tests can't slip a weak one past.
+    password: str = Field(min_length=8, max_length=200)
+
+
 class LoginResponse(BaseModel):
     token: str
     email: str
@@ -315,6 +322,38 @@ class AuditLogItem(BaseModel):
 
 class AuditLogResponse(BaseModel):
     entries: list[AuditLogItem]
+
+
+# --- admin: user accounts + roles (SRS 3.5.4, RBAC) -----------------------
+
+
+class UserAdminItem(BaseModel):
+    id: int
+    email: str
+    role: str
+    created_at: str
+    disabled: bool
+
+
+class UsersResponse(BaseModel):
+    users: list[UserAdminItem]
+
+
+class CreateUserRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    role: str = Field(min_length=1, max_length=40)
+
+
+class SetRoleRequest(BaseModel):
+    role: str = Field(min_length=1, max_length=40)
+
+
+class UserMutationResponse(BaseModel):
+    id: int
+    email: str
+    role: str
+    disabled: bool
 
 
 class ProviderStatusItem(BaseModel):
