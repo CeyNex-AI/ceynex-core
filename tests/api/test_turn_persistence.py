@@ -78,7 +78,7 @@ def test_done_names_the_rows_the_turn_was_stored_as(client, fake_store, history_
 
     stored = fake_store.messages[created["id"]]
     assert done["user_message_id"] is not None and done["message_id"] is not None
-    assert [done["user_message_id"], done["message_id"]] == [m.seq for m in stored]
+    assert [done["user_message_id"], done["message_id"]] == [m.id for m in stored]
 
 
 def test_done_links_the_history_row_the_analysis_wrote(client, fake_store, history_ids,

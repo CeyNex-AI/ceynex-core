@@ -90,6 +90,62 @@ class TurnRequest:
     user_email: str | None
     conversation_id: int | None = None
     skip_clarify: bool = False
+    #: Set for Regenerate: the answer being replaced, and what it answered.
+    regenerate: RegeneratePlan | None = None
+
+
+@dataclass(frozen=True)
+class RegeneratePlan:
+    """What a Regenerate re-runs, worked out from the transcript up front.
+
+    Regenerate asks for a fresh answer to a question already asked, not a new
+    turn: the mode is the original's (an analysis re-runs the graph, a
+    discussion re-discusses the same prior answer), there is no classification
+    and no clarifying question, and the new answer is stored beside the old one
+    rather than over it.
+    """
+
+    #: The answer being replaced — always the conversation's latest.
+    target: store.Message
+    #: The user turn it answered.
+    question: store.Message
+    #: A discussion's subject: the answer before `question`. None for analysis.
+    prior: store.Message | None
+    prior_query: str
+
+    @property
+    def mode(self) -> str:
+        return self.target.mode or "analyse"
+
+
+def plan_regeneration(transcript: list[store.Message], message_id: int) -> RegeneratePlan | None:
+    """The plan for regenerating `message_id`, or None if it cannot be.
+
+    Only the latest answer, deliberately. Regenerating one further back would
+    fork the conversation — every later turn was classified and grounded against
+    the answer that is being replaced — and a transcript that silently branches
+    is harder to trust than one that simply says "only the last answer".
+    """
+    answers = [m for m in transcript if m.role == "assistant"]
+    if not answers or answers[-1].id != message_id:
+        return None
+    target = answers[-1]
+    question = next(
+        (m for m in reversed(transcript) if m.role == "user" and m.seq < target.seq), None
+    )
+    if question is None:
+        return None
+    prior = next(
+        (m for m in reversed(transcript) if m.role == "assistant" and m.seq < question.seq), None
+    )
+    if (target.mode or "analyse") == "discuss" and prior is None:
+        return None  # a discussion with nothing before it to discuss
+    prior_query = ""
+    if prior is not None:
+        prior_query = next(
+            (m.asked for m in reversed(transcript) if m.role == "user" and m.seq < prior.seq), ""
+        )
+    return RegeneratePlan(target=target, question=question, prior=prior, prior_query=prior_query)
 
 
 def start_turn(request: TurnRequest) -> LocalTurn:
@@ -243,6 +299,10 @@ async def _produce(turn_log: LocalTurn, request: TurnRequest, publish) -> None:
     )
     token = obs.install(observation)
     try:
+        if request.regenerate is not None:
+            await _regenerate(turn_log, request, request.regenerate, sink, publish, observation)
+            return
+
         decision, prior, prior_query = await _resolve_turn(
             runtime, query, conversation_id, user_email
         )
@@ -294,8 +354,27 @@ async def _produce(turn_log: LocalTurn, request: TurnRequest, publish) -> None:
         )
 
 
+async def _regenerate(turn_log, request, plan: RegeneratePlan, sink, publish,
+                      observation: obs.RequestObservability) -> None:
+    """A fresh answer to the latest question, kept beside the one it replaces."""
+    await publish("turn", {"mode": plan.mode, "method": "regenerate",
+                           "reason": "a fresh answer to the same question",
+                           "regenerates": plan.target.id})
+    if plan.mode == "discuss":
+        # The prompt cache would hand back the discussion being replaced.
+        observation.bypass_cache_roles = frozenset({"chat"})
+        await _discuss(request.runtime, plan.question.content, plan.prior, plan.prior_query,
+                       request.conversation_id, request.user_email, sink, observation,
+                       publish, regenerated_from=plan.target.id)
+        return
+    await _analyse(turn_log, request, plan.question.asked, plan.question.content, sink,
+                   publish, outer=observation, first_exchange=False,
+                   regenerated_from=plan.target.id)
+
+
 async def _analyse(turn_log, request, query, typed, sink, publish, *,
-                   outer: obs.RequestObservability, first_exchange: bool) -> None:
+                   outer: obs.RequestObservability, first_exchange: bool,
+                   regenerated_from: int | None = None) -> None:
     """The graph path: `run_query`, with its trace pumped into the log live."""
     runtime, user_email = request.runtime, request.user_email
     conversation_id = request.conversation_id
@@ -309,6 +388,9 @@ async def _analyse(turn_log, request, query, typed, sink, publish, *,
             trace_sink=sink,
             conversation_id=conversation_id,
             request_id=turn_log.request_id,
+            # Regenerate re-runs the graph for real — the trace is real — but
+            # asks the merge for new wording rather than the cached answer.
+            bypass_cache_roles=frozenset({"merge"}) if regenerated_from else frozenset(),
         )
     )
     replica = mirror()
@@ -348,6 +430,7 @@ async def _analyse(turn_log, request, query, typed, sink, publish, *,
             conversation_id, user_email, typed, answer, outcome,
             _usage(outer, outcome), sink, runtime.llm, mode="analyse",
             effective_query=query, name_it=first_exchange,
+            regenerated_from=regenerated_from,
         )
 
     await publish("done", {
@@ -362,13 +445,14 @@ async def _analyse(turn_log, request, query, typed, sink, publish, *,
         # What actually ran, when it is not what was typed — the same value the
         # transcript stores as the user turn's `effective_query`.
         "effective_query": query if query != typed else None,
-        **_message_ids(ids),
+        "regenerated_from": regenerated_from,
+        **_message_ids(ids, regenerated=regenerated_from is not None),
         "answer": answer,
     })
 
 
 async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user_email,
-                   sink, observation, publish) -> None:
+                   sink, observation, publish, *, regenerated_from: int | None = None) -> None:
     """A follow-up answered from the previous turn — no graph, no Cypher.
 
     Still streamed rather than returned whole, so the client has one transport
@@ -406,7 +490,7 @@ async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user
         ids = await _persist_turn(
             conversation_id, user_email, follow_up, answer, None, usage, sink,
             runtime.llm, mode="discuss", request_id=observation.request_id,
-            name_it=False,
+            name_it=False, regenerated_from=regenerated_from,
         )
 
     await publish("done", {
@@ -418,7 +502,8 @@ async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user
         # A discussion is not a new analysis and writes no history row.
         "query_history_id": None,
         "effective_query": None,
-        **_message_ids(ids),
+        "regenerated_from": regenerated_from,
+        **_message_ids(ids, regenerated=regenerated_from is not None),
         "answer": answer,
     })
 
@@ -549,10 +634,15 @@ async def _maybe_clarify(
 # --- persistence -------------------------------------------------------------
 
 
-def _message_ids(ids: list[int]) -> dict[str, int | None]:
+def _message_ids(ids: list[int], *, regenerated: bool = False) -> dict[str, int | None]:
     """The rows a finished turn was stored as, so the client can fold the live
     turn into its transcript without a reload — and rate it, save it or
-    regenerate it straight away. Both None when the turn was not persisted."""
+    regenerate it straight away. Both None when the turn was not persisted.
+
+    A regenerated turn stores only its answer: the question is the one already
+    in the transcript, and storing it again would show it twice."""
+    if regenerated:
+        return {"user_message_id": None, "message_id": ids[0] if ids else None}
     if len(ids) >= 2:
         return {"user_message_id": ids[0], "message_id": ids[1]}
     return {"user_message_id": None, "message_id": ids[0] if ids else None}
@@ -577,6 +667,7 @@ async def _persist_turn(
     effective_query: str | None = None,
     request_id: str | None = None,
     name_it: bool = True,
+    regenerated_from: int | None = None,
 ) -> list[int]:
     """Write the question, the answer and the trace. Never raises.
 
@@ -591,12 +682,17 @@ async def _persist_turn(
     """
     request_id = outcome.request_id if outcome else request_id
     ran = effective_query if effective_query and effective_query != question else None
+    # A regenerated answer joins the transcript alone: its question is already
+    # there. The version it replaces stays, linked by `regenerated_from`.
+    rows = [] if regenerated_from is not None else [
+        store.Message(role="user", content=question, effective_query=ran)
+    ]
     try:
         ids = await store.append(
             conversation_id,
             user_email,
             [
-                store.Message(role="user", content=question, effective_query=ran),
+                *rows,
                 store.Message(
                     role="assistant",
                     content=answer.get("answer", ""),
@@ -617,6 +713,7 @@ async def _persist_turn(
                     query_history_id=outcome.history_id if outcome else None,
                     confidence_breakdown=answer.get("confidence_breakdown"),
                     grounded=answer.get("grounded"),
+                    regenerated_from=regenerated_from,
                 ),
             ],
         )
@@ -638,11 +735,13 @@ async def _persist_turn(
 
 __all__ = [
     "HEARTBEAT_INTERVAL_S",
+    "RegeneratePlan",
     "POLL_INTERVAL_S",
     "REMOTE_IDLE_LIMIT_S",
     "STREAM_BUDGET_S",
     "TurnRequest",
     "cancel",
     "follow",
+    "plan_regeneration",
     "start_turn",
 ]

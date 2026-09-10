@@ -246,6 +246,60 @@ async def answer_clarification(
     return _follow_response(started.request_id, http_request)
 
 
+@router.post(
+    "/api/chat/messages/{message_id}/regenerate",
+    dependencies=[Depends(enforce_chat_rate_limit)],
+)
+async def regenerate(
+    message_id: int,
+    http_request: Request,
+    runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> StreamingResponse:
+    """A fresh answer to the latest question, streamed like any other turn.
+
+    **Rate-limited like a turn**, because an analysis regenerate runs the whole
+    fan-out again — the trace is real, not replayed — and only the merge's
+    wording is asked for anew (its prompt cache is skipped for this request).
+
+    Only the conversation's latest answer, and a 409 otherwise: every later turn
+    was classified and grounded against an answer, and replacing one further
+    back would fork the conversation under the reader's feet. The answer being
+    replaced is kept; the new one is stored beside it with `regenerated_from`.
+    """
+    if not settings.chat_enabled():
+        raise HTTPException(status_code=404, detail="chat is not enabled on this deployment")
+
+    try:
+        conversation_id = await store.conversation_of(message_id, user.email)
+        transcript = (
+            await store.messages(conversation_id, user.email)
+            if conversation_id is not None
+            else None
+        )
+    except store.ChatStoreUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if conversation_id is None or transcript is None:
+        raise HTTPException(status_code=404, detail="message not found")
+
+    plan = turn_runner.plan_regeneration(transcript, message_id)
+    if plan is None:
+        raise HTTPException(status_code=409, detail="only the latest answer can be regenerated")
+
+    started = turn_runner.start_turn(
+        turn_runner.TurnRequest(
+            runtime=runtime,
+            query=plan.question.asked,
+            typed=plan.question.content,
+            user_email=user.email,
+            conversation_id=conversation_id,
+            skip_clarify=True,
+            regenerate=plan,
+        )
+    )
+    return _follow_response(started.request_id, http_request)
+
+
 async def _owned_turn(request_id: str, user: TokenPayload) -> str:
     """Where this caller's turn lives — "local" or "remote" — or a 404.
 

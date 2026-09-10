@@ -92,6 +92,7 @@ async def run_query(
     conversation_id: int | None = None,
     record_history: bool = True,
     request_id: str | None = None,
+    bypass_cache_roles: frozenset[str] = frozenset(),
 ) -> QueryOutcome:
     """Route, fan out, merge, and assemble the response.
 
@@ -115,6 +116,9 @@ async def run_query(
     )
     if request_id:
         observation.request_id = request_id
+    # Regenerate: a fresh wording of the same findings, so the prompt cache for
+    # these roles is not read (`llm/client.py`). Empty everywhere else.
+    observation.bypass_cache_roles = frozenset(bypass_cache_roles)
     token = obs.install(observation)
     try:
         # Started before the graph and gathered after it, so it costs no wall
