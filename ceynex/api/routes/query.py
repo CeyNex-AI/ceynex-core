@@ -77,7 +77,7 @@ async def enforce_rate_limit(
     window_s = int(config.get("window_seconds", 60))
     identity = rate_limit.identity_of(
         user.email if user else None,
-        http_request.client.host if http_request.client else None,
+        rate_limit.client_ip(http_request),
     )
 
     decision = await _window().check(identity, limit, window_s)
