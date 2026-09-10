@@ -10,6 +10,7 @@ import pytest
 
 from ceynex.contracts import LLMReasoningClientProtocol
 from ceynex.llm import FakeLLMClient, LLMReasoningClient, PromptCache
+from ceynex.llm.client import _CallOutcome
 
 CONFIG = {
     "provider": "openai",
@@ -128,7 +129,7 @@ async def test_failsafe_is_tried_after_the_primary_is_exhausted(tmp_path, monkey
     async def primary_or_fallback(*args, base_url=None, **kwargs):
         if base_url is None:
             raise RuntimeError("openai is down")
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", primary_or_fallback)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
@@ -146,7 +147,7 @@ async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypat
 
     async def fallback_only(*args, base_url=None, **kwargs):
         calls.append(base_url)
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", fallback_only)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
@@ -160,7 +161,7 @@ async def test_failsafe_is_tried_when_the_spend_cap_is_reached(tmp_path, monkeyp
 
     async def fallback_only(*args, base_url=None, **kwargs):
         assert base_url is not None, "primary must not be called once the cap is reached"
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", fallback_only)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
@@ -262,7 +263,7 @@ async def test_a_successful_call_accumulates_cost_onto_usage(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test")
 
     async def costed(*args, **kwargs):
-        return "prose", 1.23
+        return _CallOutcome("prose", 1.23, 0, 0)
 
     monkeypatch.setattr(llm, "_call", costed)
     await llm.generate("explanation", "sys", "user")
@@ -280,7 +281,7 @@ async def test_the_spend_cap_degrades_further_calls_without_invoking_the_provide
 
     async def spy(*args, **kwargs):
         calls.append(1)
-        return "prose", 0.01
+        return _CallOutcome("prose", 0.01, 0, 0)
 
     monkeypatch.setattr(llm, "_call", spy)
     result = await llm.generate("explanation", "sys", "user")
@@ -295,7 +296,7 @@ async def test_a_cache_hit_is_served_even_over_the_spend_cap(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test", cache=True)
 
     async def once(*args, **kwargs):
-        return "the explanation", 0.0
+        return _CallOutcome("the explanation", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", once)
     assert await llm.generate("explanation", "sys", "user") == "the explanation"
@@ -310,7 +311,7 @@ async def test_a_zero_or_missing_cap_never_degrades(tmp_path, monkeypatch):
     llm.usage.cost_usd = 999.0
 
     async def costed(*args, **kwargs):
-        return "prose", 0.0
+        return _CallOutcome("prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", costed)
     assert await llm.generate("explanation", "sys", "user") == "prose"
@@ -335,7 +336,7 @@ async def test_a_cache_hit_costs_no_call(tmp_path, monkeypatch):
 
     async def once(*args, **kwargs):
         calls.append(1)
-        return "the explanation", 0.0
+        return _CallOutcome("the explanation", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", once)
 
@@ -350,7 +351,7 @@ async def test_the_cache_answers_even_with_no_api_key(tmp_path, monkeypatch):
     warm = client(tmp_path, api_key="sk-test", cache=True)
 
     async def canned(*args, **kwargs):
-        return "cached prose", 0.0
+        return _CallOutcome("cached prose", 0.0, 0, 0)
 
     monkeypatch.setattr(warm, "_call", canned)
     await warm.generate("explanation", "sys", "user")
@@ -430,7 +431,7 @@ async def test_provider_status_is_ok_after_a_successful_call(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test")
 
     async def succeeds(*args, **kwargs):
-        return "prose", 0.0
+        return _CallOutcome("prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", succeeds)
     await llm.generate("explanation", "sys", "user")
@@ -464,7 +465,7 @@ async def test_provider_status_distinguishes_a_down_primary_from_an_ok_failsafe(
     async def primary_fails_fallback_succeeds(*args, base_url=None, **kwargs):
         if base_url is None:
             raise RuntimeError("openai is down")
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", primary_fails_fallback_succeeds)
     await llm.generate("explanation", "sys", "user")
