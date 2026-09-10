@@ -162,6 +162,31 @@ def build_window() -> Window:
         return InProcessWindow()
 
 
+def client_ip(request: Any) -> str | None:
+    """The real client address behind the nginx proxy.
+
+    `request.client.host` is nginx's own IP for *every* proxied request —
+    Starlette doesn't parse forwarded headers without `ProxyHeadersMiddleware`
+    — so using it directly collapses every caller into one rate-limit bucket.
+    `ceynex-infra/frontend/nginx.conf.template` sets both headers below.
+
+    `X-Real-IP` is preferred: nginx sets it to the actual socket peer
+    (`$remote_addr`) and a client can't spoof past it. `X-Forwarded-For` is
+    `$proxy_add_x_forwarded_for`, i.e. it *appends* to any client-supplied
+    value, so only its **last** hop (added by our nginx) is trustworthy. The
+    backend is VPC-internal (port 8000 is not internet-reachable), so there is
+    exactly one proxy in front and this is safe; it would not be if the app
+    were directly exposed.
+    """
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip() or None
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[-1].strip() or None
+    return request.client.host if request.client else None
+
+
 def identity_of(user_email: str | None, client_host: str | None) -> str:
     """Who this request counts against.
 
@@ -184,5 +209,6 @@ __all__ = [
     "RedisWindow",
     "Window",
     "build_window",
+    "client_ip",
     "identity_of",
 ]
