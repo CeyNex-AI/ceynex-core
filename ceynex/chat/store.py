@@ -115,6 +115,43 @@ BEGIN
             FOREIGN KEY (conversation_id) REFERENCES chat_conversation(id) ON DELETE CASCADE;
     END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS chat_pending_clarification (
+    id BIGSERIAL PRIMARY KEY,
+    conversation_id BIGINT NOT NULL REFERENCES chat_conversation(id) ON DELETE CASCADE,
+    user_email TEXT NOT NULL,
+    original_query TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    resolved BOOLEAN NOT NULL DEFAULT false
+);
+
+-- Only ever read by "is this pending row still open", so the index carries the
+-- filter rather than just the key.
+CREATE INDEX IF NOT EXISTS chat_pending_open_idx
+    ON chat_pending_clarification (conversation_id, resolved, expires_at DESC);
+
+-- Answer feedback. On its own table rather than columns on chat_message,
+-- because it is written by a different action at a different time and read for a
+-- different purpose: turning real usage into eval data (eval/questions.yaml has
+-- no growth path otherwise). One row per message per user, so changing your mind
+-- replaces rather than accumulates.
+CREATE TABLE IF NOT EXISTS chat_feedback (
+    id BIGSERIAL PRIMARY KEY,
+    message_id BIGINT NOT NULL REFERENCES chat_message(id) ON DELETE CASCADE,
+    user_email TEXT NOT NULL,
+    rating SMALLINT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (message_id, user_email)
+);
+
+-- A shareable read-only link to a finished conversation (§5). Nullable and
+-- unique: NULL means never shared, which is the default and the safe state.
+ALTER TABLE chat_conversation ADD COLUMN IF NOT EXISTS share_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS chat_conversation_share_idx
+    ON chat_conversation (share_token) WHERE share_token IS NOT NULL;
 """
 
 
@@ -143,6 +180,9 @@ class Message:
     role: str
     content: str
     seq: int = 0
+    #: The database row id, present on a message read back from the store and
+    #: None on one being written. Feedback attaches to this, not to `seq`.
+    id: int | None = None
     mode: str | None = None
     request_id: str | None = None
     confidence: float | None = None
@@ -353,7 +393,10 @@ async def owns(conversation_id: int, user_email: str) -> bool:
 
 
 _MESSAGE_COLUMNS = (
-    "seq, role, content, mode, request_id, confidence, confidence_band, degraded, "
+    # `id` travels so a reader can rate an answer (§5). `seq` orders a
+    # transcript; it does not identify a row across conversations, and the
+    # feedback endpoint needs something that does.
+    "id, seq, role, content, mode, request_id, confidence, confidence_band, degraded, "
     "agents_used, route, sectors, unanswered, evidence, forecast, graph, elapsed_ms, "
     "usage, query_history_id, created_at"
 )
@@ -438,6 +481,7 @@ def _messages_sync(conversation_id: int, user_email: str) -> list[Message] | Non
 
     return [
         Message(
+            id=row.get("id"),
             seq=row["seq"],
             role=row["role"],
             content=row["content"],
@@ -551,12 +595,203 @@ async def trace_for(request_id: str) -> list[dict[str, Any]]:
         raise ChatStoreUnavailableError(f"could not read trace: {exc}") from exc
 
 
+
+# --- pending clarifications (D13) --------------------------------------------
+
+#: A clarifying question the reader never answered is stale within the hour. It
+#: is a row rather than process memory precisely so it survives a page reload and
+#: is visible to both uvicorn workers — an in-memory pending state would resolve
+#: on one worker and still be open on the other.
+PENDING_TTL_MINUTES = 60
+
+
+def _open_clarification_sync(conversation_id: int, user_email: str) -> dict[str, Any] | None:
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor(
+        row_factory=dict_row
+    ) as cur:
+        cur.execute(
+            """
+            SELECT id, original_query, payload
+            FROM chat_pending_clarification
+            WHERE conversation_id = %s AND user_email = %s
+              AND NOT resolved AND expires_at > now()
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id, user_email),
+        )
+        return cur.fetchone()
+
+
+def _record_clarification_sync(
+    conversation_id: int, user_email: str, original_query: str, payload: dict[str, Any]
+) -> int:
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO chat_pending_clarification
+                (conversation_id, user_email, original_query, payload, expires_at)
+            VALUES (%s, %s, %s, %s, now() + make_interval(mins => %s))
+            RETURNING id
+            """,
+            (conversation_id, user_email, original_query, Jsonb(payload), PENDING_TTL_MINUTES),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    if row is None:
+        raise ChatStoreUnavailableError("could not record the pending clarification")
+    return int(row[0])
+
+
+def _resolve_clarification_sync(pending_id: int, user_email: str) -> dict[str, Any] | None:
+    """Claim the row and return it, in one statement.
+
+    `RETURNING` on a conditional `UPDATE` is what makes the one-round cap hold
+    under two workers: whichever request claims the row first gets the query
+    back, and the loser gets `None` rather than a second run of the same turn.
+    """
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor(
+        row_factory=dict_row
+    ) as cur:
+        cur.execute(
+            """
+            UPDATE chat_pending_clarification
+            SET resolved = true
+            WHERE id = %s AND user_email = %s AND NOT resolved AND expires_at > now()
+            RETURNING id, conversation_id, original_query, payload
+            """,
+            (pending_id, user_email),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return row
+
+
+async def open_clarification(conversation_id: int, user_email: str) -> dict[str, Any] | None:
+    """The unanswered question for this conversation, if there is one."""
+    try:
+        return await asyncio.to_thread(_open_clarification_sync, conversation_id, user_email)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not read the pending clarification: {exc}") from exc
+
+
+async def record_clarification(
+    conversation_id: int, user_email: str, original_query: str, payload: dict[str, Any]
+) -> int:
+    try:
+        return await asyncio.to_thread(
+            _record_clarification_sync, conversation_id, user_email, original_query, payload
+        )
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not record the clarification: {exc}") from exc
+
+
+async def resolve_clarification(pending_id: int, user_email: str) -> dict[str, Any] | None:
+    try:
+        return await asyncio.to_thread(_resolve_clarification_sync, pending_id, user_email)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not resolve the clarification: {exc}") from exc
+
+
+
+# --- answer feedback and sharing (§5) ----------------------------------------
+
+
+def _feedback_sync(message_id: int, user_email: str, rating: int, reason: str) -> bool:
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        # Scoped through the join, not by trusting message_id: a bare insert
+        # would let anyone rate any message by guessing a BIGSERIAL.
+        cur.execute(
+            """
+            INSERT INTO chat_feedback (message_id, user_email, rating, reason)
+            SELECT m.id, %s, %s, %s
+            FROM chat_message m
+            JOIN chat_conversation c ON c.id = m.conversation_id
+            WHERE m.id = %s AND c.user_email = %s
+            ON CONFLICT (message_id, user_email) DO UPDATE
+            SET rating = EXCLUDED.rating, reason = EXCLUDED.reason, created_at = now()
+            RETURNING id
+            """,
+            (user_email, rating, reason[:2000], message_id, user_email),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    return row is not None
+
+
+def _share_sync(conversation_id: int, user_email: str, token: str | None) -> str | None:
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE chat_conversation SET share_token = %s WHERE id = %s AND user_email = %s "
+            "RETURNING share_token",
+            (token, conversation_id, user_email),
+        )
+        row = cur.fetchone()
+        conn.commit()
+    return row[0] if row else None
+
+
+def _shared_sync(token: str) -> dict[str, Any] | None:
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor(
+        row_factory=dict_row
+    ) as cur:
+        cur.execute(
+            "SELECT id, title, created_at FROM chat_conversation WHERE share_token = %s",
+            (token,),
+        )
+        conversation = cur.fetchone()
+        if conversation is None:
+            return None
+        # `user_email` is deliberately not selected. A shared link shows what the
+        # system did, not who asked.
+        cur.execute(
+            """
+            SELECT seq, role, content, mode, request_id, confidence, confidence_band,
+                   degraded, agents_used, route, sectors, unanswered, evidence,
+                   forecast, graph, elapsed_ms
+            FROM chat_message WHERE conversation_id = %s ORDER BY seq
+            """,
+            (conversation["id"],),
+        )
+        conversation["messages"] = cur.fetchall()
+        return conversation
+
+
+async def record_feedback(message_id: int, user_email: str, rating: int, reason: str = "") -> bool:
+    """Rate an answer. Returns False when the message is not this user's."""
+    try:
+        return await asyncio.to_thread(_feedback_sync, message_id, user_email, rating, reason)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not record feedback: {exc}") from exc
+
+
+async def set_share_token(conversation_id: int, user_email: str, token: str | None) -> str | None:
+    try:
+        return await asyncio.to_thread(_share_sync, conversation_id, user_email, token)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not share conversation: {exc}") from exc
+
+
+async def shared_conversation(token: str) -> dict[str, Any] | None:
+    try:
+        return await asyncio.to_thread(_shared_sync, token)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not read shared conversation: {exc}") from exc
+
+
 __all__ = [
     "CREATE_TABLE_SQL",
     "MAX_TITLE",
     "ChatStoreUnavailableError",
     "Conversation",
     "Message",
+    "open_clarification",
+    "record_clarification",
+    "resolve_clarification",
+    "PENDING_TTL_MINUTES",
+    "record_feedback",
+    "set_share_token",
+    "shared_conversation",
     "append",
     "create",
     "delete",
