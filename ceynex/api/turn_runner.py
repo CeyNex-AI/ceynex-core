@@ -275,8 +275,11 @@ async def _produce(turn_log: LocalTurn, request: TurnRequest, publish) -> None:
                                        "request_id": turn_log.request_id})
                 return
 
+        # `prior is None` is a conversation's first exchange — the only turn
+        # worth naming it from. Naming it on every turn paid for a model call
+        # whose result `set_title_if_unset` then threw away.
         await _analyse(turn_log, request, query, typed, sink, publish,
-                       outer=observation, first_exchange=True)
+                       outer=observation, first_exchange=prior is None)
     finally:
         obs.reset(token)
         # The turn's own model calls — classification, clarification, a title,
@@ -403,6 +406,7 @@ async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user
         ids = await _persist_turn(
             conversation_id, user_email, follow_up, answer, None, usage, sink,
             runtime.llm, mode="discuss", request_id=observation.request_id,
+            name_it=False,
         )
 
     await publish("done", {
@@ -624,7 +628,8 @@ async def _persist_turn(
         await store.save_trace(request_id, conversation_id, sink.history)
 
     # After the answer is delivered, and conditional in SQL, so a slow or absent
-    # model costs a plainer name rather than a slower turn.
+    # model costs a plainer name rather than a slower turn. Only on the first
+    # exchange: the write was always once-only, the model call was not.
     if name_it:
         name = await titles.title_for(question, answer.get("answer", ""), llm)
         await store.set_title_if_unset(conversation_id, user_email, name)
