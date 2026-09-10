@@ -517,3 +517,59 @@ def test_an_empty_corpus_for_a_country_is_stated_with_its_cypher():
     assert any(e["source_id"] == "KG" for e in out["evidence"]), (
         "the Cypher that found no document is the evidence for saying so"
     )
+
+
+def test_a_third_countrys_policy_question_does_not_borrow_sri_lankas_agreements():
+    """E09 live: "What does China's trade policy say about Sri Lankan tea?"
+    answered "China's trade policy includes ... APTA, GSP+, ISFTA". Those are
+    Sri Lanka's own arrangements (`agreement_coverage`), not China's policy;
+    with no China document the corpus holds nothing and none of them belongs
+    in the answer.
+    """
+    out = asyncio.run(
+        run_with(
+            "What does China's trade policy say about Sri Lankan tea?",
+            PolicyKG(coverage=GSP_PLUS, documents=()),
+            SpyRetriever([]),
+        )
+    )
+
+    assert out["figures"] == {}
+    assert "cannot be answered" in out["summary"]
+    names = {r["agreement"] for r in GSP_PLUS}
+    assert not any(n in out["summary"] for n in names), out["summary"]
+    blob = " ".join(e.get("claim", "") + e.get("detail", "") for e in out["evidence"])
+    assert not any(n in blob for n in names), blob
+
+
+def test_a_named_market_that_has_a_document_still_gets_the_coverage_aside():
+    """The suppression above is scoped: when the named market *does* have a
+    document, Sri Lanka's own coverage is still surfaced — as a labelled aside,
+    not as that market's policy.
+    """
+    out = asyncio.run(
+        run_with(
+            "What does India's trade policy say about Sri Lankan tea?",
+            PolicyKG(coverage=GSP_PLUS, documents=("IND-DGFT-FTP-2023",)),
+            SpyRetriever([policy_chunk("India's FTP addresses tea imports from neighbouring states.")]),
+        )
+    )
+
+    assert any(r["agreement"] in out["summary"] for r in GSP_PLUS)
+    assert "Sri Lanka" in out["summary"]
+    assert "not IND" in out["summary"], out["summary"]  # the "these are SL's, not IND's" caveat
+
+
+def test_a_bare_coverage_question_with_no_market_is_still_answered_from_the_graph():
+    """No specific foreign market named -> the `agreement_coverage` lookup is
+    the answer, graph-first, exactly as before."""
+    out = asyncio.run(
+        run_with(
+            "Which trade agreement gives Sri Lankan tea preferential access?",
+            PolicyKG(coverage=GSP_PLUS, documents=()),
+            SpyRetriever([]),
+        )
+    )
+
+    assert any(r["agreement"] in out["summary"] for r in GSP_PLUS)
+    assert not out["summary"].startswith("Separately"), out["summary"]
