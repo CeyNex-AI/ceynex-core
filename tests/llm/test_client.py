@@ -11,6 +11,7 @@ import pytest
 from ceynex.contracts import LLMReasoningClientProtocol
 from ceynex.llm import FakeLLMClient, LLMReasoningClient, PromptCache
 from ceynex.llm.client import _CallOutcome
+from ceynex.observability.spend import InProcessSpendCounter
 
 CONFIG = {
     "provider": "openai",
@@ -58,10 +59,13 @@ FALLBACK_CONFIG["fallback"] = {
 }
 
 
-def client(tmp_path, *, api_key=None, cache=False, fallback_api_key=None, config=None):
+def client(tmp_path, *, api_key=None, cache=False, fallback_api_key=None, config=None,
+           spend=None):
     config = json.loads(json.dumps(config if config is not None else CONFIG))
     config["cache"] = {"enabled": cache, "path": str(tmp_path / "cache"), "ttl_hours": 1}
-    return LLMReasoningClient(config=config, api_key=api_key, fallback_api_key=fallback_api_key)
+    # A counter of its own, so one test's spend never counts against another's.
+    return LLMReasoningClient(config=config, api_key=api_key, fallback_api_key=fallback_api_key,
+                              spend=spend if spend is not None else InProcessSpendCounter())
 
 
 # --- degrading -----------------------------------------------------------
@@ -155,16 +159,24 @@ async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypat
 
 
 async def test_failsafe_is_tried_when_the_spend_cap_is_reached(tmp_path, monkeypatch):
-    """R5: the cap stops paid calls, not the free failsafe."""
-    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
-    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd
+    """R5: the cap stops paid calls, not the free failsafe.
 
-    async def fallback_only(*args, base_url=None, **kwargs):
-        assert base_url is not None, "primary must not be called once the cap is reached"
+    Records the calls rather than asserting inside the fake: `generate()` treats
+    any exception from `_call` as a provider failure and falls back, so an
+    assertion raised in here would be swallowed and the test would pass whether
+    or not the cap held.
+    """
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    await llm.spend.add(5.0, None)  # == daily_spend_cap_usd
+    providers: list[str | None] = []
+
+    async def record(*args, base_url=None, **kwargs):
+        providers.append(base_url)
         return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
-    monkeypatch.setattr(llm, "_call", fallback_only)
+    monkeypatch.setattr(llm, "_call", record)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+    assert providers == ["https://openrouter.ai/api/v1"], "the paid primary was called"
 
 
 async def test_it_degrades_when_both_primary_and_failsafe_fail(tmp_path, monkeypatch):
@@ -275,7 +287,7 @@ async def test_the_spend_cap_degrades_further_calls_without_invoking_the_provide
     degrade (SRS 3.4.3) rather than place another paid call.
     """
     llm = client(tmp_path, api_key="sk-test")
-    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd in CONFIG
+    await llm.spend.add(5.0, None)  # == daily_spend_cap_usd in CONFIG
 
     calls = []
 
@@ -301,14 +313,14 @@ async def test_a_cache_hit_is_served_even_over_the_spend_cap(tmp_path, monkeypat
     monkeypatch.setattr(llm, "_call", once)
     assert await llm.generate("explanation", "sys", "user") == "the explanation"
 
-    llm.usage.cost_usd = 5.0
+    await llm.spend.add(5.0, None)
     assert await llm.generate("explanation", "sys", "user") == "the explanation"
 
 
 async def test_a_zero_or_missing_cap_never_degrades(tmp_path, monkeypatch):
     llm = client(tmp_path, api_key="sk-test")
     llm.config["limits"] = {"request_timeout_s": 8.0, "max_retries": 1}  # no daily_spend_cap_usd
-    llm.usage.cost_usd = 999.0
+    await llm.spend.add(999.0, None)
 
     async def costed(*args, **kwargs):
         return _CallOutcome("prose", 0.0, 0, 0)
@@ -476,14 +488,15 @@ async def test_provider_status_distinguishes_a_down_primary_from_an_ok_failsafe(
     assert status["openrouter"].status == "ok"
 
 
-def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
+async def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
     """Calls are deliberately skipped to protect the budget (R5) -- an admin
     should not read that as "GPT-4o is broken", only that today's spend cap
-    is spent. Doesn't need a real generate() call: the cap check reads
-    `usage.cost_usd` live, same as generate() itself does.
+    is spent. The status reflects the last budget check, because reporting it
+    must not itself make a network call to the shared counter.
     """
     llm = client(tmp_path, api_key="sk-test")
-    llm.usage.cost_usd = 5.0  # == CONFIG's daily_spend_cap_usd
+    await llm.spend.add(5.0, None)  # == CONFIG's daily_spend_cap_usd
+    assert await llm.generate("explanation", "sys", "user") is None
 
     assert llm.provider_status()["openai"].status == "cap_reached"
 

@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ceynex.observability import context as obs_context
+from ceynex.observability import spend as spend_limits
 from ceynex.observability import trace
 from ceynex.settings import llm_config, openai_api_key, openrouter_api_key
 
@@ -281,7 +282,14 @@ class LLMReasoningClient:
     api_key: str | None = field(default_factory=openai_api_key)
     fallback_api_key: str | None = field(default_factory=openrouter_api_key)
     usage: LLMUsage = field(default_factory=LLMUsage)
+    #: Today's spend, deployment-wide and per reader — what the daily limits are
+    #: enforced against (D16). Shared through Redis by both uvicorn workers when
+    #: `REDIS_URL` is set; this worker's own count otherwise.
+    spend: spend_limits.SpendCounter = field(default_factory=spend_limits.shared_counter)
     _cache: PromptCache = field(init=False)
+    #: The deployment-wide figure the last check saw, for the synchronous
+    #: `provider_status()` — which must not make a network call to report.
+    _last_total_spend: float = field(init=False, default=0.0)
     _client: Any = field(init=False, default=None)
     _fallback_client: Any = field(init=False, default=None)
     # Last-attempt outcome per provider, for provider_status() below. None
@@ -320,8 +328,31 @@ class LLMReasoningClient:
         return bool(self.api_key) or self._fallback_enabled
 
     def _cap_reached(self) -> bool:
+        """Whether the deployment's daily cap was spent, as of the last check."""
         cap = float(self._limits().get("daily_spend_cap_usd", 0) or 0)
-        return bool(cap and self.usage.cost_usd >= cap)
+        return bool(cap and self._last_total_spend >= cap)
+
+    async def _over_budget(self, user_email: str | None) -> tuple[str, float, float] | None:
+        """`(scope, cap, spent)` when a daily limit is spent, else None.
+
+        `scope` is "global" — the deployment's `daily_spend_cap_usd` — or "user",
+        this reader's `per_user_daily_cap_usd`. Read from the shared counter, so
+        the cap is one number across both workers and resets at 00:00 UTC (D16).
+        A call with no reader (the eval harness, the demo CLI) meets only the
+        global cap.
+        """
+        limits = self._limits()
+        cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
+        per_user = float(limits.get("per_user_daily_cap_usd", 0) or 0)
+        if not cap and not per_user:
+            return None
+        spent = await self.spend.spent(user_email)
+        self._last_total_spend = spent.total_usd
+        if cap and spent.total_usd >= cap:
+            return "global", cap, spent.total_usd
+        if per_user and user_email and spent.user_usd >= per_user:
+            return "user", per_user, spent.user_usd
+        return None
 
     def provider_status(self) -> dict[str, ProviderStatus]:
         """Per-provider health for the admin dashboard (SRS 3.5.4).
@@ -467,15 +498,22 @@ class LLMReasoningClient:
         limits = self._limits()
         timeout_s = float(limits.get("request_timeout_s", 8.0))
         attempts = int(limits.get("max_retries", 1)) + 1
-        cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
-        cap_reached = bool(cap and self.usage.cost_usd >= cap)
-        if cap_reached:
+        user_email = observation.user_email if observation is not None else None
+        over = await self._over_budget(user_email) if self.api_key else None
+        cap_reached = over is not None
+        if over is not None:
+            scope, limit, spent = over
             log.warning(
-                "daily spend cap ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
-                cap,
-                self.usage.cost_usd,
+                "%s daily spend limit ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
+                "the deployment's" if scope == "global" else "this reader's",
+                limit,
+                spent,
                 "trying the free failsafe" if fallback else "degrading",
             )
+            # Said in the trace, not only the log: a reader whose answer arrives
+            # without prose should be able to see why.
+            trace.emit("budget", scope=scope, cap_usd=limit, spent_usd=round(spent, 6),
+                       resets_at=spend_limits.resets_at().isoformat())
 
         started = time.perf_counter()
 
@@ -503,6 +541,9 @@ class LLMReasoningClient:
                     self.usage.cost_usd += outcome.cost_usd
                     self.usage.tokens_in += outcome.tokens_in
                     self.usage.tokens_out += outcome.tokens_out
+                    # Counted against today's limits the moment it is spent, so
+                    # the next check — on either worker — already sees it.
+                    await self.spend.add(outcome.cost_usd, user_email)
                     self._primary_last_ok = True
                     self._primary_last_error = None
                     self._primary_last_checked_at = time.time()
