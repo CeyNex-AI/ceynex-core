@@ -6,15 +6,24 @@ issues a signed JWT. `/me` exists so any protected route can share
 `require_user` as one verification path instead of each re-deriving it.
 Admin-provisioned accounts and role changes live on the admin router
 (`routes/admin.py`), behind `require_admin`.
+
+Login and signup are rate limited (SRS 3.4.6's mechanism, its own config
+block and identity namespace) — `/api/query`'s limiter protects *serving
+capacity*, this one is about credential stuffing and signup spam. Every
+attempt is counted twice: once against the client address, once against the
+email in the body, so neither "one IP, many emails" nor "one email, many
+IPs" gets a free pass. bcrypt already makes each attempt cost real CPU; this
+bounds a script that does not care.
 """
 
 from __future__ import annotations
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from ceynex.api import api_keys, users
+from ceynex import settings
+from ceynex.api import api_keys, rate_limit, users
 from ceynex.api.auth import TokenPayload, authenticate, issue_token, verify_token
 from ceynex.api.schemas import LoginRequest, LoginResponse, SignupRequest, UserResponse
 
@@ -23,8 +32,57 @@ router = APIRouter(tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
 
+# --- rate limiting -------------------------------------------------------
+
+_window_singleton: rate_limit.Window | None = None
+
+
+def _window() -> rate_limit.Window:
+    """Built on first use, not at import — `build_window` reads REDIS_URL."""
+    global _window_singleton  # noqa: PLW0603 - one process-lifetime object
+    if _window_singleton is None:
+        _window_singleton = rate_limit.build_window()
+    return _window_singleton
+
+
+def set_window(window: rate_limit.Window | None) -> None:
+    """Test seam. Production never calls this."""
+    global _window_singleton  # noqa: PLW0603
+    _window_singleton = window
+
+
+async def _enforce_auth_rate_limit(http_request: Request, *, email: str | None) -> None:
+    config = settings.load_config("api").get("auth_rate_limit", {})
+    if not config.get("enabled", True):
+        return
+
+    limit = int(config.get("attempts_per_minute", 10))
+    window_s = int(config.get("window_seconds", 60))
+    host = http_request.client.host if http_request.client else None
+
+    # The `auth:` prefix keeps these off `POST /api/query`'s Redis keys (see
+    # routes/news.py for the same reasoning). Both an IP counter and an email
+    # counter must pass.
+    identities = [f"auth:ip:{host or 'unknown'}"]
+    if email:
+        identities.append(f"auth:email:{email.strip().lower()}")
+
+    for identity in identities:
+        decision = await _window().check(identity, limit, window_s)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"too many attempts: at most {limit} per {window_s} seconds. "
+                    f"Try again in {decision.retry_after_s}s."
+                ),
+                headers={"Retry-After": str(decision.retry_after_s)},
+            )
+
+
 @router.post("/api/auth/signup", response_model=LoginResponse, status_code=201)
-async def signup(request: SignupRequest) -> LoginResponse:
+async def signup(request: SignupRequest, http_request: Request) -> LoginResponse:
+    await _enforce_auth_rate_limit(http_request, email=request.email)
     try:
         user = users.create_user(request.email, request.password, users.DEFAULT_ROLE)
     except users.EmailTakenError as exc:
@@ -37,7 +95,8 @@ async def signup(request: SignupRequest) -> LoginResponse:
 
 
 @router.post("/api/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest) -> LoginResponse:
+async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
+    await _enforce_auth_rate_limit(http_request, email=request.email)
     try:
         user = authenticate(request.email, request.password)
     except psycopg.Error as exc:
