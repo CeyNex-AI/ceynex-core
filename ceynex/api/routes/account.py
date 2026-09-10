@@ -13,7 +13,7 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
 from ceynex.api import api_keys, preferences, users
-from ceynex.api.auth import authenticate
+from ceynex.api.auth import authenticate, issue_token
 from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import (
     ApiKeyItem,
@@ -36,8 +36,12 @@ async def change_password(
 ) -> PasswordChangedResponse:
     """Self-service password change. Requires the current password (proof the
     session isn't just a stolen token); the new one goes through the same
-    8-char floor as signup. Existing tokens — including this one — stay valid
-    until they expire (see `users.set_password`)."""
+    8-char floor as signup.
+
+    `users.set_password` bumps the account's `token_epoch`, which invalidates
+    every session for it — including this request's own token — at the next
+    request. The response carries a fresh token so the caller's device stays
+    signed in while every *other* session is cut."""
     if body.new_password == body.current_password:
         raise HTTPException(status_code=422, detail="new password must be different")
     try:
@@ -56,7 +60,10 @@ async def change_password(
         raise HTTPException(status_code=503, detail="could not change password") from exc
     if updated is None:
         raise HTTPException(status_code=403, detail="current password is incorrect")
-    return PasswordChangedResponse(email=updated.email)
+    return PasswordChangedResponse(
+        email=updated.email,
+        token=issue_token(updated.email, updated.role, updated.token_epoch),
+    )
 
 
 @router.get("/api/account/preferences", response_model=NotificationPreferences)

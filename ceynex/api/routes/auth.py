@@ -33,7 +33,7 @@ async def signup(request: SignupRequest) -> LoginResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="could not create account") from exc
-    return LoginResponse(token=issue_token(user.email, user.role), email=user.email, role=user.role)
+    return LoginResponse(token=issue_token(user.email, user.role, user.token_epoch), email=user.email, role=user.role)
 
 
 @router.post("/api/auth/login", response_model=LoginResponse)
@@ -44,7 +44,7 @@ async def login(request: LoginRequest) -> LoginResponse:
         raise HTTPException(status_code=503, detail="login temporarily unavailable") from exc
     if user is None:
         raise HTTPException(status_code=401, detail="invalid email or password")
-    return LoginResponse(token=issue_token(user.email, user.role), email=user.email, role=user.role)
+    return LoginResponse(token=issue_token(user.email, user.role, user.token_epoch), email=user.email, role=user.role)
 
 
 def _verify_bearer(token: str) -> TokenPayload | None:

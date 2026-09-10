@@ -104,6 +104,27 @@ def test_set_password_replaces_the_hash_and_the_old_one_stops_working(clean_user
 
 
 @pytest.mark.integration
+def test_token_epoch_advances_on_password_role_and_disable_but_not_on_enable(clean_users):
+    u = users.create_user(_email("grace"), "grace-password-1", "researcher")
+    assert u.token_epoch == 0
+    assert users.current_token_epoch(_email("grace")) == 0
+
+    e1 = users.set_password(u.id, "grace-password-2").token_epoch
+    assert e1 == 1
+    e2 = users.set_role(u.id, "exporter").token_epoch
+    assert e2 == 2
+    e3 = users.set_disabled(u.id, disabled=True).token_epoch
+    assert e3 == 3
+    # disabled → the per-request check reports None regardless of the stored value
+    assert users.current_token_epoch(_email("grace")) is None
+    # re-enable does NOT bump; the stored epoch stays at 3, so tokens minted at
+    # 0/1/2 remain dead
+    e4 = users.set_disabled(u.id, disabled=False).token_epoch
+    assert e4 == 3
+    assert users.current_token_epoch(_email("grace")) == 3
+
+
+@pytest.mark.integration
 def test_last_admin_guard_blocks_demotion_and_disable_of_a_lone_pytest_admin(clean_users):
     """Scoped to this file's own rows: if the deployment already has other
     enabled admins the guard won't fire, so the assertion is only meaningful
