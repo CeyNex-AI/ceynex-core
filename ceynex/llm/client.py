@@ -31,7 +31,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from ceynex.observability import context as obs_context
 from ceynex.observability import trace
@@ -72,6 +72,21 @@ class LLMUsage:
         self.cost_usd += other.cost_usd
         self.tokens_in += other.tokens_in
         self.tokens_out += other.tokens_out
+
+
+class TextStream(Protocol):
+    """Somewhere to send a response's text as it arrives (D12, amended).
+
+    `feed` receives each piece of text in order; `restart` says the attempt that
+    produced the pieces so far has been abandoned — a timeout before a retry, or
+    the primary before the failsafe — so whatever was shown from it must go.
+    `orchestrator/answer_stream.py::SentenceGate` is the one implementation, and
+    it is what stands between these pieces and the screen.
+    """
+
+    def feed(self, chunk: str) -> None: ...
+
+    def restart(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -393,21 +408,39 @@ class LLMReasoningClient:
         user: str,
         *,
         json_mode: bool = False,
+        stream: TextStream | None = None,
     ) -> str | None:
         """Return the model's text, or None if it could not be obtained.
 
         Never raises. A caller that has to wrap this in try/except has been given
         the wrong interface — degrading is the normal path, not the exceptional
         one.
+
+        `stream` receives the text as it arrives, and is only ever passed when
+        someone is watching (`trace.active()`): with no stream this is exactly
+        the call it always was, so `POST /api/query` and `make eval` measure the
+        same path they always did. The returned text is identical either way —
+        the pieces fed to `stream` join to it.
         """
         model_cfg = self._model(role)
         model = model_cfg["model"]
         temperature = float(model_cfg.get("temperature", 0.2))
         max_tokens = int(model_cfg.get("max_tokens", 600))
+        if json_mode:
+            stream = None  # structured output is parsed whole, never shown
 
         cache_key = self._cache.key(model, system, user, temperature)
-        cached = self._cache.get(cache_key)
+        # Regenerate asks for a fresh answer from the same findings; serving the
+        # cached one would hand back the answer it is replacing. Only the read
+        # is skipped — the new response is still cached, and a regenerated
+        # answer is what an identical request gets next.
+        observation = obs_context.current()
+        bypass = observation is not None and role in observation.bypass_cache_roles
+        cached = None if bypass else self._cache.get(cache_key)
         if cached is not None:
+            if stream is not None:
+                # It arrives all at once, so it is shown all at once.
+                stream.feed(cached)
             self.usage.cache_hits += 1
             # 0 tokens and $0 is the correct accounting, not a gap: no API call
             # happened. `original_*` is the separate, informational number, and
@@ -449,9 +482,12 @@ class LLMReasoningClient:
         if self.api_key and not cap_reached:
             primary_error: str | None = None
             for attempt in range(1, attempts + 1):
+                if stream is not None:
+                    stream.restart()
                 try:
                     outcome = await asyncio.wait_for(
-                        self._call(model, system, user, temperature, max_tokens, json_mode, model_cfg),
+                        self._call(model, system, user, temperature, max_tokens, json_mode,
+                                   model_cfg, stream=stream),
                         timeout=timeout_s,
                     )
                 except TimeoutError:
@@ -496,6 +532,8 @@ class LLMReasoningClient:
 
         if fallback is not None:
             fallback_cfg = {"model": fallback["model"]}  # no cost fields — free tier, costs 0
+            if stream is not None:
+                stream.restart()
             try:
                 outcome = await asyncio.wait_for(
                     self._call(
@@ -508,6 +546,7 @@ class LLMReasoningClient:
                         fallback_cfg,
                         base_url=fallback["base_url"],
                         api_key=self.fallback_api_key,
+                        stream=stream,
                     ),
                     timeout=fallback["timeout_s"],
                 )
@@ -586,6 +625,7 @@ class LLMReasoningClient:
         *,
         base_url: str | None = None,
         api_key: str | None = None,
+        stream: TextStream | None = None,
     ) -> _CallOutcome:
         """The provider-specific part. Swapping vendors means changing this method.
 
@@ -608,11 +648,53 @@ class LLMReasoningClient:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
+        if stream is not None:
+            return await self._call_streaming(client, kwargs, model_cfg, stream)
+
         response = await client.chat.completions.create(**kwargs)
         text = response.choices[0].message.content
         usage = getattr(response, "usage", None)
         return _CallOutcome(
             text=text,
+            cost_usd=self._cost(model_cfg, usage),
+            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+            tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
+
+    async def _call_streaming(
+        self, client: Any, kwargs: dict[str, Any], model_cfg: dict[str, Any], stream: TextStream
+    ) -> _CallOutcome:
+        """The same call, delivered in pieces.
+
+        `include_usage` asks for a final chunk carrying the token counts — the
+        chunk has no choices, only usage — so a streamed call is costed exactly
+        like a whole one (verified against the provider 2026-09-10). A provider
+        that omits it is costed as free, the same posture `_cost` takes with a
+        missing `usage` on a whole response.
+
+        The response is always closed, even on a timeout: an unclosed stream
+        holds its connection until the garbage collector finds it.
+        """
+        response = await client.chat.completions.create(
+            **kwargs, stream=True, stream_options={"include_usage": True}
+        )
+        parts: list[str] = []
+        usage = None
+        try:
+            async for chunk in response:
+                if getattr(chunk, "usage", None) is not None:
+                    usage = chunk.usage
+                if chunk.choices:
+                    piece = chunk.choices[0].delta.content
+                    if piece:
+                        parts.append(piece)
+                        stream.feed(piece)
+        finally:
+            close = getattr(response, "close", None)
+            if close is not None:
+                await close()
+        return _CallOutcome(
+            text="".join(parts) or None,
             cost_usd=self._cost(model_cfg, usage),
             tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
             tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
@@ -669,18 +751,42 @@ class FakeLLMClient:
     tests that need prose construct it with a canned response.
     """
 
-    def __init__(self, response: str | None = "A canned explanation.", available: bool = True):
+    def __init__(
+        self,
+        response: str | None = "A canned explanation.",
+        available: bool = True,
+        chunk_size: int = 7,
+    ):
         self._response = response
         self.available = available
         self.usage = LLMUsage()
         self.calls: list[tuple[str, str, str]] = []
+        #: Whether each call was given a stream — so a test can assert that the
+        #: non-streaming path stayed non-streaming.
+        self.streamed: list[bool] = []
+        #: Streamed responses arrive in pieces this long, so a test exercises
+        #: boundaries that fall inside words and figures, as real ones do.
+        self.chunk_size = chunk_size
 
-    async def generate(self, role: str, system: str, user: str, *, json_mode: bool = False) -> str | None:
+    async def generate(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        stream: TextStream | None = None,
+    ) -> str | None:
         self.calls.append((role, system, user))
+        self.streamed.append(stream is not None)
         if not self.available:
             self.usage.failures += 1
             return None
         self.usage.calls += 1
+        if stream is not None and self._response:
+            stream.restart()
+            for start in range(0, len(self._response), self.chunk_size):
+                stream.feed(self._response[start:start + self.chunk_size])
         return self._response
 
     async def generate_explanation(self, context: dict[str, Any]) -> str:

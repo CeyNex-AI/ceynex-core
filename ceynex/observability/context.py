@@ -141,6 +141,12 @@ class RequestObservability:
     #: contract is frozen at three keys out of merge, and this is per-request
     #: ambient data rather than something the graph should carry.
     confidence_breakdown: dict | None = None
+    #: LLM roles whose prompt cache this request must not read (Regenerate).
+    #: A regenerate is a request for a *different* wording of the same
+    #: findings, and the cache would return the very answer being replaced.
+    #: Ambient for the reason `instruction` is: the merge call sits inside the
+    #: graph, and nothing in `AgentState` may carry it there.
+    bypass_cache_roles: frozenset[str] = frozenset()
 
 
 _current: ContextVar[RequestObservability | None] = ContextVar(

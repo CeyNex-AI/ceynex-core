@@ -486,3 +486,169 @@ def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
     llm.usage.cost_usd = 5.0  # == CONFIG's daily_spend_cap_usd
 
     assert llm.provider_status()["openai"].status == "cap_reached"
+
+
+# --- streaming (D12, amended) ------------------------------------------------
+
+
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+
+
+class _Chunk:
+    def __init__(self, content=None, usage=None, final=False):
+        self.choices = [] if final else [_Choice(content)]
+        self.usage = usage
+
+
+class _StreamedResponse:
+    """What `create(..., stream=True)` returns: text in pieces, then a chunk
+    with no choices and only the token counts — verified against the provider."""
+
+    def __init__(self, pieces, usage, fail_after=None):
+        self._pieces = pieces
+        self._usage = usage
+        self._fail_after = fail_after
+        self.closed = False
+
+    def __aiter__(self):
+        async def gen():
+            for index, piece in enumerate(self._pieces):
+                if self._fail_after is not None and index == self._fail_after:
+                    raise ConnectionError("dropped mid-stream")
+                yield _Chunk(piece)
+            yield _Chunk(final=True, usage=self._usage)
+
+        return gen()
+
+    async def close(self):
+        self.closed = True
+
+
+class _StreamingCompletions:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.kwargs: list[dict] = []
+
+    async def create(self, **kwargs):
+        self.kwargs.append(kwargs)
+        return self._responses.pop(0)
+
+
+class _StreamingClient:
+    def __init__(self, *responses):
+        self.completions = _StreamingCompletions(responses)
+        self.chat = self
+
+
+class _Collect:
+    def __init__(self):
+        self.pieces: list[str] = []
+        self.restarts = 0
+
+    def feed(self, chunk):
+        self.pieces.append(chunk)
+
+    def restart(self):
+        self.restarts += 1
+        self.pieces = []
+
+
+async def test_a_streamed_call_returns_the_same_text_it_fed(tmp_path):
+    llm = client(tmp_path, api_key="sk-test")
+    response = _StreamedResponse(["Tea ", "rose. ", "Cinnamon fell."], _Usage(100, 20))
+    llm._client = _StreamingClient(response)
+    sink = _Collect()
+
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+
+    assert text == "Tea rose. Cinnamon fell."
+    assert "".join(sink.pieces) == text
+    assert llm._client.completions.kwargs[0]["stream"] is True
+    assert llm._client.completions.kwargs[0]["stream_options"] == {"include_usage": True}
+    assert response.closed, "an unclosed stream holds its connection"
+
+
+async def test_a_streamed_call_is_costed_from_its_final_usage_chunk(tmp_path):
+    """Streaming must not become a way to spend without the ledger seeing it."""
+    llm = client(tmp_path, api_key="sk-test")
+    llm._client = _StreamingClient(_StreamedResponse(["Tea rose."], _Usage(1000, 1000)))
+
+    await llm.generate("merge", "sys", "user", stream=_Collect())
+
+    assert llm.usage.tokens_in == 1000 and llm.usage.tokens_out == 1000
+    assert llm.usage.cost_usd == pytest.approx(0.0025 + 0.01)
+
+
+async def test_a_retry_after_a_dropped_stream_restarts_what_was_shown(tmp_path):
+    llm = client(tmp_path, api_key="sk-test")
+    first = _StreamedResponse(["Tea ", "rose. ", "Cinn"], _Usage(1, 1), fail_after=2)
+    second = _StreamedResponse(["Tea rose. ", "Cinnamon fell."], _Usage(1, 1))
+    llm._client = _StreamingClient(first, second)
+    sink = _Collect()
+
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+
+    assert text == "Tea rose. Cinnamon fell."
+    assert "".join(sink.pieces) == text, "two attempts were spliced together"
+    assert sink.restarts == 2, "each attempt starts clean"
+    assert first.closed and second.closed
+
+
+async def test_a_cached_answer_arrives_all_at_once(tmp_path):
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    llm._client = _StreamingClient(_StreamedResponse(["Tea ", "rose."], _Usage(1, 1)))
+    await llm.generate("merge", "sys", "user", stream=_Collect())
+
+    sink = _Collect()
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+    assert text == "Tea rose."
+    assert sink.pieces == ["Tea rose."], "a cache hit is shown as it arrived: whole"
+
+
+async def test_json_mode_is_never_streamed(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+    seen = {}
+
+    async def whole(*args, **kwargs):
+        seen.update(kwargs)
+        return _CallOutcome(text='{"ok": true}', cost_usd=0.0, tokens_in=1, tokens_out=1)
+
+    monkeypatch.setattr(llm, "_call", whole)
+    sink = _Collect()
+    await llm.generate("router", "sys", "user", json_mode=True, stream=sink)
+    assert seen.get("stream") is None and sink.pieces == []
+
+
+async def test_regenerate_skips_the_cached_answer_for_its_role_only(tmp_path, monkeypatch):
+    """Regenerate asks for a different wording of the same findings. The cache
+    would return the very answer being replaced — for that role, and no other."""
+    from ceynex.observability import context
+
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    # Keyed by model, which differs between the two roles: merge is gpt-4o and
+    # routing gpt-4o-mini in the test config.
+    answers = {"gpt-4o": iter(["First wording.", "Second wording."]),
+               "gpt-4o-mini": iter(["Routed.", "Routed again."])}
+
+    async def fresh(model, *args, **kwargs):
+        return _CallOutcome(text=next(answers[model]), cost_usd=0.0, tokens_in=1, tokens_out=1)
+
+    monkeypatch.setattr(llm, "_call", fresh)
+    assert await llm.generate("merge", "sys", "user") == "First wording."
+    await llm.generate("router", "sys", "user")
+
+    token = context.install(context.RequestObservability(bypass_cache_roles=frozenset({"merge"})))
+    try:
+        assert await llm.generate("merge", "sys", "user") == "Second wording."
+        assert await llm.generate("router", "sys", "user") == "Routed.", "router still cached"
+    finally:
+        context.reset(token)
+    # The regenerated answer is what an identical request is served next.
+    assert await llm.generate("merge", "sys", "user") == "Second wording."
