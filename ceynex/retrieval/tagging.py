@@ -121,13 +121,68 @@ def _country_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
     )
 
 
+# Adjectival / people forms — "Chinese import rules", "Indian tariffs". The
+# country CSV has no demonym column, so this is hand-maintained and scoped to
+# the trade universe CeyNex actually reasons about (all EU, major Asia and the
+# Americas, the largest African and Middle Eastern partners). A missing entry
+# degrades to what the code did before: the demonym simply isn't recognised.
+_DEMONYMS: dict[str, str] = {
+    "chinese": "CHN", "indian": "IND", "sri lankan": "LKA", "pakistani": "PAK",
+    "bangladeshi": "BGD", "nepali": "NPL", "nepalese": "NPL", "bhutanese": "BTN",
+    "maldivian": "MDV", "japanese": "JPN", "korean": "KOR", "vietnamese": "VNM",
+    "thai": "THA", "indonesian": "IDN", "malaysian": "MYS", "filipino": "PHL",
+    "philippine": "PHL", "singaporean": "SGP", "cambodian": "KHM", "burmese": "MMR",
+    "myanmar": "MMR", "american": "USA", "canadian": "CAN", "mexican": "MEX",
+    "brazilian": "BRA", "argentine": "ARG", "argentinian": "ARG", "chilean": "CHL",
+    "colombian": "COL", "peruvian": "PER", "british": "GBR", "german": "DEU",
+    "french": "FRA", "italian": "ITA", "spanish": "ESP", "dutch": "NLD",
+    "belgian": "BEL", "swedish": "SWE", "norwegian": "NOR", "finnish": "FIN",
+    "polish": "POL", "portuguese": "PRT", "greek": "GRC", "austrian": "AUT",
+    "irish": "IRL", "czech": "CZE", "hungarian": "HUN", "romanian": "ROU",
+    "bulgarian": "BGR", "croatian": "HRV", "slovak": "SVK", "slovenian": "SVN",
+    "lithuanian": "LTU", "latvian": "LVA", "estonian": "EST", "danish": "DNK",
+    "swiss": "CHE", "russian": "RUS", "ukrainian": "UKR", "turkish": "TUR",
+    "australian": "AUS", "new zealander": "NZL", "egyptian": "EGY", "moroccan": "MAR",
+    "tunisian": "TUN", "algerian": "DZA", "nigerian": "NGA", "kenyan": "KEN",
+    "ethiopian": "ETH", "ghanaian": "GHA", "south african": "ZAF", "emirati": "ARE",
+    "saudi": "SAU", "qatari": "QAT", "kuwaiti": "KWT", "omani": "OMN",
+    "bahraini": "BHR", "iraqi": "IRQ", "iranian": "IRN", "israeli": "ISR",
+    "jordanian": "JOR", "lebanese": "LBN",
+}
+
+# A demonym inside one of these phrases is not a country reference. Blanked out
+# before the demonym scan so "the Indian Ocean fishery" or "Dutch disease in
+# the economy" does not tag IND / NLD.
+_DEMONYM_FALSE_POSITIVES: tuple[str, ...] = (
+    "indian ocean", "west indian", "east indian", "west indies", "east indies",
+    "latin american", "north american", "south american", "central american",
+    "native american", "african american", "pan-american", "dutch disease",
+    "dutch auction", "spanish flu", "turkish delight", "french polynesia",
+    "french guiana", "french southern", "nail polish", "shoe polish",
+    "french polish", "polish up", "polish off", "to polish", "danish pastry",
+    "danish pastries", "korean war",
+)
+
+
 def countries_in(text: str) -> tuple[str, ...]:
-    """ISO3 codes for every country named in the text, in first-seen order."""
+    """ISO3 codes for every country named in the text, in first-seen order.
+
+    Matches full country names (`_country_patterns`) and adjectival/people
+    forms (`_DEMONYMS`) — "Chinese import rules" resolves to CHN the same as
+    "China's import rules".
+    """
     lowered = text.lower()
     found: list[str] = []
     for iso3, pattern in _country_patterns():
         if iso3 not in found and pattern.search(lowered):
             found.append(iso3)
+
+    for phrase in _DEMONYM_FALSE_POSITIVES:
+        lowered = lowered.replace(phrase, " ")
+    for demonym, iso3 in _DEMONYMS.items():
+        if iso3 not in found and re.search(rf"\b{re.escape(demonym)}\b", lowered):
+            found.append(iso3)
+
     return tuple(found)
 
 
