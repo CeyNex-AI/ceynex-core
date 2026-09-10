@@ -233,3 +233,26 @@ def test_done_says_what_ran_when_it_is_not_what_was_typed(client, fake_store, hi
 
     assert first["effective_query"] is None
     assert second["effective_query"] == rewrite
+
+
+# --- a conversation is named once ---------------------------------------------
+
+
+def test_a_conversation_is_named_from_its_first_exchange_only(client, fake_store, history_ids,
+                                                             no_instruction):
+    """The title was always *written* once (`set_title_if_unset`), but the model
+    was asked for one on every turn and the answer thrown away — a paid call per
+    turn, for nothing, on the path that is supposed to be cheap."""
+    llm = ScriptedChatLLM({
+        "turn_classify": json.dumps({"mode": "analyse", "standalone_query": "rubber exports"}),
+        "title": "Cinnamon exports",
+    })
+    _use(llm)
+    created = client.post("/api/chat/conversations", json={}, headers=auth()).json()
+    _stream(client, "cinnamon export trend", created["id"])
+    _stream(client, "now do rubber", created["id"])
+    llm.script["turn_classify"] = json.dumps({"mode": "discuss"})
+    llm.script["chat"] = "Exports grew steadily."
+    _stream(client, "explain that", created["id"])
+
+    assert len(llm.users.get("title", [])) == 1
