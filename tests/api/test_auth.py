@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 
 import jwt
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -42,7 +43,7 @@ def store(monkeypatch):
         counter["n"] += 1
         user = users_module.User(
             id=counter["n"], email=email, role=role, created_at="2026-01-01T00:00:00+00:00",
-            disabled=False,
+            disabled=False, token_epoch=0,
         )
         rows[email] = user
         rows[f"__pw__{email}"] = password  # type: ignore[assignment]
@@ -64,6 +65,28 @@ def store(monkeypatch):
     monkeypatch.setattr(users_module, "authenticate", fake_authenticate)
     monkeypatch.setattr(users_module, "get_by_email", fake_get_by_email)
     return rows
+
+
+@pytest.fixture
+def live_epoch(store, monkeypatch):
+    """Make `verify_token`'s epoch check read the in-memory `store` instead of
+    the conftest default (which just returns 0 for everyone). Only the
+    invalidation tests want this."""
+
+    def _epoch(email):
+        user = store.get(email.strip().lower())
+        return None if user is None or user.disabled else user.token_epoch
+
+    monkeypatch.setattr(users_module, "current_token_epoch", _epoch)
+
+
+def _bump_epoch(store, email="dev@ceynex.dev"):
+    """Simulate a password/role change / disable having advanced the epoch."""
+    u = store[email]
+    store[email] = users_module.User(
+        id=u.id, email=u.email, role=u.role, created_at=u.created_at,
+        disabled=u.disabled, token_epoch=u.token_epoch + 1,
+    )
 
 
 @pytest.fixture
@@ -141,7 +164,7 @@ def test_a_disabled_account_cannot_log_in(client, store):
     disabled = store["dev@ceynex.dev"]
     store["dev@ceynex.dev"] = users_module.User(
         id=disabled.id, email=disabled.email, role=disabled.role,
-        created_at=disabled.created_at, disabled=True,
+        created_at=disabled.created_at, disabled=True, token_epoch=disabled.token_epoch,
     )
     assert login(client).status_code == 401
 
@@ -195,3 +218,37 @@ def test_me_role_comes_from_the_token_claim_not_a_re_derivation(client, store):
     token = login(client).json()["token"]
     role = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["role"]
     assert role == users_module.DEFAULT_ROLE
+
+
+# --- session invalidation (token_epoch) -----------------------------------
+
+
+def test_a_token_stops_verifying_once_the_accounts_epoch_moves_on(client, store, live_epoch):
+    """A password/role change or disable bumps `token_epoch`; a token minted
+    against the old value is rejected at its next request, not 8 h later."""
+    token = signup(client).json()["token"]
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    _bump_epoch(store)
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_a_token_for_a_since_disabled_account_stops_verifying(client, store, live_epoch):
+    token = signup(client).json()["token"]
+    u = store["dev@ceynex.dev"]
+    store["dev@ceynex.dev"] = users_module.User(
+        id=u.id, email=u.email, role=u.role, created_at=u.created_at,
+        disabled=True, token_epoch=u.token_epoch,
+    )
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_a_valid_token_still_verifies_when_the_epoch_check_cannot_reach_postgres(client, store, monkeypatch):
+    """Fail open — a Postgres blip must not log everyone out. The token's
+    signature was still good."""
+    token = signup(client).json()["token"]
+
+    def boom(email):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(users_module, "current_token_epoch", boom)
+    assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 200

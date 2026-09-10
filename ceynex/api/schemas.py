@@ -384,6 +384,10 @@ class ChangePasswordRequest(BaseModel):
 class PasswordChangedResponse(BaseModel):
     email: str
     changed: bool = True
+    # A fresh token issued against the new epoch — the change invalidates every
+    # other session for this account, and would invalidate the caller's too
+    # without this. The client swaps it in and stays signed in.
+    token: str
 
 
 class NotificationPreferences(BaseModel):
