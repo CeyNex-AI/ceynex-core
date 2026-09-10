@@ -343,6 +343,84 @@ def set_disabled(user_id: int, *, disabled: bool) -> User | None:
     return _row_to_user(updated)
 
 
+#: Tables that key rows to a user by email string rather than by `users.id`
+#: (they predate `users`). An email change reassigns them, a delete removes
+#: them, so history / keys / preferences don't outlive or misattribute the
+#: account. All three are `ensure_table`d in `main.py`'s lifespan, so they
+#: always exist by the time a request runs. `audit_log.actor_email` is
+#: deliberately NOT here — it is a historical record of who did a thing, not
+#: owned data.
+_EMAIL_OWNED_TABLES = ("query_history", "api_keys", "notification_preferences")
+
+
+def _reassign_owned_rows(cur: psycopg.Cursor, old_email: str, new_email: str) -> None:
+    for table in _EMAIL_OWNED_TABLES:
+        cur.execute(
+            f"UPDATE {table} SET user_email = %s WHERE user_email = %s",  # noqa: S608 - fixed table list
+            (new_email, old_email),
+        )
+
+
+def _delete_owned_rows(cur: psycopg.Cursor, email: str) -> None:
+    for table in _EMAIL_OWNED_TABLES:
+        cur.execute(
+            f"DELETE FROM {table} WHERE user_email = %s",  # noqa: S608 - fixed table list
+            (email,),
+        )
+
+
+def set_email(user_id: int, new_email: str) -> User | None:
+    """Change an account's email. New `User` on success, None if `user_id` is
+    unknown. Raises `EmailTakenError` if `new_email` already belongs to another
+    account. Bumps `token_epoch` (the JWT's `sub` is the old email, so every
+    existing session is invalid anyway) and reassigns the caller's
+    history / API keys / preferences to the new address."""
+    new_email = _norm_email(new_email)
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM users WHERE id = %s", (user_id,))  # noqa: S608 - _COLS is fixed
+        row = cur.fetchone()
+        if row is None:
+            return None
+        old_email = row[1]
+        if old_email == new_email:
+            return _row_to_user(row)
+        try:
+            cur.execute(
+                f"UPDATE users SET email = %s, token_epoch = token_epoch + 1 "
+                f"WHERE id = %s RETURNING {_COLS}",  # noqa: S608 - _COLS is fixed
+                (new_email, user_id),
+            )
+        except psycopg.errors.UniqueViolation as exc:
+            raise EmailTakenError(f"an account already exists for {new_email}") from exc
+        updated = cur.fetchone()
+        _reassign_owned_rows(cur, old_email, new_email)
+        conn.commit()
+    return _row_to_user(updated)
+
+
+def delete_user(user_id: int) -> bool:
+    """Remove an account and everything keyed to its email. True if a row was
+    deleted, False if `user_id` was already gone. Raises `LastAdminError` if
+    this is the last enabled admin — the same guard `set_role` / `set_disabled`
+    apply, so a deployment can't delete its way to lockout."""
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT {_COLS} FROM users WHERE id = %s", (user_id,))  # noqa: S608 - _COLS is fixed
+        row = cur.fetchone()
+        if row is None:
+            return False
+        current = _row_to_user(row)
+        if (
+            current.role == "admin"
+            and not current.disabled
+            and _enabled_admin_count(cur, excluding_id=user_id) == 0
+        ):
+            raise LastAdminError("cannot delete the last enabled admin")
+        _delete_owned_rows(cur, current.email)
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+    return True
+
+
 def set_password(user_id: int, new_password: str) -> User | None:
     """Replace the stored bcrypt hash. New `User` on success, None if `user_id`
     is unknown. Raises `WeakPasswordError` for a password under
