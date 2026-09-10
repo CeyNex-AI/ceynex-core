@@ -49,11 +49,16 @@ from ceynex.settings import postgres_dsn
 
 log = logging.getLogger(__name__)
 
-# The same four the frontend and `require_admin` already know about. A signup
-# picks none of these — it always lands on `DEFAULT_ROLE`; only an admin moves
-# an account to another one.
+# The same four the frontend and `require_admin` already know about.
 VALID_ROLES: tuple[str, ...] = ("policymaker", "admin", "researcher", "exporter")
 DEFAULT_ROLE = "researcher"
+
+# The roles a self-service signup may pick. `admin` is excluded: an account
+# that can trigger a retrain or an ingest, or change other users' roles, is
+# only ever created by an existing admin (`POST /api/admin/users`). Everything
+# else gates only which UI pages render, so self-selecting between them grants
+# nothing that matters.
+SIGNUP_ROLES: tuple[str, ...] = tuple(r for r in VALID_ROLES if r != "admin")
 
 MIN_PASSWORD_LENGTH = 8
 

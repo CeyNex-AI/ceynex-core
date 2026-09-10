@@ -1,8 +1,9 @@
 """POST /api/auth/signup, POST /api/auth/login and GET /api/auth/me — SRS 3.1.11.
 
-Signup creates a real `users` row at the default role and logs the new account
-straight in; login checks a stored bcrypt hash (see `ceynex/api/users.py`) and
-issues a signed JWT. `/me` exists so any protected route can share
+Signup creates a real `users` row — at whichever of `users.SIGNUP_ROLES` the
+request names, or `DEFAULT_ROLE` if it names none; never `admin`, which is
+admin-provisioned only — and logs the new account straight in. Login checks a
+stored bcrypt hash (see `ceynex/api/users.py`) and issues a signed JWT. `/me` exists so any protected route can share
 `require_user` as one verification path instead of each re-deriving it.
 Admin-provisioned accounts and role changes live on the admin router
 (`routes/admin.py`), behind `require_admin`.
@@ -83,8 +84,17 @@ async def _enforce_auth_rate_limit(http_request: Request, *, email: str | None) 
 @router.post("/api/auth/signup", response_model=LoginResponse, status_code=201)
 async def signup(request: SignupRequest, http_request: Request) -> LoginResponse:
     await _enforce_auth_rate_limit(http_request, email=request.email)
+
+    role = request.role or users.DEFAULT_ROLE
+    if role == "admin":
+        raise HTTPException(status_code=403, detail="the admin role cannot be self-assigned")
+    if role not in users.SIGNUP_ROLES:
+        raise HTTPException(
+            status_code=422, detail=f"role must be one of {list(users.SIGNUP_ROLES)}"
+        )
+
     try:
-        user = users.create_user(request.email, request.password, users.DEFAULT_ROLE)
+        user = users.create_user(request.email, request.password, role)
     except users.EmailTakenError as exc:
         raise HTTPException(status_code=409, detail="an account with that email already exists") from exc
     except users.WeakPasswordError as exc:
