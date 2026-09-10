@@ -75,6 +75,10 @@ class QueryOutcome:
     request_id: str
     usage: obs.RequestLLMUsage
     trace_events: list[trace.TraceEvent]
+    #: The `query_history` row this answer was recorded under, or None when it
+    #: was not recorded (anonymous, or Postgres unreachable). A chat turn stores
+    #: it so its save star links to the row the History panel shows.
+    history_id: int | None = None
 
 
 async def run_query(
@@ -146,11 +150,12 @@ async def run_query(
     finally:
         obs.reset(token)
 
+    history_id: int | None = None
     if record_history and user_email is not None:
         # Off the loop, unlike the inline call this replaces: on the streaming
         # transport a blocking connect stalls the heartbeat, and with two uvicorn
         # workers it stalls every other request on the process too.
-        await asyncio.to_thread(
+        history_id = await asyncio.to_thread(
             history.record,
             user_email=user_email,
             query=query,
@@ -171,6 +176,7 @@ async def run_query(
         request_id=observation.request_id,
         usage=observation.usage,
         trace_events=list(trace_sink.history) if trace_sink else [],
+        history_id=history_id if isinstance(history_id, int) else None,
     )
 
 

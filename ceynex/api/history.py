@@ -60,19 +60,33 @@ def ensure_table() -> None:
         log.warning("query_history table not ensured (postgres unreachable?): %s", exc)
 
 
-def record(*, user_email: str, query: str, answer: str, confidence: float, degraded: bool) -> None:
+def record(
+    *, user_email: str, query: str, answer: str, confidence: float, degraded: bool
+) -> int | None:
+    """Write one history row. Returns its id, or None if it could not be written.
+
+    The id exists so a chat turn can link to the row it produced
+    (`chat_message.query_history_id`), which is what lets the chat's save star
+    call the untouched `/api/history/{id}/save` rather than a parallel endpoint.
+    None is the opportunistic path described above: the answer has been
+    produced, and a caller treats a missing id as "nothing to link".
+    """
     try:
         with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO query_history (user_email, query, answer, confidence, degraded)
                 VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (user_email, query, answer, confidence, degraded),
             )
+            row = cur.fetchone()
             conn.commit()
+            return int(row[0]) if row else None
     except psycopg.Error as exc:
         log.warning("failed to record query history for %s: %s", user_email, exc)
+        return None
 
 
 @dataclass(frozen=True)
