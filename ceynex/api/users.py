@@ -310,6 +310,30 @@ def set_disabled(user_id: int, *, disabled: bool) -> User | None:
     return _row_to_user(updated)
 
 
+def set_password(user_id: int, new_password: str) -> User | None:
+    """Replace the stored bcrypt hash. New `User` on success, None if `user_id`
+    is unknown. Raises `WeakPasswordError` for a password under
+    `MIN_PASSWORD_LENGTH`.
+
+    Does not check the *old* password — that is the caller's job (the
+    self-service route checks it via `authenticate`; the admin reset route
+    deliberately does not). Existing JWTs stay valid until they expire: the
+    token carries no reference to the hash, and adding a check would put a DB
+    read back on every authed request (see this module's docstring). The 8 h
+    TTL bounds the window."""
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        raise WeakPasswordError(f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s "
+            "RETURNING id, email, password_hash, role, created_at, disabled_at",
+            (_hash_password(new_password), user_id),
+        )
+        updated = cur.fetchone()
+        conn.commit()
+    return _row_to_user(updated) if updated else None
+
+
 def _main() -> int:
     import argparse
 

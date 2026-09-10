@@ -349,6 +349,11 @@ class SetRoleRequest(BaseModel):
     role: str = Field(min_length=1, max_length=40)
 
 
+class SetUserPasswordRequest(BaseModel):
+    # Admin reset — no current-password proof, unlike ChangePasswordRequest.
+    password: str = Field(min_length=8, max_length=200)
+
+
 class UserMutationResponse(BaseModel):
     id: int
     email: str
@@ -369,6 +374,16 @@ class LLMStatusResponse(BaseModel):
 
 
 # --- account: notification preferences + API keys ---------------------------
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+class PasswordChangedResponse(BaseModel):
+    email: str
+    changed: bool = True
 
 
 class NotificationPreferences(BaseModel):

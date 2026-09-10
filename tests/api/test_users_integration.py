@@ -92,6 +92,18 @@ def test_set_role_rejects_an_unknown_role(clean_users):
 
 
 @pytest.mark.integration
+def test_set_password_replaces_the_hash_and_the_old_one_stops_working(clean_users):
+    created = users.create_user(_email("frank"), "first-password-here", "exporter")
+    updated = users.set_password(created.id, "second-password-here")
+    assert updated is not None and updated.id == created.id
+    assert users.authenticate(_email("frank"), "first-password-here") is None
+    assert users.authenticate(_email("frank"), "second-password-here") is not None
+    assert users.set_password(-1, "no-such-user-pw") is None
+    with pytest.raises(users.WeakPasswordError):
+        users.set_password(created.id, "short")
+
+
+@pytest.mark.integration
 def test_last_admin_guard_blocks_demotion_and_disable_of_a_lone_pytest_admin(clean_users):
     """Scoped to this file's own rows: if the deployment already has other
     enabled admins the guard won't fire, so the assertion is only meaningful
