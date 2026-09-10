@@ -482,52 +482,42 @@ async def _describe_policy(
     imports from Sri Lanka?" fell through to the `fx` default and was answered
     with a 5% rupee depreciation and a figure of USD -8,240,802.
 
-    Where the graph can answer part of the question it still does. A question
-    naming an item gets its `agreement_coverage` lookup, so "which agreement
-    gives cinnamon preferential access" is answered from the graph and the
-    document corroborates it, rather than the other way round — the graph is the
-    source of record for coverage, and a retrieved passage that disagreed with it
-    would be a corpus problem, not a correction.
+    Where the graph can answer part of the question it still does. A bare "which
+    agreement gives cinnamon preferential access" is answered from the graph's
+    `agreement_coverage` and a retrieved passage corroborates it — the graph is
+    the source of record for coverage there. But `agreement_coverage` returns
+    *Sri Lanka's* arrangements (APTA, GSP+, ISFTA), not the named market's
+    policy, so when the question names a specific foreign market and the corpus
+    holds no document for it, that lookup is withheld rather than allowed to
+    stand in as that market's policy — the E09 misattribution (see step 2's
+    comment). Retrieval runs first so this decision has the answered/unheld
+    split to work from.
     """
     destinations = _destinations(state["query"], intent) or (None,)
     hs_prefixes = tuple(hs_hierarchy(_hs_for_item(intent.item))) if intent.item else ()
     measures = _descriptive_measures(state["query"])
 
-    evidence: list[Evidence] = []
     assumptions: list[str] = [
         "This answers what the cited documents say. Nothing is simulated and no "
         "impact figure is derived.",
         "Policy documents are recorded `unverified`: no human has checked these "
         "passages against the issuing authority's current text.",
     ]
-    lines: list[str] = []
+    # A concrete foreign market is named (E09: "China"), as opposed to a bare
+    # "which agreement covers tea" with no country.
+    names_a_specific_market = destinations != (None,)
 
-    # 1. What the graph knows, when the question named goods.
-    if intent.item:
-        rows, cypher = await deps.kg.run(*q.agreement_coverage(_hs_for_item(intent.item)))
-        if rows:
-            names = ", ".join(sorted({r["agreement"] for r in rows}))
-            lines.append(
-                f"The knowledge graph records {intent.item} (HS {rows[0]['matched_on']}) as "
-                f"covered by {names}."
-            )
-            evidence.append(
-                evidence_from_query(
-                    claim=(
-                        f"{intent.item.replace('_', ' ').title()} exports under HS "
-                        f"{rows[0]['matched_on']} are covered by {names} in the knowledge graph."
-                    ),
-                    cypher=cypher,
-                )
-            )
-
-    # 2. What the documents say, per destination the question names.
+    # 1. What the documents say, per destination the question names. Run first
+    # so the graph step below knows whether any named market was actually
+    # answered from a document.
     #
     # Retrieved separately rather than in one pooled search: the allow-list is
     # built per country (`policy_documents_for`), and pooling would let the
     # country with documents supply passages the other country's half of the
     # question then appears to have been answered from.
     per_destination_limit = 4 if len(destinations) == 1 else 2
+    doc_lines: list[str] = []
+    doc_evidence: list[Evidence] = []
     answered: list[str] = []
     unheld: list[str] = []
 
@@ -546,10 +536,10 @@ async def _describe_policy(
             answered.append(partner or "the market named")
             sources = sorted({c.title for c in context.chunks})
             scope = f" {where}" if len(destinations) > 1 else ""
-            lines.append(
+            doc_lines.append(
                 f"{len(context.chunks)} passage(s) from {', '.join(sources)} address this{scope}."
             )
-            evidence.extend(
+            doc_evidence.extend(
                 _policy_evidence(context.chunks, context.detail, limit=per_destination_limit)
             )
             continue
@@ -557,7 +547,7 @@ async def _describe_policy(
         # The corpus not holding something is a real answer and has to be said in
         # the prose, not left as an empty evidence list the reader must notice.
         unheld.append(partner or "the market named")
-        lines.append(
+        doc_lines.append(
             f"No policy document {where} in the corpus addresses this, so that part of the "
             "question cannot be answered from the documents CeyNex holds."
             if len(destinations) > 1
@@ -570,13 +560,53 @@ async def _describe_policy(
         )
         if context.cypher:
             held = ", ".join(sorted(r["doc_id"] for r in context.documents)) or "none"
-            evidence.append(
+            doc_evidence.append(
                 evidence_from_query(
                     claim=(
                         f"The knowledge graph's indexed policy documents {where} are: {held}. "
                         "None of them contains a passage answering this question."
                     ),
                     cypher=context.cypher,
+                )
+            )
+
+    # 2. What the graph knows about the item's *outbound* preferential access.
+    #
+    # `agreement_coverage()` returns Sri Lanka's own arrangements (APTA, GSP+,
+    # ISFTA) that cover the HS code — it is not a lookup of the named market's
+    # policy, and the graph carries no agreement-membership edge to scope it to
+    # one. So it is only surfaced when it can actually corroborate rather than
+    # substitute: either no specific foreign market was named (the bare "which
+    # agreement covers tea" case), or at least one named market was answered
+    # from a real document. When a market is named and none is held — E09,
+    # "what does China's trade policy say about Sri Lankan tea", with no China
+    # document — listing APTA/GSP+/ISFTA here reads as China's policy and is
+    # withheld; the answer is the clean gap the loop above already produced.
+    graph_lines: list[str] = []
+    graph_evidence: list[Evidence] = []
+    if intent.item and (not names_a_specific_market or answered):
+        rows, cypher = await deps.kg.run(*q.agreement_coverage(_hs_for_item(intent.item)))
+        if rows:
+            names = ", ".join(sorted({r["agreement"] for r in rows}))
+            lead = "Separately, the" if names_a_specific_market else "The"
+            caveat = (
+                " These are Sri Lanka's own trade arrangements, not "
+                f"{', '.join(answered)}'s domestic policy."
+                if names_a_specific_market
+                else ""
+            )
+            graph_lines.append(
+                f"{lead} knowledge graph records Sri Lanka's {intent.item} exports "
+                f"(HS {rows[0]['matched_on']}) as receiving preferential access under {names}.{caveat}"
+            )
+            graph_evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"Sri Lanka's {intent.item.replace('_', ' ')} exports under HS "
+                        f"{rows[0]['matched_on']} receive preferential access under {names} "
+                        "(Sri Lanka's own arrangements, per the knowledge graph)."
+                    ),
+                    cypher=cypher,
                 )
             )
 
@@ -590,13 +620,20 @@ async def _describe_policy(
             f"{', '.join(unheld)}; the comparison is one-sided and stated as such."
         )
 
+    # Graph-first for a bare coverage question (it *is* the answer there);
+    # docs-first when a market is named (the graph line is a corroborating aside).
+    ordered_lines = doc_lines + graph_lines if names_a_specific_market else graph_lines + doc_lines
+    ordered_evidence = (
+        doc_evidence + graph_evidence if names_a_specific_market else graph_evidence + doc_evidence
+    )
+
     return await finish(
         agent=AGENT,
         state=state,
         deps=deps,
-        summary=" ".join(lines),
+        summary=" ".join(ordered_lines),
         figures={},
-        evidence=evidence,
+        evidence=ordered_evidence,
         assumptions=assumptions,
     )
 
