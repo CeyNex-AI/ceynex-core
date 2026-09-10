@@ -148,3 +148,89 @@ def test_last_admin_guard_blocks_demotion_and_disable_of_a_lone_pytest_admin(cle
     else:
         # Another admin exists on this database — demotion is allowed.
         assert users.set_role(admin.id, "researcher") is not None
+
+
+@pytest.mark.integration
+def test_set_email_reassigns_owned_rows_and_bumps_the_epoch(clean_users):
+    from ceynex.api import api_keys, history, preferences
+
+    for ensure in (api_keys.ensure_table, preferences.ensure_table, history.ensure_table):
+        ensure()
+
+    old, new = _email("mover-old"), _email("mover-new")
+    u = users.create_user(old, "mover-password-1", "exporter")
+    api_keys.create(old, "pytest-rbac email-move key")
+    preferences.upsert(old, dq_flag_alerts=False, forecast_updates=True, weekly_digest=True)
+
+    updated = users.set_email(u.id, "  " + new.upper() + " ")  # normalised on write
+    assert updated is not None and updated.email == new
+    assert updated.token_epoch == u.token_epoch + 1
+    assert users.authenticate(new, "mover-password-1") is not None
+    assert users.authenticate(old, "mover-password-1") is None
+
+    with psycopg.connect(postgres_dsn()) as conn:
+        (keys_old,) = conn.execute(
+            "SELECT count(*) FROM api_keys WHERE user_email = %s", (old,)
+        ).fetchone()
+        (keys_new,) = conn.execute(
+            "SELECT count(*) FROM api_keys WHERE user_email = %s", (new,)
+        ).fetchone()
+        (prefs_new,) = conn.execute(
+            "SELECT count(*) FROM notification_preferences WHERE user_email = %s", (new,)
+        ).fetchone()
+    assert keys_old == 0 and keys_new == 1 and prefs_new == 1
+
+    # cleanup the moved rows (clean_users only purges the users table)
+    with psycopg.connect(postgres_dsn()) as conn:
+        conn.execute("DELETE FROM api_keys WHERE user_email = %s", (new,))
+        conn.execute("DELETE FROM notification_preferences WHERE user_email = %s", (new,))
+        conn.commit()
+
+
+@pytest.mark.integration
+def test_set_email_to_a_taken_address_raises_and_changes_nothing(clean_users):
+    a = users.create_user(_email("clash-a"), "clash-password-1", "researcher")
+    users.create_user(_email("clash-b"), "clash-password-2", "researcher")
+    with pytest.raises(users.EmailTakenError):
+        users.set_email(a.id, _email("clash-b"))
+    assert users.get_by_email(_email("clash-a")) is not None  # untouched
+
+
+@pytest.mark.integration
+def test_delete_user_removes_the_row_and_its_owned_rows(clean_users):
+    from ceynex.api import api_keys, preferences
+
+    api_keys.ensure_table()
+    preferences.ensure_table()
+
+    email = _email("goner")
+    u = users.create_user(email, "goner-password-1", "exporter")
+    api_keys.create(email, "pytest-rbac delete key")
+    preferences.upsert(email, dq_flag_alerts=True, forecast_updates=False, weekly_digest=False)
+
+    assert users.delete_user(u.id) is True
+    assert users.delete_user(u.id) is False  # already gone
+    assert users.get_by_email(email) is None
+    with psycopg.connect(postgres_dsn()) as conn:
+        (keys,) = conn.execute(
+            "SELECT count(*) FROM api_keys WHERE user_email = %s", (email,)
+        ).fetchone()
+        (prefs,) = conn.execute(
+            "SELECT count(*) FROM notification_preferences WHERE user_email = %s", (email,)
+        ).fetchone()
+    assert keys == 0 and prefs == 0
+
+
+@pytest.mark.integration
+def test_delete_user_last_admin_guard(clean_users):
+    admin = users.create_user(_email("lone-admin"), "lone-password-1", "admin")
+    with psycopg.connect(postgres_dsn()) as conn:
+        (other_admins,) = conn.execute(
+            "SELECT count(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id <> %s",
+            (admin.id,),
+        ).fetchone()
+    if other_admins == 0:
+        with pytest.raises(users.LastAdminError):
+            users.delete_user(admin.id)
+    else:
+        assert users.delete_user(admin.id) is True
