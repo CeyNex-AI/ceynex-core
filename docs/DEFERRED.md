@@ -57,11 +57,15 @@ a `role` column over the same four roles, a `disabled_at` flag), additive to
 the frozen contracts schema the same way `query_history` is. `POST
 /api/auth/signup` self-registers an account at the default role
 (`researcher`) and logs it straight in; `POST /api/auth/login` checks the
-stored hash. Admin-only routes on the admin router provision an account at any
-role (`POST /api/admin/users`), list every account (`GET /api/admin/users`),
-move one between roles (`POST /api/admin/users/{id}/role`), and disable or
-re-enable one (`POST /api/admin/users/{id}/{disable,enable}`) — each audited
-first, with a last-enabled-admin guard so a deployment can't lock itself out.
+stored hash. A signed-in user changes their own password at `POST
+/api/account/password` (current password required). Admin-only routes on the
+admin router provision an account at any role (`POST /api/admin/users`), list
+every account (`GET /api/admin/users`), move one between roles (`POST
+/api/admin/users/{id}/role`), disable or re-enable one (`POST
+/api/admin/users/{id}/{disable,enable}`), and reset a locked-out user's
+password (`POST /api/admin/users/{id}/password`, no current-password check) —
+each audited first, with a last-enabled-admin guard so a deployment can't lock
+itself out.
 A fresh deployment starts with zero users: seed the first admin with
 `CEYNEX_BOOTSTRAP_ADMIN=email:password` (read once by `ensure_table()` at
 startup) or `python -m ceynex.api.users create-admin <email> <password>`. The
