@@ -95,8 +95,23 @@ def _real_client_with_stub_driver() -> tuple[object, list[str]]:
     return client, recorder
 
 
+#: Refused instantly rather than timed out: port 1 is never listening, so
+#: `psycopg.connect` fails on the spot instead of spending `connect_timeout`.
+UNREACHABLE_DSN = "postgresql://ceynex@127.0.0.1:1/nonexistent"
+
+
 def _deps(kg) -> AgentDeps:
-    return AgentDeps(kg=kg, llm=FakeLLMClient(available=False))
+    """Every data source unavailable, including the one that is not the graph.
+
+    `dsn` is not optional here, and leaving it unset was a real defect: the
+    reader resolves `dsn or postgres_dsn()`, so an unset value silently pointed
+    these tests at whatever Postgres the developer's own `.env` names. With the
+    local stack down `agriculture_commodity` declined and the suite passed; with
+    it up the same agent answers from real rows, and a test asserting that every
+    agent declined fails for a reason that has nothing to do with the code under
+    test. Naming an unreachable DSN makes the premise true either way.
+    """
+    return AgentDeps(kg=kg, llm=FakeLLMClient(available=False), dsn=UNREACHABLE_DSN)
 
 
 async def _run_traced(query: str) -> tuple[dict, trace.TraceSink, list[str]]:
