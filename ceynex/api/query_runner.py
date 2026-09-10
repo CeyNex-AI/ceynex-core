@@ -31,7 +31,7 @@ import logging
 import time
 from dataclasses import dataclass
 
-from ceynex.agents.common import parse_intent
+from ceynex.agents.common import evidence_from_web, parse_intent
 from ceynex.api import history
 from ceynex.api.deps import Runtime
 from ceynex.api.schemas import AnswerGraph, QueryResponse
@@ -46,6 +46,7 @@ from ceynex.orchestrator.merger import (
     no_topic_recognized,
     unanswered_from_outputs,
 )
+from ceynex.websearch import safe_search, wants_current_context
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +100,15 @@ async def run_query(
     )
     token = obs.install(observation)
     try:
+        # Started before the graph and gathered after it, so it costs no wall
+        # clock at all on a path that already breaches SRS 3.4.1. Never awaited
+        # *before* the graph: an answer must not wait on the web.
+        web_task = (
+            asyncio.create_task(safe_search(runtime.websearch, query))
+            if getattr(runtime, "websearch", None) is not None and wants_current_context(query)
+            else None
+        )
+
         try:
             final = await asyncio.wait_for(
                 runtime.graph.ainvoke(new_state(query, user_id=user_id)),
@@ -106,14 +116,28 @@ async def run_query(
             )
         except TimeoutError as exc:
             log.warning("query exceeded its %.0fs budget: %s", overall_timeout_s, query[:80])
+            if web_task is not None:
+                web_task.cancel()
             raise OrchestrationError(
                 f"the request exceeded its {overall_timeout_s:.0f}s budget"
             ) from exc
         except Exception as exc:  # noqa: BLE001 - the graph should never raise; if it does, say so
             log.exception("graph invocation failed")
+            if web_task is not None:
+                web_task.cancel()
             raise OrchestrationError(f"orchestration failed: {exc}") from exc
 
-        response = await _assemble(runtime, query, final, started)
+        # Gathered here, after the graph has finished and merge has already
+        # written its prose. Everything about the safety of D14 rests on this
+        # ordering rather than on any check — see `evidence_from_web`.
+        web_results = []
+        if web_task is not None:
+            try:
+                web_results = await web_task
+            except Exception:  # noqa: BLE001 - a web result never fails an answer
+                log.warning("web search task failed", exc_info=True)
+
+        response = await _assemble(runtime, query, final, started, web_results)
     finally:
         obs.reset(token)
 
@@ -146,7 +170,11 @@ async def run_query(
 
 
 async def _assemble(
-    runtime: Runtime, query: str, final: dict, started: float
+    runtime: Runtime,
+    query: str,
+    final: dict,
+    started: float,
+    web_results=(),
 ) -> QueryResponse:
     outputs = final.get("agent_outputs", {})
     confidence = float(final.get("final_confidence", 0.0))
@@ -161,7 +189,12 @@ async def _assemble(
         confidence=confidence,
         confidence_band=confidence_band(confidence),
         agents_used=agents_used_from_outputs(final),
-        evidence=final.get("merged_evidence", []),
+        # Merged evidence first, web last and clearly separate. By the time this
+        # runs, merge has written its prose, grounding has checked it and
+        # confidence has been computed — so a web result cannot have influenced
+        # any of the three. That is D14's entire safety argument, and it is a
+        # property of *when* this line runs.
+        evidence=[*final.get("merged_evidence", []), *_web_evidence(web_results)],
         # A routed agent's forecast is noise, not an answer, for a question
         # that named nothing CeyNex covers -- same suppression as agents_used
         # and unanswered below (see merger.no_topic_recognized's docstring).
@@ -175,6 +208,14 @@ async def _assemble(
         unanswered=unanswered_from_outputs(final),
         graph=graph,
     )
+
+
+def _web_evidence(results) -> list:
+    """Web hits as `Evidence`, or nothing at all."""
+    return [
+        evidence_from_web(result.title, result.snippet, result.url, period=result.published)
+        for result in results or ()
+    ]
 
 
 def _forecast_of(outputs: dict) -> list:
