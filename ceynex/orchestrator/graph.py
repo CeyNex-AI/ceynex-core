@@ -39,6 +39,8 @@ from ceynex.agents.export_analytics import export_analytics_node
 from ceynex.agents.forecast import forecast_node
 from ceynex.agents.trade_economics import trade_economics_node
 from ceynex.contracts import ALL_AGENTS, AgentName, AgentState, failed_output
+from ceynex.observability import trace
+from ceynex.orchestrator import planner
 from ceynex.orchestrator.merger import merge
 from ceynex.orchestrator.router import RouteDecision, keyword_route, llm_route
 
@@ -113,7 +115,25 @@ def build_graph(deps: AgentDeps, *, use_llm_router: bool = True) -> Any:
     builder = StateGraph(AgentState)
 
     async def route_node(state: AgentState) -> dict[str, Any]:
-        decision = await _decide_route(state, deps, use_llm_router)
+        with trace.node("route"):
+            # Concurrently, not in sequence: both take only the question, and
+            # routing is the single largest fixed cost in a query (4.6s measured
+            # live). Overlapping them makes the plan effectively free on a path
+            # that is already over its SRS 3.4.1 budget.
+            decision, (steps, method) = await asyncio.gather(
+                _decide_route(state, deps, use_llm_router),
+                _plan_steps(state["query"], deps),
+            )
+            for position, step in enumerate(steps, start=1):
+                trace.emit("thought", step=step, position=position, of=len(steps), method=method)
+            trace.emit(
+                "route",
+                route=list(decision.route),
+                sectors=list(decision.sectors),
+                method=decision.method,
+                out_of_scope=decision.out_of_scope,
+                relevance={agent: round(score, 3) for agent, score in decision.relevance.items()},
+            )
         patch = decision.as_state_patch()
         log.info("routed to %s (%s)", decision.route, decision.method)
         if decision.out_of_scope:
@@ -139,8 +159,16 @@ def build_graph(deps: AgentDeps, *, use_llm_router: bool = True) -> Any:
         builder.add_node(agent, _wrap(agent, node, deps))
 
     async def merge_node(state: AgentState) -> dict[str, Any]:
-        result = await merge(state, deps.llm)
-        return result.as_state_patch()
+        with trace.node("merge"):
+            result = await merge(state, deps.llm)
+            patch = result.as_state_patch()
+            trace.emit(
+                "merge",
+                confidence=round(float(patch.get("final_confidence", 0.0)), 3),
+                evidence_count=len(patch.get("merged_evidence", []) or []),
+                degraded=bool(patch.get("degraded", False)),
+            )
+        return patch
 
     builder.add_node("merge", merge_node)
 
@@ -170,25 +198,58 @@ def _wrap(agent: AgentName, node: AgentNode, deps: AgentDeps) -> Callable[[Agent
     """
 
     async def run(state: AgentState) -> dict[str, Any]:
-        try:
-            return await asyncio.wait_for(node(state, deps), timeout=NODE_TIMEOUT_S)
-        except TimeoutError:
-            reason = f"exceeded its {NODE_TIMEOUT_S:.0f}s slice of the response-time budget"
-            log.warning("%s timed out", agent)
-            return {
-                "agent_outputs": {agent: failed_output(agent, reason)},
-                "errors": [f"{agent}: {reason}"],
-                "degraded": True,
-            }
-        except Exception as exc:  # noqa: BLE001 - one node must not fail the invocation
-            log.exception("%s raised", agent)
-            return {
-                "agent_outputs": {agent: failed_output(agent, str(exc))},
-                "errors": [f"{agent}: {exc}"],
-                "degraded": True,
-            }
+        # `trace.node` both times the agent and attributes everything emitted
+        # beneath it — a Cypher query from three layers down inside kg/client.py
+        # carries this agent's name rather than arriving unattributed in the
+        # middle of a five-way fan-out.
+        with trace.node(agent):
+            try:
+                patch = await asyncio.wait_for(node(state, deps), timeout=NODE_TIMEOUT_S)
+            except TimeoutError:
+                reason = f"exceeded its {NODE_TIMEOUT_S:.0f}s slice of the response-time budget"
+                log.warning("%s timed out", agent)
+                trace.emit("agent_result", status="timeout", error=reason)
+                return {
+                    "agent_outputs": {agent: failed_output(agent, reason)},
+                    "errors": [f"{agent}: {reason}"],
+                    "degraded": True,
+                }
+            except Exception as exc:  # noqa: BLE001 - one node must not fail the invocation
+                log.exception("%s raised", agent)
+                trace.emit("agent_result", status="failed", error=str(exc))
+                return {
+                    "agent_outputs": {agent: failed_output(agent, str(exc))},
+                    "errors": [f"{agent}: {exc}"],
+                    "degraded": True,
+                }
+
+            output = (patch.get("agent_outputs") or {}).get(agent, {})
+            trace.emit(
+                "agent_result",
+                status="declined" if output.get("error") else "ok",
+                confidence=round(float(output.get("confidence", 0.0)), 3),
+                figures=len(output.get("figures", {}) or {}),
+                evidence_count=len(output.get("evidence", []) or []),
+                degraded=bool(output.get("degraded", False)),
+                error=output.get("error"),
+            )
+            return patch
 
     return run
+
+
+async def _plan_steps(query: str, deps: AgentDeps) -> tuple[list[str], str]:
+    """The plan to show, never a reason to fail.
+
+    Wrapped rather than called directly because `planner.plan` is the one thing
+    in this node whose only job is presentation — a query must still be answered
+    if it raises.
+    """
+    try:
+        return await planner.plan(query, deps.llm)
+    except Exception:  # noqa: BLE001 - a plan must never fail a query
+        log.warning("planner raised; answering without a plan", exc_info=True)
+        return [], "none"
 
 
 async def _decide_route(state: AgentState, deps: AgentDeps, use_llm: bool) -> RouteDecision:
