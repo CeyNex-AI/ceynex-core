@@ -25,7 +25,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from ceynex.chat import instructions
 from ceynex.chat.store import Message
+from ceynex.observability import context as obs
 from ceynex.observability import trace
 from ceynex.orchestrator.grounding import ungrounded_figures
 
@@ -36,14 +38,21 @@ log = logging.getLogger(__name__)
 #: but bounded, because a conversation about a long answer runs this every turn.
 MAX_CONTEXT_CHARS = 6000
 
-DISCUSS_SYSTEM = """You are discussing an analysis of Sri Lanka's export economy
+# Split the way `merger.merge_system` is, and for the same reason (D15): a
+# reader's standing instruction may replace the *presentation* rule and nothing
+# else. Rules 1-4 are what make a discussion a discussion of *this* analysis —
+# no new figures, no quiet corrections, no guessing, no scope creep — and rule 6
+# is the advice disclaimer. `discuss_system()` assembles those around whatever
+# presentation block it is given, so an instruction cannot reach them.
+DISCUSS_PREAMBLE = """You are discussing an analysis of Sri Lanka's export economy
 that has already been produced. The reader is looking at it.
 
 You are given the question that was asked, the answer that was given, and the
 evidence behind it. Answer the reader's follow-up about that material.
 
-Absolute rules:
-1. Every number you state must already appear in the material you were given.
+Absolute rules:"""
+
+DISCUSS_RULES_INVIOLABLE = """1. Every number you state must already appear in the material you were given.
    Never estimate, never round to a different figure, never add one from your own
    knowledge. If the follow-up asks for a number that is not there, say it was
    not part of this analysis.
@@ -52,9 +61,27 @@ Absolute rules:
 3. If the follow-up cannot be answered from this material, say so plainly and say
    what would need to be looked up. Do not guess.
 4. Answer only what was asked. A request to shorten something is not a request to
-   re-analyse it.
-5. Plain English for a policymaker who is not an economist.
-6. You describe data. You do not give financial, legal or investment advice."""
+   re-analyse it."""
+
+DISCUSS_RULES_PRESENTATION = """5. Plain English for a policymaker who is not an economist."""
+
+DISCUSS_RULES_DISCLAIMER = """6. You describe data. You do not give financial, legal or investment advice."""
+
+
+def discuss_system(presentation: str = DISCUSS_RULES_PRESENTATION) -> str:
+    """The discuss prompt, with only its presentation rule swappable.
+
+    The default is the exact string this prompt has always been, asserted in
+    `tests/chat/test_turn.py`, so a reader with no instruction gets precisely the
+    discussion they got before instructions reached this path.
+    """
+    return (
+        f"{DISCUSS_PREAMBLE}\n{DISCUSS_RULES_INVIOLABLE}\n{presentation}\n"
+        f"{DISCUSS_RULES_DISCLAIMER}"
+    )
+
+
+DISCUSS_SYSTEM = discuss_system()
 
 
 @dataclass
@@ -135,6 +162,26 @@ def _context(prior: Message, prior_query: str) -> str:
     return "\n".join(lines)[:MAX_CONTEXT_CHARS]
 
 
+def _system_for_this_reader() -> str:
+    """The discuss prompt, carrying this reader's instruction if they set one.
+
+    Read from the request's ambient context, the way `graph.merge_node` reads it,
+    so the two prose-writing calls honour the same preference. Empty — the common
+    case — returns `DISCUSS_SYSTEM` exactly. The trace records that one was
+    applied and how long it was, never its text: the reader wrote it and can see
+    it already, and a stored trace is not the place to keep a second copy.
+    """
+    instruction = obs.current_instruction()
+    if not instruction:
+        return DISCUSS_SYSTEM
+    trace.emit("instruction", applied=True, chars=len(instruction))
+    return discuss_system(
+        instructions.presentation_block(
+            instruction, DISCUSS_RULES_PRESENTATION, replaces="rule 5"
+        )
+    )
+
+
 def _degraded_answer(prior: Message) -> str:
     return (
         "Answering follow-up questions needs the language model, which is not "
@@ -157,7 +204,7 @@ async def discuss(follow_up: str, prior: Message, prior_query: str, llm) -> Disc
 
     user = f"{_context(prior, prior_query)}\n\nFollow-up: {follow_up}"
     try:
-        text = await llm.generate("chat", DISCUSS_SYSTEM, user)
+        text = await llm.generate("chat", _system_for_this_reader(), user)
     except Exception as exc:  # noqa: BLE001 - a follow-up must never fail the conversation
         log.warning("discuss call raised: %s", exc)
         trace.emit("discuss", status="degraded", reason=str(exc))
@@ -188,4 +235,13 @@ async def discuss(follow_up: str, prior: Message, prior_query: str, llm) -> Disc
     return DiscussResult(text, degraded=False, evidence=evidence)
 
 
-__all__ = ["DISCUSS_SYSTEM", "MAX_CONTEXT_CHARS", "DiscussResult", "discuss"]
+__all__ = [
+    "DISCUSS_RULES_DISCLAIMER",
+    "DISCUSS_RULES_INVIOLABLE",
+    "DISCUSS_RULES_PRESENTATION",
+    "DISCUSS_SYSTEM",
+    "MAX_CONTEXT_CHARS",
+    "DiscussResult",
+    "discuss",
+    "discuss_system",
+]

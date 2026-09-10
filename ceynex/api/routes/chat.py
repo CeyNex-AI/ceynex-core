@@ -55,7 +55,7 @@ from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.query_runner import OrchestrationError, QueryOutcome, run_query
 from ceynex.api.routes.auth import TokenPayload, get_optional_user, require_user
 from ceynex.api.schemas import ChatStreamRequest, ClarifyAnswerRequest
-from ceynex.chat import clarify, classify, store, titles, turn
+from ceynex.chat import clarify, classify, instructions, store, titles, turn
 from ceynex.observability import context as obs
 from ceynex.observability import ledger, trace
 
@@ -388,8 +388,14 @@ async def _discuss_stream(
     Still a stream rather than a plain response, so the client has one transport
     and one set of frame handlers regardless of which path a turn takes.
     """
+    # The reader's standing instruction, read the way `run_query` reads it for
+    # the analyse path — without it a reader who asked for bullet points got them
+    # on the first answer and plain prose on every follow-up.
+    instruction, instruction_on = await instructions.get(user_email)
     observation = obs.RequestObservability(
-        user_email=user_email, conversation_id=conversation_id
+        user_email=user_email,
+        conversation_id=conversation_id,
+        instruction=instruction if instruction_on else "",
     )
     token = obs.install(observation)
     try:
