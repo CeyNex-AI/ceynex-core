@@ -60,6 +60,31 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     elapsed_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
     called_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Deliberately SET NULL, not CASCADE — the opposite choice from
+-- chat_trace_event, and for a reason. A trace is *about* a conversation and
+-- dies with it. A spend record is about money, and should outlive the thing it
+-- was spent on: deleting a conversation must not delete the evidence that it
+-- cost something. The link goes, the row stays.
+--
+-- Postgres has no ADD CONSTRAINT IF NOT EXISTS, and CREATE TABLE IF NOT EXISTS
+-- is a no-op against a table that already exists, so this is the idempotent
+-- form — the same pattern chat_trace_event's foreign key uses.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'llm_usage_conversation_fk'
+    ) THEN
+        UPDATE llm_usage u
+        SET conversation_id = NULL
+        WHERE u.conversation_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM chat_conversation c WHERE c.id = u.conversation_id);
+
+        ALTER TABLE llm_usage
+            ADD CONSTRAINT llm_usage_conversation_fk
+            FOREIGN KEY (conversation_id) REFERENCES chat_conversation(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS llm_usage_user_day_idx ON llm_usage (user_email, called_at DESC);
 CREATE INDEX IF NOT EXISTS llm_usage_request_idx ON llm_usage (request_id);
 CREATE INDEX IF NOT EXISTS llm_usage_role_model_idx ON llm_usage (role, model, called_at DESC);

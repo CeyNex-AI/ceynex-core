@@ -115,4 +115,9 @@ async def submit_query(
     except OrchestrationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return outcome.response
+    response = outcome.response
+    # Deferred from Phase 1 deliberately: the ledger recorded this from the
+    # start, but adding a field to a shape `ceynex-web` binds to before there
+    # was anywhere to show it would have been a contract change for nothing.
+    response.usage = outcome.usage.as_summary()
+    return response
