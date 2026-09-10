@@ -354,3 +354,105 @@ class CreateApiKeyResponse(BaseModel):
 class RevokeApiKeyResponse(BaseModel):
     id: int
     revoked: bool
+
+
+# --- the conversational layer (deviation D13) --------------------------------
+#
+# Separate from `QueryResponse` on purpose. That shape is what the existing
+# one-shot Query page binds to and is frozen in practice; a conversation is a new
+# surface, and folding turns into the old shape would couple the two so that
+# neither could move.
+
+
+class ConversationSummary(BaseModel):
+    """One row in the past-chats sidebar."""
+
+    id: int
+    title: str | None
+    created_at: str
+    updated_at: str
+    pinned: bool
+    archived: bool
+    message_count: int
+
+
+class ConversationCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=80)
+
+
+class ConversationPatchRequest(BaseModel):
+    """All three optional: a PATCH sets only what it names."""
+
+    title: str | None = Field(default=None, max_length=80)
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+class UsageSummary(BaseModel):
+    """What one turn spent. A cache hit is 0 tokens and $0 — see
+    `ceynex/observability/ledger.py` on why that is correct rather than missing."""
+
+    calls: int = 0
+    cache_hits: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+
+
+class ChatMessageItem(BaseModel):
+    """One turn. A user turn carries `content` and nothing else; an assistant
+    turn carries the whole answer payload so reopening a conversation redisplays
+    the evidence panel, the forecast and the graph rather than just the prose."""
+
+    seq: int
+    role: str
+    content: str
+    created_at: str | None = None
+    mode: str | None = None
+    request_id: str | None = None
+    confidence: float | None = None
+    confidence_band: str | None = None
+    degraded: bool | None = None
+    agents_used: list[str] = Field(default_factory=list)
+    route: list[str] = Field(default_factory=list)
+    sectors: list[str] = Field(default_factory=list)
+    unanswered: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    forecast: list[ForecastPointItem] | None = None
+    graph: AnswerGraph | None = None
+    elapsed_ms: float | None = None
+    usage: UsageSummary | None = None
+    #: Cross-link to the existing `query_history` row, so the chat UI's save
+    #: button calls the untouched `/api/history/{id}/save` rather than a parallel one.
+    query_history_id: int | None = None
+
+
+class ConversationDetail(BaseModel):
+    conversation: ConversationSummary
+    messages: list[ChatMessageItem]
+
+
+class TraceEventItem(BaseModel):
+    """One step of a stored reasoning trace, replayed when a chat is reopened.
+
+    `payload` is open rather than typed per kind: the kinds are a taxonomy that
+    will grow (a web-search step, a clarification step), and freezing the shape
+    here would mean a contract change every time a call site learns to report
+    something new. The frontend renders per `kind` and ignores what it does not
+    recognise.
+    """
+
+    seq: int
+    kind: str
+    node: str | None = None
+    ts: float
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatStreamRequest(BaseModel):
+    """A turn. `conversation_id` is optional so the streaming transport still
+    works for a stateless question — which is what makes it demonstrable before
+    any account exists."""
+
+    query: str = Field(min_length=1, max_length=2000, description="A question in plain English.")
+    conversation_id: int | None = None
