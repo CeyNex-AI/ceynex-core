@@ -18,140 +18,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
-from ceynex.api.auth import DemoUser, issue_token
 from ceynex.api.main import app
-from ceynex.chat import store as real_store
-from tests.api.test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM
-
-OWNER = "policymaker@ceynex.dev"
-OTHER = "researcher@ceynex.dev"
-
-
-class FakeStore:
-    """An in-memory stand-in that enforces ownership the way the real one does.
-
-    It records every `user_email` it is asked for, so a route that forgets to
-    scope its read is caught by an assertion on `seen_emails` rather than by
-    hoping the fixture happens to produce a 404.
-    """
-
-    def __init__(self):
-        self.conversations: dict[int, dict] = {}
-        self.messages: dict[int, list] = {}
-        self.traces: dict[str, list] = {}
-        self.seen_emails: list[str] = []
-        self._next = 1
-
-    async def create(self, user_email, title=None):
-        self.seen_emails.append(user_email)
-        cid = self._next
-        self._next += 1
-        self.conversations[cid] = {
-            "id": cid, "user_email": user_email, "title": title,
-            "pinned": False, "archived": False,
-        }
-        self.messages[cid] = []
-        return cid
-
-    async def list_for_user(self, user_email, *, limit=50, include_archived=False):
-        self.seen_emails.append(user_email)
-        return [
-            real_store.Conversation(
-                id=c["id"], title=c["title"], created_at="2026-09-10T00:00:00+00:00",
-                updated_at="2026-09-10T00:00:00+00:00", pinned=c["pinned"],
-                archived=c["archived"],
-                message_count=sum(1 for m in self.messages[c["id"]] if m.role == "user"),
-            )
-            for c in self.conversations.values()
-            if c["user_email"] == user_email and (include_archived or not c["archived"])
-        ]
-
-    async def messages_for(self, conversation_id, user_email):
-        self.seen_emails.append(user_email)
-        c = self.conversations.get(conversation_id)
-        if c is None or c["user_email"] != user_email:
-            return None
-        return list(self.messages[conversation_id])
-
-    async def update(self, conversation_id, user_email, *, title=None, pinned=None, archived=None):
-        self.seen_emails.append(user_email)
-        c = self.conversations.get(conversation_id)
-        if c is None or c["user_email"] != user_email:
-            return False
-        if title is not None:
-            c["title"] = title
-        if pinned is not None:
-            c["pinned"] = pinned
-        if archived is not None:
-            c["archived"] = archived
-        return True
-
-    async def delete(self, conversation_id, user_email):
-        self.seen_emails.append(user_email)
-        c = self.conversations.get(conversation_id)
-        if c is None or c["user_email"] != user_email:
-            return False
-        del self.conversations[conversation_id]
-        del self.messages[conversation_id]
-        return True
-
-    async def owns(self, conversation_id, user_email):
-        self.seen_emails.append(user_email)
-        c = self.conversations.get(conversation_id)
-        return c is not None and c["user_email"] == user_email
-
-    async def append(self, conversation_id, user_email, messages):
-        self.seen_emails.append(user_email)
-        c = self.conversations.get(conversation_id)
-        if c is None or c["user_email"] != user_email:
-            return []
-        seq = len(self.messages[conversation_id])
-        for message in messages:
-            seq += 1
-            message.seq = seq
-            self.messages[conversation_id].append(message)
-        return list(range(seq - len(messages) + 1, seq + 1))
-
-    async def save_trace(self, request_id, conversation_id, events):
-        self.traces[request_id] = list(events)
-
-    async def trace_for(self, request_id):
-        return [
-            {"seq": e.seq, "kind": e.kind, "node": e.node, "ts": e.ts, **e.payload}
-            for e in self.traces.get(request_id, [])
-        ]
+from tests.api.chat_doubles import (
+    OTHER,
+    OWNER,
+    TracingGraph,
+    auth,
+    install_fake_store,
+)
+from tests.api.chat_doubles import frames as _frames
+from tests.api.chat_doubles import stream as _stream
+from tests.api.test_query import ANSWERED, FakeKG, FakeLLM
 
 
 @pytest.fixture
 def fake_store(monkeypatch):
-    fake = FakeStore()
-    for module in ("ceynex.api.routes.conversations", "ceynex.api.routes.chat"):
-        monkeypatch.setattr(f"{module}.store.create", fake.create)
-        monkeypatch.setattr(f"{module}.store.list_for_user", fake.list_for_user)
-        monkeypatch.setattr(f"{module}.store.messages", fake.messages_for)
-        monkeypatch.setattr(f"{module}.store.update", fake.update)
-        monkeypatch.setattr(f"{module}.store.delete", fake.delete)
-        monkeypatch.setattr(f"{module}.store.owns", fake.owns)
-        monkeypatch.setattr(f"{module}.store.append", fake.append)
-        monkeypatch.setattr(f"{module}.store.save_trace", fake.save_trace)
-        monkeypatch.setattr(f"{module}.store.trace_for", fake.trace_for)
-    return fake
-
-
-class TracingGraph(FakeGraph):
-    """A fake graph that also emits a trace event.
-
-    `FakeGraph` alone produces an empty sink, which would let the
-    trace-persistence tests below pass while persisting nothing. Standing in for
-    the graph means standing in for what the graph reports, too.
-    """
-
-    async def ainvoke(self, state):
-        from ceynex.observability import trace
-
-        with trace.node("export_analytics"):
-            trace.emit("kg_query", cypher="MATCH (n) RETURN n", row_count=1, status="ok")
-        return await super().ainvoke(state)
+    return install_fake_store(monkeypatch)
 
 
 @pytest.fixture
@@ -165,11 +47,6 @@ def client():
         yield TestClient(app)
     finally:
         deps_module.set_runtime(None)
-
-
-def auth(email=OWNER, role="policymaker"):
-    token = issue_token(DemoUser(email=email, role=role, password_hash=b""))
-    return {"authorization": f"Bearer {token}"}
 
 
 # --- authentication is required -------------------------------------------
@@ -279,19 +156,6 @@ def test_chat_routes_disappear_when_chat_is_off(client, fake_store, monkeypatch)
 
 
 # --- turns inside a conversation ------------------------------------------
-
-
-def _frames(response):
-    from tests.api.test_chat_stream import parse_frames
-
-    return dict(parse_frames(response.text))
-
-
-def _stream(client, query, conversation_id=None, headers=None):
-    body = {"query": query}
-    if conversation_id is not None:
-        body["conversation_id"] = conversation_id
-    return client.post("/api/chat/stream", json=body, headers=headers or auth())
 
 
 def test_a_conversation_id_requires_a_signed_in_user(client, fake_store):
