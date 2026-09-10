@@ -58,7 +58,7 @@ async def _enforce_auth_rate_limit(http_request: Request, *, email: str | None) 
 
     limit = int(config.get("attempts_per_minute", 10))
     window_s = int(config.get("window_seconds", 60))
-    host = http_request.client.host if http_request.client else None
+    host = rate_limit.client_ip(http_request)
 
     # The `auth:` prefix keeps these off `POST /api/query`'s Redis keys (see
     # routes/news.py for the same reasoning). Both an IP counter and an email
