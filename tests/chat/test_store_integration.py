@@ -364,3 +364,24 @@ async def test_a_regenerated_answer_links_to_the_version_it_replaces():
     assert messages[2].regenerated_from == messages[1].id
     # Both versions are kept: Regenerate adds, it never overwrites.
     assert {m.request_id for m in messages[1:]} == {"r1", "r2"}
+
+
+async def test_a_shared_transcript_shows_each_questions_latest_answer():
+    """A reader of a shared link cannot switch between versions, so the replaced
+    answer is not shown — and the one that replaced it says so."""
+    conversation_id = await store.create(TEST_USER)
+    first_ids = await store.append(conversation_id, TEST_USER,
+                                   [store.Message(role="user", content="q"),
+                                    _answer_message("r1")])
+    second = _answer_message("r2")
+    second.content = "A regenerated answer."
+    second.regenerated_from = first_ids[1]
+    await store.append(conversation_id, TEST_USER, [second])
+    token = await store.set_share_token(conversation_id, TEST_USER, "share-it-test")
+    assert token == "share-it-test"
+
+    shared = await store.shared_conversation("share-it-test")
+    assert [m["role"] for m in shared["messages"]] == ["user", "assistant"]
+    assert shared["messages"][1]["content"] == "A regenerated answer."
+    assert shared["messages"][1]["regenerated"] is True
+    assert all("id" not in m and "user_email" not in m for m in shared["messages"])

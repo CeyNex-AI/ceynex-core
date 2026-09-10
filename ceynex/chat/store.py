@@ -427,6 +427,30 @@ async def owns(conversation_id: int, user_email: str) -> bool:
         raise ChatStoreUnavailableError(f"could not verify conversation: {exc}") from exc
 
 
+def _conversation_of_sync(message_id: int, user_email: str) -> int | None:
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.conversation_id FROM chat_message m "
+            "JOIN chat_conversation c ON c.id = m.conversation_id "
+            "WHERE m.id = %s AND c.user_email = %s",
+            (message_id, user_email),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else None
+
+
+async def conversation_of(message_id: int, user_email: str) -> int | None:
+    """The conversation a message belongs to — if it belongs to this user.
+
+    Scoped in the statement, like every read here: a message id is a guessable
+    serial, and "no such message" and "not yours" are the same None.
+    """
+    try:
+        return await asyncio.to_thread(_conversation_of_sync, message_id, user_email)
+    except psycopg.Error as exc:
+        raise ChatStoreUnavailableError(f"could not find message: {exc}") from exc
+
+
 # --- messages -------------------------------------------------------------
 
 
@@ -803,15 +827,37 @@ def _shared_sync(token: str) -> dict[str, Any] | None:
         # system did, not who asked.
         cur.execute(
             """
-            SELECT seq, role, content, mode, request_id, confidence, confidence_band,
+            SELECT id, seq, role, content, mode, request_id, confidence, confidence_band,
                    degraded, agents_used, route, sectors, unanswered, evidence,
-                   forecast, graph, elapsed_ms
+                   forecast, graph, elapsed_ms, confidence_breakdown, grounded,
+                   effective_query, regenerated_from
             FROM chat_message WHERE conversation_id = %s ORDER BY seq
             """,
             (conversation["id"],),
         )
-        conversation["messages"] = cur.fetchall()
+        conversation["messages"] = _latest_versions(cur.fetchall())
         return conversation
+
+
+def _latest_versions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each question's latest answer, for a reader who cannot switch versions.
+
+    A regenerated answer is kept beside the one it replaced (the owner can page
+    between them), but a shared transcript that showed both would read as two
+    answers to one question. So a replaced answer is dropped, and its
+    replacement says it is one — hiding the fact of a regenerate would be its
+    own small misstatement of what the system did. Row ids stay out of it.
+    """
+    replaced = {row["regenerated_from"] for row in rows if row.get("regenerated_from")}
+    latest = []
+    for row in rows:
+        if row["id"] in replaced:
+            continue
+        shown = {key: value for key, value in row.items() if key not in ("id", "regenerated_from")}
+        if row.get("regenerated_from"):
+            shown["regenerated"] = True
+        latest.append(shown)
+    return latest
 
 
 async def record_feedback(message_id: int, user_email: str, rating: int, reason: str = "") -> bool:
@@ -856,6 +902,7 @@ __all__ = [
     "last_answer",
     "list_for_user",
     "messages",
+    "conversation_of",
     "owns",
     "set_title_if_unset",
     "save_trace",
