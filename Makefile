@@ -12,6 +12,14 @@ CONTRACTS_SPEC ?= -e ../ceynex-contracts
 # project code goes through this.
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
 
+# The policy retriever's models come from the Hugging Face Hub on first use
+# (into /tmp/fastembed_cache, which does not survive a reboot). Measured
+# 2026-09-11: the Hub's xet transfer path stalled indefinitely on this network
+# with 0-byte blobs and idle sockets, which hung `make eval` for 17 minutes
+# before its first model call; the plain HTTP path downloaded the same files at
+# ~320 KB/s. Off unless the environment says otherwise.
+export HF_HUB_DISABLE_XET ?= 1
+
 install:
 	$(PYTHON) -m pip install $(CONTRACTS_SPEC)
 	$(PYTHON) -m pip install -e ".[dev,docs]"
