@@ -1,0 +1,99 @@
+# The multi-turn evaluation set (execution plan §5 item 9).
+#
+# The 30 one-shot questions in questions.yaml cannot see anything the
+# conversational layer does: they never open a conversation, never follow up,
+# never trigger the clarification gate and never stream a sentence. This set
+# does. Each conversation is driven through the turn runner exactly as the chat
+# endpoint drives it (eval/chat_harness.py), and every turn is scored against
+# what was written down here before it ran.
+#
+# What a turn can expect:
+#   mode:                discuss | analyse — what the classifier should decide.
+#                        A first turn has no prior answer and is always analyse.
+#   standalone_contains: substrings the rewritten standalone query must carry
+#                        (an analyse follow-up only). Case-insensitive.
+#   route:               agents the re-run must include (an analyse turn only).
+#   clarify:             true when the gate should ask one question back.
+#   grounded:            true when a discuss reply must not be withdrawn.
+#   refused_ok:          true when a decline is an acceptable analyse outcome
+#                        (an out-of-scope or no-data question).
+#
+# First turns are drawn from questions.yaml and queries.md, so their one-shot
+# behaviour is already known; what is new is everything after them.
+
+conversations:
+  - id: C01
+    title: a plain follow-up is discussed, not re-run
+    turns:
+      - query: Which country takes the largest share of Sri Lanka's tea exports?
+        expect: {mode: analyse, route: [export_analytics]}
+      - query: Explain that in plain terms for someone who is not an economist.
+        expect: {mode: discuss, grounded: true}
+      - query: Why is the confidence what it is?
+        expect: {mode: discuss, grounded: true}
+
+  - id: C02
+    title: now-the-same-for-X is a new analysis with the item swapped
+    turns:
+      - query: How fast have cinnamon exports grown over the last five years?
+        expect: {mode: analyse, route: [export_analytics]}
+      - query: Now do the same for rubber.
+        expect: {mode: analyse, standalone_contains: [rubber], route: [export_analytics]}
+      - query: Which of the two is more concentrated in a single market?
+        expect: {mode: analyse, standalone_contains: [rubber]}
+
+  - id: C03
+    title: a market follow-up carries the market into the rewrite
+    turns:
+      - query: Which markets buy the most Sri Lankan knitted apparel?
+        expect: {mode: analyse, route: [export_analytics]}
+      - query: What about the United Kingdom specifically?
+        expect: {mode: analyse, standalone_contains: [united kingdom, apparel]}
+      - query: Summarise both answers in two sentences.
+        expect: {mode: discuss, grounded: true}
+
+  - id: C04
+    title: a simulation, then its assumptions questioned
+    turns:
+      - query: What happens to apparel export revenue if Sri Lanka loses GSP+?
+        expect: {mode: analyse, route: [trade_economics]}
+      - query: What tariff rate did that assume, and where does it come from?
+        expect: {mode: discuss, grounded: true}
+      - query: And if the rupee also fell 10%?
+        expect: {mode: analyse, standalone_contains: ["10%"], route: [trade_economics]}
+
+  - id: C05
+    title: the clarification gate fires on two items and is silent after
+    turns:
+      - query: How are tea and cinnamon exports doing?
+        expect: {clarify: true}
+      - query: Which country takes the largest share of Sri Lanka's tea exports?
+        expect: {mode: analyse, route: [export_analytics]}
+
+  - id: C06
+    title: a decline can still be discussed without re-running the fan-out
+    turns:
+      - query: What were Sri Lanka's tea exports in 2035?
+        expect: {mode: analyse, refused_ok: true}
+      - query: Why couldn't that be answered?
+        expect: {mode: discuss, grounded: true}
+
+  - id: C07
+    title: a forecast, then a question about its interval
+    turns:
+      - query: Forecast tea export earnings for the next three years.
+        expect: {mode: analyse, route: [forecast]}
+      - query: How wide is the uncertainty band, and what does it mean?
+        expect: {mode: discuss, grounded: true}
+      - query: Do the same forecast for knitted apparel.
+        expect: {mode: analyse, standalone_contains: [apparel], route: [forecast]}
+
+  - id: C08
+    title: cross-sector, then narrowed to one side
+    turns:
+      - query: Which sector is more dependent on the European Union, agriculture or apparel?
+        expect: {mode: analyse}
+      - query: Give me just the agriculture side of that.
+        expect: {mode: discuss, grounded: true}
+      - query: How has that dependence changed since 2020?
+        expect: {mode: analyse, standalone_contains: [european union]}
