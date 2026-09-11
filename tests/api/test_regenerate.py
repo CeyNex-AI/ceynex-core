@@ -199,6 +199,10 @@ def test_an_analysis_is_regenerated_by_running_the_graph_again(client, fake_stor
 
     assert graph.runs == 2, "the regenerate must run the graph, not replay it"
     assert graph.bypassed[-1] == frozenset({"merge"}), "the merge must not reuse its answer"
+    # The `turn` frame names the question that is re-run, the way an analyse
+    # turn's does — the page fetches related news for it, and searched for ""
+    # when this was missing.
+    assert _frames(response)["turn"]["standalone_query"] == "cinnamon export trend"
     assert graph.bypassed[0] == frozenset(), "an ordinary turn reads the cache as always"
     assert done["regenerated_from"] == first_answer.id
     assert done["user_message_id"] is None, "the question is not stored twice"

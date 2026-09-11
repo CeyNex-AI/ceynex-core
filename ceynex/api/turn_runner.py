@@ -359,7 +359,12 @@ async def _regenerate(turn_log, request, plan: RegeneratePlan, sink, publish,
     """A fresh answer to the latest question, kept beside the one it replaces."""
     await publish("turn", {"mode": plan.mode, "method": "regenerate",
                            "reason": "a fresh answer to the same question",
-                           "regenerates": plan.target.id})
+                           "regenerates": plan.target.id,
+                           # The question the graph re-runs, as an ordinary analyse
+                           # turn's frame names it. The page keys related news off
+                           # this; without it a regenerate searched for "".
+                           "standalone_query": plan.question.asked
+                           if plan.mode == "analyse" else None})
     if plan.mode == "discuss":
         # The prompt cache would hand back the discussion being replaced.
         observation.bypass_cache_roles = frozenset({"chat"})
