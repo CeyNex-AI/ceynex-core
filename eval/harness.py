@@ -30,6 +30,16 @@ say so rather than inventing one.
 **Degraded-mode correctness** — the same set with the LLM unavailable must still
 return figures and evidence (SRS 3.4.3), not exceptions.
 
+**Citation discipline** — when `CEYNEX_CITATIONS=on` puts `[n]` markers in the
+prose, every marker must index a real evidence entry and every sentence that
+states a figure should carry one. Reported whether or not markers were present,
+so a run with the flag off and a run with it on have the same shape.
+
+**Repeated runs** — `--repeat N --cold` runs the set N times with the prompt
+cache cleared before each, and `eval/repeat.py` reports medians and spread.
+§8 of `docs/EVALUATION.md` measured why: one run's difference of one question
+is inside the noise floor and is not a result.
+
 This measures the machine. Merge coherence needs human raters and lives in
 `eval/coherence.py`.
 """
@@ -82,6 +92,15 @@ REFUSAL_MARKERS = (
 # Re-exported here because this name was part of the harness first.
 NUMBER = grounding.NUMBER
 
+# An inline citation marker, exactly as `CitedAnswer.tsx` recognises one, so the
+# harness counts the same markers a reader would see linked.
+CITATION = re.compile(r"\[(\d{1,2})\]")
+
+# A sentence boundary for the citation metric: terminal punctuation, optional
+# closing quote or bracket, then whitespace. Crude, and the same in both
+# directions — a mis-split sentence costs at most one count either way.
+SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+
 
 @dataclass
 class Result:
@@ -103,6 +122,11 @@ class Result:
     ungrounded_figures: list[str] = field(default_factory=list)
     refused: bool = False
     error: str | None = None
+    #: Inline citations (`CEYNEX_CITATIONS`). All zero when the flag is off.
+    citations_total: int = 0
+    citations_valid: int = 0
+    figure_sentences: int = 0
+    figure_sentences_cited: int = 0
 
     @property
     def route_exact(self) -> bool:
@@ -164,6 +188,7 @@ async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
         answer=text,
         ungrounded_figures=ungrounded(text, evidence),
         refused=is_refusal(text, result),
+        **citation_counts(text, len(evidence)),
     )
 
 
@@ -190,6 +215,49 @@ def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
         answer,
         [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence],
     )
+
+
+def strip_citations(text: str) -> str:
+    """The prose without its `[n]` markers.
+
+    `grounding.STRUCTURAL_DIGIT_LIMIT` already keeps a two-digit marker out of
+    the ungrounded check, so this is not needed for grounding; it is needed so a
+    marker's digits are never mistaken for a figure by the sentence count below.
+    """
+    return CITATION.sub("", text or "")
+
+
+def citation_counts(answer: str, evidence_count: int) -> dict[str, int]:
+    """How disciplined the prose's citations are.
+
+    - `citations_total` / `citations_valid`: every `[n]` and how many of them
+      index an evidence entry that exists (1 ≤ n ≤ evidence_count). A marker
+      pointing past the list is the citation equivalent of an invented figure.
+    - `figure_sentences` / `figure_sentences_cited`: sentences stating a figure
+      — a digit string longer than `STRUCTURAL_DIGIT_LIMIT` — and how many of
+      them carry at least one marker.
+    """
+    markers = [int(m) for m in CITATION.findall(answer or "")]
+    valid = sum(1 for n in markers if 1 <= n <= evidence_count)
+
+    figure_sentences = cited = 0
+    for sentence in SENTENCE_BOUNDARY.split(answer or ""):
+        bare = strip_citations(sentence)
+        has_figure = any(
+            len(raw.replace(",", "").lstrip("-").replace(".", "")) > grounding.STRUCTURAL_DIGIT_LIMIT
+            for raw in NUMBER.findall(bare)
+        )
+        if not has_figure:
+            continue
+        figure_sentences += 1
+        if CITATION.search(sentence):
+            cited += 1
+    return {
+        "citations_total": len(markers),
+        "citations_valid": valid,
+        "figure_sentences": figure_sentences,
+        "figure_sentences_cited": cited,
+    }
 
 
 # The "Not covered:" clause carries two different kinds of gap, and they must be
@@ -276,8 +344,28 @@ def report(results: list[Result]) -> dict[str, Any]:
         },
         "latency_ms": _latency(results),
         "degraded_answers": sum(1 for r in results if r.degraded),
+        "citations": {
+            # Present in every run, marker or not, so an "off" run and an "on"
+            # run summarise to the same shape and can be diffed field for field.
+            "answers_with_markers": sum(1 for r in answerable if r.citations_total),
+            "marker_valid_rate": _ratio(
+                sum(r.citations_valid for r in answerable),
+                sum(r.citations_total for r in answerable),
+            ),
+            "figure_sentences_cited_rate": _ratio(
+                sum(r.figure_sentences_cited for r in answerable),
+                sum(r.figure_sentences for r in answerable),
+            ),
+        },
     }
     return summary
+
+
+def _ratio(numerator: int, denominator: int) -> dict[str, Any]:
+    """Like `_rate`, for counts that are already summed."""
+    if not denominator:
+        return {"rate": None, "of": 0}
+    return {"rate": round(numerator / denominator, 4), "of": denominator}
 
 
 def _rate(flags: list[bool]) -> dict[str, Any]:
@@ -364,6 +452,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--id", help="run a single question by id")
     parser.add_argument("--degraded", action="store_true", help="force the LLM unavailable (SRS 3.4.3)")
     parser.add_argument("--json", type=Path, help="write full results here")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="run the set this many times and report medians (eval/repeat.py)")
+    parser.add_argument("--cold", action="store_true",
+                        help="clear the prompt cache before each run, so every call is paid for")
+    parser.add_argument("--json-dir", type=Path,
+                        help="with --repeat: write run-N.json per run and summary.json here")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
@@ -376,19 +470,42 @@ def main(argv: list[str] | None = None) -> int:
     if not questions:
         print("no questions matched", file=sys.stderr)
         return 2
+    if args.repeat < 1:
+        print("--repeat must be at least 1", file=sys.stderr)
+        return 2
 
-    results = asyncio.run(run_all(questions, use_llm=not args.degraded))
-    summary = report(results)
-    print(render(results, summary))
+    from eval import repeat as repeat_mod
 
-    if args.json:
-        args.json.write_text(
-            json.dumps(
-                {"degraded_run": args.degraded, "summary": summary, "results": [asdict(r) for r in results]},
-                indent=2,
-            )
-        )
-        print(f"wrote {args.json}")
+    summaries: list[dict[str, Any]] = []
+    runs: list[list[dict[str, Any]]] = []
+    for index in range(1, args.repeat + 1):
+        if args.cold:
+            cleared = repeat_mod.clear_prompt_cache()
+            print(f"run {index}/{args.repeat}: cleared {cleared} cached completions")
+        results = asyncio.run(run_all(questions, use_llm=not args.degraded))
+        summary = report(results)
+        print(render(results, summary))
+        payload = {
+            "degraded_run": args.degraded,
+            "summary": summary,
+            "results": [asdict(r) for r in results],
+        }
+        summaries.append(summary)
+        runs.append(payload["results"])
+
+        target = args.json
+        if args.json_dir:
+            args.json_dir.mkdir(parents=True, exist_ok=True)
+            target = args.json_dir / f"run-{index}.json"
+        if target:
+            target.write_text(json.dumps(payload, indent=2))
+            print(f"wrote {target}")
+
+    if args.repeat > 1 or args.json_dir:
+        out_dir = args.json_dir or (args.json.parent if args.json else Path("."))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        written = repeat_mod.write_repeat_summary(out_dir, summaries, runs, degraded=args.degraded)
+        print(f"wrote {written}")
 
     return 0
 
