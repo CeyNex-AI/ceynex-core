@@ -77,7 +77,15 @@ class TurnResult:
     clarified: bool
     grounded: bool | None
     degraded: bool
+    #: A decline: no prose, or no evidence at all — the shape of the
+    #: out-of-scope and no-data refusals. A partial answer that states a limit
+    #: (SAD §4.1) is *not* a refusal and is scored as answered. Confidence is
+    #: recorded but deliberately not used here: on a stack missing a series, a
+    #: co-routed agent's decline drags a good answer's score under 0.10.
     refused: bool
+    stated_limit: bool
+    confidence: float | None
+    evidence_count: int
     frames: int
     answer_deltas: int
     elapsed_ms: float
@@ -143,7 +151,11 @@ def score_turn(
     route = list(answer.get("route") or [])
     unanswered = list(answer.get("unanswered") or [])
     text = str(answer.get("answer") or "")
-    refused = bool(unanswered) or (mode not in ("clarify", "failed", "cancelled") and not text.strip())
+    confidence = answer.get("confidence")
+    evidence_count = len(answer.get("evidence") or [])
+    refused = mode not in ("clarify", "failed", "cancelled") and (
+        not text.strip() or evidence_count == 0
+    )
 
     checks: dict[str, bool] = {}
     expected_mode = expect.get("mode")
@@ -169,7 +181,7 @@ def score_turn(
             by_event.get("answer_reset")
         )
     if mode in ("analyse", "first") and not expect.get("refused_ok"):
-        checks["answered"] = not refused or mode == "clarify"
+        checks["answered"] = not refused
 
     return TurnResult(
         conversation=conversation,
@@ -184,6 +196,9 @@ def score_turn(
         grounded=answer.get("grounded") if "grounded" in answer else None,
         degraded=bool(answer.get("degraded", False)),
         refused=refused,
+        stated_limit=bool(unanswered),
+        confidence=float(confidence) if confidence is not None else None,
+        evidence_count=evidence_count,
         frames=len(frames),
         answer_deltas=len(by_event.get("answer_delta", [])),
         elapsed_ms=round(elapsed_ms, 1),
@@ -240,6 +255,11 @@ def report(results: list[TurnResult]) -> dict[str, Any]:
         },
         "turns_passing_every_check": rate([r.passed for r in results]),
         "degraded_turns": sum(1 for r in results if r.degraded),
+        # Informational, as in the one-shot harness: stating a limit while still
+        # answering is the behaviour SAD §4.1 asks for.
+        "analyses_that_stated_some_limit": rate(
+            [r.stated_limit for r in results if r.mode in ("first", "analyse")]
+        ),
         "by_mode": by_mode,
     }
 
@@ -370,9 +390,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--degraded", action="store_true",
                         help="force the LLM unavailable: keyword classifier, template gate")
     parser.add_argument("--json", type=Path, help="write full results here")
+    parser.add_argument("--cold", action="store_true",
+                        help="clear the prompt cache first, so every model call is paid for")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.cold:
+        from eval.repeat import clear_prompt_cache
+
+        print(f"cleared {clear_prompt_cache()} cached completions")
     for noisy in ("httpx", "httpcore", "neo4j", "ceynex.observability", "ceynex.api.turn_runner"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 

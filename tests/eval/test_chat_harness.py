@@ -19,7 +19,8 @@ def _frames(*events):
 DONE_ANALYSE = ("done", {
     "failed": False,
     "answer": {"answer": "Iraq took 12.4% of tea exports, USD 170,000,000.", "route": ["export_analytics"],
-               "unanswered": [], "degraded": False},
+               "unanswered": [], "degraded": False, "confidence": 0.7,
+               "evidence": [{"source_id": "KG", "claim": "USD 170,000,000", "detail": "MATCH"}]},
     "usage": {"calls": 3, "cost_usd": 0.0021},
 })
 
@@ -120,10 +121,23 @@ def test_the_gate_is_scored_both_ways():
     assert unexpected.checks["no_clarify"] is False
 
 
+def test_a_partial_answer_that_states_a_limit_is_still_answered():
+    """SAD §4.1: naming what could not be covered while answering the rest is
+    the required behaviour, not a refusal. The first draft scored it as one."""
+    partial = ("done", {"failed": False, "answer": {
+        "answer": "Iraq took 10.9%, USD 149,621,564. Tea volume data is not available.",
+        "route": ["export_analytics"], "confidence": 0.62,
+        "unanswered": ["tea export volume has no usable observations"],
+        "evidence": [{"source_id": "KG", "claim": "USD 149,621,564", "detail": "MATCH"}]}})
+    result = score_turn("C01", 0, {"query": "q", "expect": {"mode": "analyse"}}, _frames(partial), 10.0)
+    assert result.checks["answered"] is True and result.stated_limit and not result.refused
+
+
 def test_a_refusal_is_a_miss_unless_the_set_allows_it():
     declined = ("done", {"failed": False, "answer": {"answer": "That period is not in the record.",
-                                                     "route": ["export_analytics"],
-                                                     "unanswered": ["2035 is not in the record"]}})
+                                                     "route": ["export_analytics"], "confidence": 0.15,
+                                                     "unanswered": ["2035 is not in the record"],
+                                                     "evidence": []}})
     strict = score_turn("C06", 0, {"query": "2035", "expect": {"mode": "analyse"}}, _frames(declined), 10.0)
     assert strict.checks["answered"] is False
     allowed = score_turn("C06", 0, {"query": "2035", "expect": {"mode": "analyse", "refused_ok": True}},

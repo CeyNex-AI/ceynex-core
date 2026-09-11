@@ -67,8 +67,10 @@ conversations:
     turns:
       - query: How are tea and cinnamon exports doing?
         expect: {clarify: true}
-      - query: Which country takes the largest share of Sri Lanka's tea exports?
-        expect: {mode: analyse, route: [export_analytics]}
+      # A forecast cannot be discussed out of a market-share answer, so this
+      # must re-run — and the gate, having asked once, must not ask again.
+      - query: Forecast tea export earnings for the next three years.
+        expect: {mode: analyse, route: [forecast]}
 
   - id: C06
     title: a decline can still be discussed without re-running the fan-out

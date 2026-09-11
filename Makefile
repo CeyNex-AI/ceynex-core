@@ -97,7 +97,7 @@ eval-repeat-cited:
 # clarification gate and the streamed answer, driven through the turn runner
 # in-process against the real store. Needs the docker stack.
 eval-chat:
-	$(PYTHON) -m eval.chat_harness --json eval_chat.json
+	$(PYTHON) -m eval.chat_harness --cold --json eval_chat.json
 
 eval-chat-degraded:
 	$(PYTHON) -m eval.chat_harness --degraded --json eval_chat_degraded.json

@@ -941,3 +941,95 @@ earn its keep. And single-sector p95 ranged from 6.2 s to 11.6 s across six runs
 of the same code with one question (S01, S10 or S11) over 10 s in two of them,
 which is the §8 warning in numbers: no single-run p95 from this set is a
 measurement.
+
+## 10. The conversational layer, measured on conversations
+
+**Measured 2026-09-11, M2**, on the same stack as §9, cold cache. §8 established
+that the layer left the one-shot path unchanged; nothing before this measured the
+layer itself. `eval/conversations.yaml` holds eight conversations, 22 turns,
+with each turn's expected behaviour written down before the run — which path the
+classifier should take, what a rewrite must carry, whether the gate should ask,
+whether a discussion must survive grounding. `eval/chat_harness.py` drives them
+through `api/turn_runner.py` exactly as `POST /api/chat/stream` does, in-process,
+and scores the frames each turn wrote (`make eval-chat`, `make eval-chat-degraded`;
+results in `eval_chat.json` and `eval_chat_degraded.json`).
+
+### Headline
+
+| Metric | LLM (23 turns) | degraded (23 turns) |
+|---|---:|---:|
+| classifier: follow-up took the expected path | **13 of 14** | 12 of 14 |
+| rewrite carried what the reader named | **6 of 6** | 3 of 6 |
+| discussion survived grounding | 6 of 7 | 7 of 7 *(trivially — the degraded discussion is the prior answer)* |
+| gate asked where expected / silent elsewhere | **1 of 1 / 22 of 22** | 1 of 1 / 22 of 22 |
+| turns passing every check | 19 of 23 | 18 of 23 |
+| analyses that stated some limit *(informational, SAD §4.1)* | 12 of 16 | 12 of 17 |
+
+The one clarified turn was answered through the resume path with the template's
+last option ("both"), the composed query ran the graph, and the gate did not ask
+again — the one-round cap holding in a real turn, not a route test.
+
+### Cost and shape, by mode — the number that replaces "3 frames against 22"
+
+That figure, quoted in D13 and in `IMPLEMENTED_FEATURES.md`, was measured before
+`discuss` turns had a trace. With one:
+
+| mode | turns | SSE frames (median) | answer sentences | elapsed p50 | max | model calls | cost per turn |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| first turn (graph) | 8 | 35.5 | 3 | 6.8 s | 7.9 s | 5.25 | $0.0027 |
+| analyse follow-up (graph) | 8 | 32.5 | 3 | 5.8 s | 7.7 s | 5.4 | $0.0027 |
+| discuss follow-up (no graph) | 6 | 8.5 | 2.5 | 2.7 s | 3.9 s | 2 | $0.00025 |
+| clarify (gate only) | 1 | 5 | 0 | 1.3 s | — | 0 | $0 |
+
+A discussion is **8.5 frames against 33, in 2.7 s against 5.8, at a tenth of the
+cost** — two cheap-model calls (classification and the discussion) against five
+and a half. The cost argument in D13 holds; the frame count it quoted does not,
+and is corrected in both places. Degraded mode answers a first turn in 333 ms
+and a discussion in 33 ms, with no model calls at all.
+
+### The four misses, read one at a time
+
+- **C03 turn 1 and turn 2 — the S07 class, again.** *"Which markets buy the most
+  Sri Lankan knitted apparel?"* was routed to `apparel_manufacturing` alone,
+  dropping `export_analytics`, and on this stack (which has no EDB apparel
+  sub-category data) that agent declines, so the turn had no evidence. §8
+  measured this router failure at roughly one run in five on `main`; it landed
+  on the first turn here and again on the rewritten follow-up. The rewrite itself
+  was faithful (the United Kingdom and knitted apparel both carried), though it
+  said "volume" where the reader's original said value — the kind of drift the
+  `standalone_contains` check cannot see and a human reading the transcript can.
+  Not a defect of the conversational layer; the same question one-shot fails
+  the same way.
+- **C07 turn 2 — the grounding guard withheld a derived figure.** *"How wide is
+  the uncertainty band, and what does it mean?"* invites a subtraction, the model
+  performed it, and `ungrounded_figures` rejected the reply for a number no
+  finding stated. That is the guard doing its job (it is also what §9 found
+  citations encourage). It is scored as a miss deliberately: the set expects the
+  system to answer the question from the bounds it *was* given, and it did not.
+- **C08 turn 2 — a defensible classification counted against it.** *"Give me
+  just the agriculture side of that"* was classified `analyse` and re-run as
+  *"What are the export figures for Sri Lanka's agriculture sector to the
+  European Union in 2024?"* — a correct answer, at the cost of a fan-out the
+  previous answer could have supplied. The set says discuss; the model chose to
+  re-analyse; both are honest readings, and the miss is recorded as the set's.
+
+### Degraded mode: the limit is the rewrite, not the classifier
+
+With no model, the keyword classifier still took the expected path 12 times in
+14, and the template gate asked exactly where the LLM gate did. What it cannot do
+is **rewrite**: *"What about the United Kingdom specifically?"* and *"How has that
+dependence changed since 2020?"* went to the graph as typed, named nothing CeyNex
+covers, and were declined as out of scope. A follow-up that depends on the turn
+before it needs the model to make it standalone; SRS 3.4.3's degraded path keeps
+the conversation but not that. Recorded as the line to draw, not a defect to fix.
+
+### What this stack cannot show
+
+The local volumes hold the 2015–2024 Comtrade series and the policy corpus, and
+lack what the deployed host has: the Tea Board and FAOSTAT series, the EDB
+apparel sub-categories and the registered forecast models. Co-routed agents
+decline on those, so **per-answer confidence here is not comparable to
+`queries.md`** (a knitted-apparel market-share answer that scored 0.70 on the
+host scored 0.09 here with the same figures, because two of three agents
+reported no data). That is why the harness scores "answered" as prose plus
+evidence and records confidence without judging it.
