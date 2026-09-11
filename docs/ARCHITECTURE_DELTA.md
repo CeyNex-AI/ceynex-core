@@ -516,9 +516,12 @@ same for rubber" was to retype the whole question.
 One cheap `turn_classify` call splits them: a `discuss` turn ("what does HHI
 mean?", "summarise that in three bullets") is answered from the turn's existing
 answer, evidence and figures with no graph re-run at all; an `analyse` turn is
-rewritten as a standalone query and streamed as normal. Measured: a `discuss`
-turn is **3 SSE frames against 22**, with no fan-out. That one decision governs
-the cost and latency profile of the whole feature. Grounding still applies —
+rewritten as a standalone query and streamed as normal. Measured on the 22-turn
+set (`EVALUATION.md` §10, 2026-09-11): a `discuss` turn is **8.5 SSE frames
+against 33, 2.7 s against 5.8, at a tenth of the cost**, with no fan-out — an
+earlier "3 frames against 22" was measured before discuss turns had a trace of
+their own. That one decision governs the cost and latency profile of the whole
+feature. Grounding still applies —
 `orchestrator/grounding.py::ungrounded_figures` runs against the conversation's
 own evidence, so a chat reply cannot introduce a figure the analysis never
 produced. The separate `condense` role is configured and unused: the classifier
