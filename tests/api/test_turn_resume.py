@@ -31,11 +31,13 @@ from ceynex.api import deps as deps_module
 from ceynex.api import turn_log, turn_runner
 from ceynex.api.main import app
 from ceynex.api.turn_log import LocalTurnRegistry, RedisTurnMirror, TurnFrame
+from ceynex.chat.store import Message
 from ceynex.llm import FakeLLMClient
 from ceynex.orchestrator.graph import build_graph
 from tests.api.chat_doubles import (
     OTHER,
     OWNER,
+    ScriptedChatLLM,
     auth,
     conversation_runtime,
     install_fake_store,
@@ -336,6 +338,114 @@ def test_only_an_anonymous_reader_leaving_cancels_its_turn(client, fake_store, m
     _stream_turn(client, auth())
     _stream_turn(client)
     assert seen == [False, True]
+
+
+# --- a discussion streams while it is being written ------------------------------------
+
+
+class StallingChatLLM(ScriptedChatLLM):
+    """A chat model that writes one sentence, then stops until released.
+
+    The probe that found the defect: with the model stalled after its first
+    sentence, the analyse path had already published that sentence and the
+    discuss path had published nothing, because it waited for the whole reply
+    before flushing. The gate needs the start of the next sentence to know the
+    first one is complete, so the first chunk carries it.
+    """
+
+    def __init__(self, script, first="Exports reached USD 4.2m. That", rest=" was all."):
+        super().__init__(script)
+        self.first, self.rest = first, rest
+        self.fed_first = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def generate(self, role, system, user, *, json_mode=False, stream=None, **kwargs):
+        if role != "chat" or stream is None:
+            return await super().generate(role, system, user, json_mode=json_mode, **kwargs)
+        stream.restart()
+        stream.feed(self.first)
+        self.fed_first.set()
+        await self.release.wait()
+        stream.feed(self.rest)
+        return self.first + self.rest
+
+
+async def _seed_prior_exchange(fake_store) -> int:
+    conversation_id = await fake_store.create(OWNER)
+    await fake_store.append(conversation_id, OWNER, [
+        Message(role="user", content="cinnamon exports"),
+        Message(role="assistant", content="Exports reached USD 4.2m.", mode="analyse",
+                evidence=[{"source_id": "KG", "claim": "USD 4.2m in 2024", "detail": ""}]),
+    ])
+    return conversation_id
+
+
+async def _wait_for_frame(started: turn_log.LocalTurn, event: str, timeout_s: float = 2.0):
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        if any(f.event == event for f in started.frames):
+            return True
+        await asyncio.sleep(0.02)
+    return False
+
+
+async def test_a_discussions_first_sentence_reaches_the_wire_before_its_last(fake_store):
+    """The sentence gate releases a grounded sentence as soon as it is complete.
+    That is worth nothing unless the runner publishes it then, rather than after
+    the whole reply has arrived — which is what it did until this test."""
+    llm = StallingChatLLM({"turn_classify": json.dumps({"mode": "discuss"})})
+    runtime = deps_module.Runtime(kg=FakeKG(), llm=llm, deps=None, graph=FakeGraph(ANSWERED))
+    conversation_id = await _seed_prior_exchange(fake_store)
+
+    started = turn_runner.start_turn(
+        turn_runner.TurnRequest(runtime=runtime, query="explain that", typed="explain that",
+                                user_email=OWNER, conversation_id=conversation_id)
+    )
+    try:
+        await asyncio.wait_for(llm.fed_first.wait(), timeout=5)
+        assert await _wait_for_frame(started, "answer_delta"), (
+            "the first sentence was released by the gate but never published while the "
+            "model was still writing"
+        )
+        assert not any(f.event == "done" for f in started.frames)
+        shown = [f.data["text"] for f in started.frames if f.event == "answer_delta"]
+        assert shown == ["Exports reached USD 4.2m. "]
+    finally:
+        llm.release.set()
+    await _drain_turn(started)
+
+    assert started.frames[-1].event == "done"
+    assert started.frames[-1].data["answer"]["answer"] == "Exports reached USD 4.2m. That was all."
+    assert started.frames[-1].data["answer"]["grounded"] is True
+
+
+async def test_a_regenerated_discussion_streams_the_same_way(fake_store):
+    """Regenerate takes the discuss path with the cache bypassed; it pumps too."""
+    llm = StallingChatLLM({"turn_classify": json.dumps({"mode": "discuss"})})
+    runtime = deps_module.Runtime(kg=FakeKG(), llm=llm, deps=None, graph=FakeGraph(ANSWERED))
+    conversation_id = await _seed_prior_exchange(fake_store)
+    await fake_store.append(conversation_id, OWNER, [
+        Message(role="user", content="explain that"),
+        Message(role="assistant", content="It went up.", mode="discuss"),
+    ])
+    transcript = await fake_store.messages_for(conversation_id, OWNER)
+    plan = turn_runner.plan_regeneration(transcript, transcript[-1].id)
+    assert plan is not None and plan.mode == "discuss"
+
+    started = turn_runner.start_turn(
+        turn_runner.TurnRequest(runtime=runtime, query=plan.question.content,
+                                typed=plan.question.content, user_email=OWNER,
+                                conversation_id=conversation_id, skip_clarify=True,
+                                regenerate=plan)
+    )
+    try:
+        await asyncio.wait_for(llm.fed_first.wait(), timeout=5)
+        assert await _wait_for_frame(started, "answer_delta")
+        assert not any(f.event == "done" for f in started.frames)
+    finally:
+        llm.release.set()
+    await _drain_turn(started)
+    assert started.frames[-1].data["regenerated_from"] == plan.target.id
 
 
 # --- stop -----------------------------------------------------------------------------

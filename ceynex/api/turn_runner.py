@@ -393,26 +393,10 @@ async def _analyse(turn_log, request, query, typed, sink, publish, *,
             bypass_cache_roles=frozenset({"merge"}) if regenerated_from else frozenset(),
         )
     )
-    replica = mirror()
     try:
-        while not task.done():
-            try:
-                event = await asyncio.wait_for(sink.queue.get(), timeout=POLL_INTERVAL_S)
-            except TimeoutError:
-                if (replica is not None and user_email is not None
-                        and await replica.cancel_requested(turn_log.request_id)):
-                    # Stop pressed on a reader served by the other worker.
-                    task.cancel()
-                continue
-            await publish(event.kind, event.as_dict())
-
-        await _flush(sink, publish)
-        outcome: QueryOutcome = task.result()
-    except asyncio.CancelledError:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
-        raise
+        outcome: QueryOutcome = await _pump(
+            task, sink, publish, request_id=turn_log.request_id, user_email=user_email
+        )
     except OrchestrationError as exc:
         await publish("error", {"message": str(exc)})
         await publish("done", {"failed": True, "request_id": turn_log.request_id})
@@ -457,11 +441,18 @@ async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user
 
     Still streamed rather than returned whole, so the client has one transport
     and one set of frame handlers regardless of which path a turn takes — and,
-    since it now shares the turn's sink, its model call and its grounding
-    verdict appear in the trace like any other step.
+    since it shares the turn's sink, its model call and its grounding verdict
+    appear in the trace like any other step.
+
+    Pumped while it runs, exactly as the graph path is. Awaiting `discuss()` to
+    completion and flushing afterwards — which is what this did until it was
+    measured — delivered every grounded sentence in one burst just before
+    `done`, so the sentence gate was doing its work for nobody.
     """
-    result = await turn.discuss(follow_up, prior, prior_query, runtime.llm)
-    await _flush(sink, publish)
+    task = asyncio.create_task(turn.discuss(follow_up, prior, prior_query, runtime.llm))
+    result = await _pump(
+        task, sink, publish, request_id=observation.request_id, user_email=user_email
+    )
 
     usage = observation.usage.as_summary()
     answer = {
@@ -506,6 +497,38 @@ async def _discuss(runtime, follow_up, prior, prior_query, conversation_id, user
         **_message_ids(ids, regenerated=regenerated_from is not None),
         "answer": answer,
     })
+
+
+async def _pump(task: asyncio.Task, sink: trace.TraceSink, publish, *,
+                request_id: str, user_email: str | None):
+    """Publish the sink's events live while `task` runs, then return its result.
+
+    One loop for both the graph path and the discuss path, so a sentence the
+    gate releases reaches the wire when it is released rather than when the
+    call that produced it returns. Between events it checks for a Stop pressed
+    on a reader served by the other worker. A cancellation from outside — the
+    Stop endpoint on this worker, or an anonymous reader leaving — is passed to
+    the task, waited out, and re-raised for `_run` to record.
+    """
+    replica = mirror()
+    try:
+        while not task.done():
+            try:
+                event = await asyncio.wait_for(sink.queue.get(), timeout=POLL_INTERVAL_S)
+            except TimeoutError:
+                if (replica is not None and user_email is not None
+                        and await replica.cancel_requested(request_id)):
+                    task.cancel()
+                continue
+            await publish(event.kind, event.as_dict())
+
+        await _flush(sink, publish)
+        return task.result()
+    except asyncio.CancelledError:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+        raise
 
 
 async def _flush(sink: trace.TraceSink, publish) -> None:
