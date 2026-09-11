@@ -37,6 +37,7 @@ from ceynex.contracts import AgentState, Evidence, failed_output
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
 from ceynex.kg.queries import hs_hierarchy
+from ceynex.models import shocks
 from ceynex.retrieval.rates import SourcedRate, extract_tariff_rate
 from ceynex.retrieval.schema import SIMULATION_MEASURES, PolicyChunk, RetrievalFilter
 from ceynex.retrieval.tagging import HS_FOR_ITEM, countries_in
@@ -200,7 +201,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             chunks, retrieval_detail = context.chunks, context.detail
             sourced = extract_tariff_rate(chunks, hs_prefixes) if chunks else None
 
-        baseline, baseline_year, baseline_cypher = await _baseline_value(deps, item)
+        baseline, baseline_year, baseline_cypher = await baseline_value(deps.kg, item)
 
         if baseline is None:
             assumptions.append(
@@ -357,53 +358,24 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
 # --- the shocks ----------------------------------------------------------
 
 
+# The formulas themselves live in `ceynex/models/shocks.py` (D17), because the
+# scenario workbench runs the same three shocks from sliders and the two must
+# never disagree. These wrappers keep the agent's historical `(delta, pct,
+# detail)` shape; `tests/models/test_shocks.py` pins the parity.
+
+
 def _simulate_fx(
     sector: str, baseline: float, depreciation: float, config: dict[str, Any]
 ) -> tuple[float, float, str]:
-    """A rupee depreciation makes exports cheaper abroad, so volume rises.
-
-    Two parameters, both from the config table:
-
-    - **pass-through**: how much of the currency move reaches the foreign-currency
-      price. Contract-priced apparel passes less through than spot-traded
-      agricultural commodities.
-    - **export demand elasticity**: how much volume responds to that price change.
-
-    USD revenue change ≈ pass_through × depreciation × (−elasticity − 1).
-    The −1 is the price effect: each unit earns fewer dollars, which offsets part
-    of the volume gain. Omitting it is the classic error that reports a
-    depreciation as pure upside.
-    """
-    pass_through = _value(config, "fx_pass_through", sector, 0.5)
-    elasticity = _value(config, "export_demand_elasticity", sector, -1.0)
-
-    price_change = -pass_through * depreciation  # foreign price falls
-    volume_change = elasticity * price_change  # demand rises as price falls
-    revenue_change = volume_change + price_change
-
-    detail = (
-        f"{sector}: FX pass-through {pass_through:.2f} and export demand elasticity "
-        f"{elasticity:.2f} applied linearly to a {depreciation * 100:.1f}% depreciation. "
-        f"Volume effect {volume_change * 100:+.1f}%, price effect {price_change * 100:+.1f}%."
-    )
-    return baseline * revenue_change, revenue_change, detail
+    """A rupee depreciation makes exports cheaper abroad — see `shocks.fx_shock`."""
+    return shocks.fx_shock(sector, baseline, depreciation, config).as_tuple()
 
 
 def _simulate_tariff(
     sector: str, baseline: float, tariff: float, config: dict[str, Any]
 ) -> tuple[float, float, str]:
-    """An importing country's tariff raises the buyer's price by the incidence share."""
-    incidence = _value(config, "tariff_incidence", "default", 0.5)
-    elasticity = _value(config, "export_demand_elasticity", sector, -1.0)
-
-    price_change = incidence * tariff
-    revenue_change = elasticity * price_change
-
-    detail = (
-        f"{sector}: {tariff * 100:.1f}% tariff with exporter incidence {incidence:.2f} and "
-        f"demand elasticity {elasticity:.2f}. Buyer price {price_change * 100:+.1f}%."
-    )
-    return baseline * revenue_change, revenue_change, detail
+    """An importing tariff raises the buyer's price — see `shocks.tariff_shock`."""
+    return shocks.tariff_shock(sector, baseline, tariff, config).as_tuple()
 
 
 async def _simulate_agreement_loss(
@@ -438,34 +410,25 @@ async def _simulate_agreement_loss(
     # Deviation D9 cut the WITS tariff pull, so the fallback is a documented
     # constant. D10 supplies a sourced rate where a policy document states one;
     # where none does, the constant still stands and still says so.
+    configured = shocks.parameter(config, "agreement_loss_mfn_tariff", sector)
     if sourced is not None:
-        mfn_tariff = sourced.rate
+        rate = shocks.Parameter(
+            "agreement_loss_mfn_tariff", sourced.rate, configured.value, "sourced",
+            sourced.chunk.citation,
+        )
         rate_basis = (
-            f"MFN tariff of {mfn_tariff * 100:.1f}% read from {sourced.chunk.citation} "
+            f"MFN tariff of {sourced.rate * 100:.1f}% read from {sourced.chunk.citation} "
             f"(unverified — no human has checked this rate against the official schedule)"
         )
     else:
-        mfn_tariff = _value(config, "agreement_loss_mfn_tariff", sector, 0.095)
-        rate_basis = (
-            f"MFN tariff of {mfn_tariff * 100:.1f}% from config/elasticities.yaml "
-            f"(a literature constant, not a queried tariff schedule — deviation D9)"
-        )
+        rate, rate_basis = configured, shocks.describe_config_rate(configured)
 
-    incidence = _value(config, "tariff_incidence", "default", 0.5)
-    elasticity = _value(config, "export_demand_elasticity", sector, -1.0)
-
-    price_change = incidence * mfn_tariff
-    revenue_change = elasticity * price_change
-
-    names = ", ".join(sorted({r["agreement"] for r in preferences}))
-    verified = {r.get("agreement_verified", "unverified") for r in preferences}
-    detail = (
-        f"{sector}: preference coverage resolved from the knowledge graph ({names}, matched on "
-        f"HS {preferences[0]['matched_on']}, status {'/'.join(sorted(verified))}). Loss modelled "
-        f"as an {rate_basis}, with exporter incidence {incidence:.2f} "
-        f"and demand elasticity {elasticity:.2f}."
+    outcome = shocks.agreement_loss_shock(
+        sector, baseline, config,
+        coverage=shocks.describe_coverage(preferences),
+        mfn_tariff=rate, rate_basis=rate_basis,
     )
-    return (baseline * revenue_change, revenue_change, detail), cypher
+    return outcome.as_tuple(), cypher
 
 
 # --- describing a policy, rather than shocking one (D10) ------------------
@@ -844,12 +807,18 @@ def _hs_for_item(item: str) -> str:
     return HS_FOR_ITEM.get(item, "61")
 
 
-async def _baseline_value(deps: AgentDeps, item: str) -> tuple[float | None, int | None, str]:
-    """Most recent annual export value for an item, from the graph."""
-    latest_rows, _ = await deps.kg.run(*q.latest_observation_year(item))
+async def baseline_value(kg: Any, item: str) -> tuple[float | None, int | None, str]:
+    """Most recent annual export value for an item, from the graph.
+
+    Public, and takes the KG client rather than `AgentDeps`, because the
+    scenario workbench (D17) needs the same baseline the agent shocks — read
+    the same way, from the same query, so the two cannot start from different
+    numbers.
+    """
+    latest_rows, _ = await kg.run(*q.latest_observation_year(item))
     year = int(latest_rows[0]["latest_year"]) if latest_rows and latest_rows[0]["latest_year"] else 2023
 
-    rows, cypher = await deps.kg.run(*q.market_share(item, year))
+    rows, cypher = await kg.run(*q.market_share(item, year))
     if not rows:
         return None, year, cypher
     return float(rows[0]["total_export_value_usd"]), year, cypher
@@ -857,27 +826,12 @@ async def _baseline_value(deps: AgentDeps, item: str) -> tuple[float | None, int
 
 def _value(config: dict[str, Any], group: str, key: str, default: float) -> float:
     """Read an elasticity from the config table, tolerating a missing entry."""
-    entry = config.get(group, {}).get(key)
-    if isinstance(entry, dict) and "value" in entry:
-        return float(entry["value"])
-    if isinstance(entry, int | float):
-        return float(entry)
-    return default
+    return shocks.parameter(config, group, key, default).value
 
 
 def _base_assumptions(config: dict[str, Any], shock: str, magnitude: float) -> list[str]:
     """SRS 3.1.5 requires these to be stated. They must never be empty."""
-    model = config.get("model", {})
-    assumptions = [
-        f"Shock modelled: {shock}, magnitude {magnitude * 100:.1f}%.",
-        f"Functional form is {model.get('form', 'linear')} over a "
-        f"{model.get('horizon_months', 12)}-month horizon; effects do not compound.",
-        "Elasticities are literature ranges recorded in config/elasticities.yaml, "
-        "not estimates fitted to Sri Lankan data.",
-    ]
-    if note := model.get("note"):
-        assumptions.append(str(note))
-    return assumptions
+    return shocks.base_assumptions(config, shock, magnitude)
 
 
 __all__ = ["AGENT", "trade_economics_node"]
