@@ -122,9 +122,15 @@ async def run_scenario(
     overrides = request.overrides.model_dump() if request.overrides else {}
     config = settings.elasticity_config()
 
-    # For an agreement shock the "magnitude" is the MFN rate itself, which the
-    # parameters carry; the assumption line still names what was modelled.
-    assumptions = shocks.base_assumptions(config, request.shock, request.magnitude)
+    # For an agreement shock the "magnitude" is the MFN rate itself — read from
+    # the config or the reader's override — so the assumption line names that
+    # rather than the request's unused magnitude field.
+    magnitude = request.magnitude
+    if request.shock == "agreement":
+        magnitude = shocks.parameter(
+            config, "agreement_loss_mfn_tariff", sector, overrides=overrides
+        ).value
+    assumptions = shocks.base_assumptions(config, request.shock, magnitude)
     assumptions.append(
         "Run from the scenario workbench: the same formulas as the trade-economics "
         "analysis, over the same baseline, with no policy document consulted."

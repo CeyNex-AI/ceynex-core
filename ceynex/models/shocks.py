@@ -257,7 +257,17 @@ def describe_coverage(preferences: list[dict[str, Any]]) -> str:
 
 
 def describe_config_rate(rate: Parameter) -> str:
-    """How the agent names the D9 fallback constant when no document sourced a rate."""
+    """How the agent names the D9 fallback constant when no document sourced a rate.
+
+    An overridden rate is the reader's, not the config's, and the sentence says
+    so — a workbench slider must not be described as a literature constant.
+    """
+    if rate.overridden:
+        return (
+            f"MFN tariff of {rate.value * 100:.1f}% set in the scenario workbench "
+            f"(overriding the {rate.default * 100:.1f}% literature constant in "
+            f"config/elasticities.yaml — deviation D9)"
+        )
     return (
         f"MFN tariff of {rate.value * 100:.1f}% from config/elasticities.yaml "
         f"(a literature constant, not a queried tariff schedule — deviation D9)"

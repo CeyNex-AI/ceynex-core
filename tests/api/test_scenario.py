@@ -167,6 +167,13 @@ def test_an_override_is_applied_and_echoed_with_its_default(client):
     assert body["outcome"]["revenue_change_pct"] == pytest.approx(-0.01)
 
 
+def test_an_agreement_run_names_the_rate_as_its_magnitude(client):
+    body = run(client, {"shock": "agreement", "sector": "apparel",
+                        "overrides": {"agreement_loss_mfn_tariff": 0.15}}).json()
+    assert body["assumptions"][0] == "Shock modelled: agreement, magnitude 15.0%."
+    assert "set in the scenario workbench" in body["outcome"]["detail"]
+
+
 def test_every_run_states_its_assumptions_and_the_workbench_names_itself(client):
     body = run(client, {"shock": "tariff", "sector": "apparel", "magnitude": 0.1}).json()
     assert body["assumptions"][0] == "Shock modelled: tariff, magnitude 10.0%."

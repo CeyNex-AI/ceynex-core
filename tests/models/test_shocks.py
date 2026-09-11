@@ -195,6 +195,17 @@ def test_an_override_changes_only_the_named_parameter_and_says_so(config):
     assert moved.revenue_change_pct == pytest.approx(-0.01)
 
 
+def test_an_overridden_mfn_rate_is_not_called_a_literature_constant(config):
+    """The detail line the page shows must say whose number it is."""
+    outcome = shocks.agreement_loss_shock(
+        "apparel", BASELINE, config, coverage="GSP+",
+        overrides={"agreement_loss_mfn_tariff": 0.15},
+    )
+    assert "set in the scenario workbench" in outcome.detail
+    assert "overriding the 9.5% literature constant" in outcome.detail
+    assert "a literature constant, not a queried" not in outcome.detail
+
+
 def test_a_none_override_is_no_override(config):
     plain = shocks.fx_shock("apparel", BASELINE, 0.05, config)
     same = shocks.fx_shock("apparel", BASELINE, 0.05, config, overrides={"fx_pass_through": None})
