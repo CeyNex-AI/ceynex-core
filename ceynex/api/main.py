@@ -37,6 +37,7 @@ from ceynex.api.routes import (
     history,
     news,
     query,
+    scenario,
     usage,
 )
 from ceynex.chat.instructions import ensure_table as ensure_instruction_table
@@ -130,4 +131,5 @@ app.include_router(account.router)
 app.include_router(news.router)
 app.include_router(graph.router)
 app.include_router(usage.router)
+app.include_router(scenario.router)
 app.include_router(data.router)

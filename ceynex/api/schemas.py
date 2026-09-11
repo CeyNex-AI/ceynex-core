@@ -593,3 +593,67 @@ class SharedConversationResponse(BaseModel):
     title: str | None = None
     created_at: str
     messages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- the scenario workbench (docs/ARCHITECTURE_DELTA.md D17) -----------------
+
+
+class ScenarioOverrides(BaseModel):
+    """Slider positions for the elasticities, by config group. A field left
+    None keeps the configured value; the response says which were moved."""
+
+    fx_pass_through: float | None = Field(default=None, ge=0.0, le=1.0)
+    export_demand_elasticity: float | None = Field(default=None, ge=-5.0, le=0.0)
+    tariff_incidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    agreement_loss_mfn_tariff: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ScenarioRequest(BaseModel):
+    shock: str = Field(pattern="^(fx|tariff|agreement)$")
+    sector: str = Field(pattern="^(agriculture|apparel)$")
+    #: One of the items the graph records; defaults to the sector's representative.
+    item: str | None = Field(default=None, max_length=32)
+    #: A fraction: 0.05 is a 5% depreciation or a 5-point tariff. Unused by the
+    #: agreement shock, whose rate is the MFN tariff.
+    magnitude: float = Field(default=0.05, ge=-1.0, le=1.0)
+    overrides: ScenarioOverrides | None = None
+
+
+class ScenarioParameter(BaseModel):
+    name: str
+    value: float
+    default: float
+    basis: str
+    source: str
+    overridden: bool
+
+
+class ScenarioOutcome(BaseModel):
+    shock: str
+    sector: str
+    baseline_usd: float
+    revenue_change_usd: float
+    revenue_change_pct: float
+    price_change_pct: float
+    volume_change_pct: float
+    parameters: list[ScenarioParameter]
+    detail: str
+
+
+class ScenarioResponse(BaseModel):
+    shock: str
+    sector: str
+    item: str
+    magnitude: float
+    #: SAD §4.1: without a baseline, or without preference coverage for an
+    #: agreement shock, nothing is simulated and `reason` says why.
+    refused: bool
+    reason: str | None = None
+    baseline_usd: float | None = None
+    baseline_year: int | None = None
+    #: The literal Cypher that read the baseline, so the number is checkable.
+    baseline_cypher: str | None = None
+    outcome: ScenarioOutcome | None = None
+    #: SRS 3.1.5 — stated on every run, refusal or not. Never empty.
+    assumptions: list[str]
+    evidence: list[EvidenceItem]

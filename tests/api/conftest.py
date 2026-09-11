@@ -15,6 +15,7 @@ from ceynex.api import rate_limit
 from ceynex.api.routes import chat as chat_routes
 from ceynex.api.routes import news as news_routes
 from ceynex.api.routes import query as query_routes
+from ceynex.api.routes import scenario as scenario_routes
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +29,9 @@ def fresh_rate_limit_window():
     query_routes.set_window(rate_limit.InProcessWindow())
     news_routes.set_window(rate_limit.InProcessWindow())
     chat_routes.set_chat_window(rate_limit.InProcessWindow())
+    scenario_routes.set_window(rate_limit.InProcessWindow())
     yield
     query_routes.set_window(None)
     news_routes.set_window(None)
     chat_routes.set_chat_window(None)
+    scenario_routes.set_window(None)
