@@ -879,4 +879,55 @@ Anything else and the flag stays off, with the failing criterion recorded here.
 The rule is not revised after the runs; if it turns out to be the wrong rule, that
 is a new section with a new rule and a new set of runs.
 
-*Results: to be recorded below once the runs complete.*
+### Measured 2026-09-11 — the flag stays off
+
+Six cold runs, three each way, on the same stack §8 used (4,625 `fact_trade` rows,
+4,625 `EXPORTS_TO` edges, verified before the first run). Every figure is a median
+of three with the spread in brackets; the per-run files are in `eval_runs/off/`
+and `eval_runs/on/`.
+
+| Metric | off (3 runs) | on (3 runs) | criterion | holds? |
+|---|---:|---:|---|---|
+| routing exact match | 0.5667 [0.5667–0.60] | 0.5667 [0.5667–0.5667] | identical medians | **yes** |
+| routing recall | 0.925 [0.925–0.925] | 0.925 [0.8917–0.925] | identical medians | **yes** |
+| answers fully grounded | 0.8519 [0.8148–0.8519] | 0.7778 [0.7778–0.8148] | ≥ 0.8149 | **no** |
+| ungrounded figures | 4 [4–5] | 7 [6–7] | ≤ 5 | **no** |
+| marker valid rate | — | 1.00 [1.00–1.00] | ≥ 0.98 | **yes** |
+| figure sentences cited | — | 0.877 [0.817–0.885] | ≥ 0.80 | **yes** |
+| crashed / no evidence | 0 / 0 | 0 / 0 [0–1] | 0 / ≤ off | **yes** |
+| single-sector p95 (ms) | 9,219 [6,519–11,568] | 6,154 [6,153–8,895] | — | noise |
+
+**Criteria 2 and 3 fail, so `CEYNEX_CITATIONS` stays off.** Two answers of 27
+lost their grounding, not one, and the ungrounded count rose by three, not one.
+Everything the feature was meant to do, it did: every `[n]` the model wrote
+pointed at a real evidence entry (24 of 27 answers carried markers), and 88% of
+the sentences stating a figure cited one.
+
+**What the extra ungrounded figures are — and are not.** Every one of them is a
+trade-economics *impact* figure: `161,815,198` and `30,216,274` on X09,
+`1,318,528,338` on M03, `2,872,929,484` on M05. The evidence entries carry those
+figures **signed** — "USD -161,815,198" — and the prose states them unsigned
+with the word "decrease". `grounding.ungrounded_figures` compares digit strings
+and keeps the sign, so `-161815198` does not ground `161815198`. This is §1's
+grounding class 1 (a figure the agent computed, quoted differently), not an
+invented number; the four ungrounded figures the off runs *always* carry (M01,
+M02, M03, M04) are the same shape. With citations on, the model wrote the impact
+figures this way more often, apparently because rule 6a asks it to cite the
+figure-carrying sentence and it then states the figure rather than the
+percentage. The routing and the evidence were unchanged.
+
+**What this does not permit.** The rule was pre-registered and it is not revised
+here. A sign-tolerant comparison in `grounding.py` would very likely flip the
+verdict — and it would also change the runtime guard and every published
+grounding figure in this document, which is precisely the kind of change that
+needs its own pre-registered rule and its own six runs. That is the next step,
+recorded and not taken.
+
+**Two things the repeated runs established on the side.** The questions that
+disagree with themselves across identical runs are X11 (route) and M05
+(grounding) with the flag off, S07 (route, §8's known case), X09 and M03 with it
+on — the same handful every time, which is where a larger question set would
+earn its keep. And single-sector p95 ranged from 6.2 s to 11.6 s across six runs
+of the same code with one question (S01, S10 or S11) over 10 s in two of them,
+which is the §8 warning in numbers: no single-run p95 from this set is a
+measurement.
