@@ -134,7 +134,10 @@ async def put_instructions(
     """Save it. Tone only — see `ceynex/chat/instructions.py` for what this
     cannot do, which is the more important half of the feature."""
     content = request.content.strip()[: instructions.MAX_INSTRUCTION_CHARS]
-    await instructions.save(user.email, content, request.enabled)
+    try:
+        await instructions.save(user.email, content, request.enabled)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not save instructions") from exc
     return UserInstructionResponse(
         content=content, enabled=request.enabled, max_chars=instructions.MAX_INSTRUCTION_CHARS
     )

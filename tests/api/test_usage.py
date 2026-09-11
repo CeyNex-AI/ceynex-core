@@ -29,13 +29,26 @@ def auth(email: str, role: str) -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 def ledger_and_counter(monkeypatch):
-    """No database and no Redis: the ledger's reads answer from memory and the
-    spend counter is a fresh one per test. These tests used to read the real
-    ledger, so with the docker stack down the first of them failed — a unit test
-    that needs a database is not a unit test."""
+    """No database and no Redis: the ledger's reads answer from memory, the
+    instruction store is a dict, and the spend counter is a fresh one per test.
+    These tests used to read the real ledger, so with the docker stack down the
+    first of them failed — a unit test that needs a database is not a unit test.
+    The instructions round trip then repeated the same mistake through
+    `PUT /api/account/instructions`, which is why the store is faked here too."""
     from ceynex.observability.ledger import UsageRollup
 
-    state = {"spent": {None: 0.0}, "down": False}
+    state = {"spent": {None: 0.0}, "down": False, "instructions": {}}
+
+    async def get_instruction(user_email):
+        return state["instructions"].get(user_email, ("", True))
+
+    async def save_instruction(user_email, content, enabled=True):
+        if state["down"]:
+            raise psycopg.OperationalError("instructions down")
+        state["instructions"][user_email] = (content, enabled)
+
+    monkeypatch.setattr("ceynex.chat.instructions.get", get_instruction)
+    monkeypatch.setattr("ceynex.chat.instructions.save", save_instruction)
 
     async def by_day(user_email, *, days=30):
         if state["down"]:
@@ -128,6 +141,24 @@ def test_instructions_round_trip_and_are_capped(client):
         "/api/account/instructions", json={"content": "x" * 5000}, headers=headers
     )
     assert too_long.status_code == 422
+
+    # And what was saved is what comes back.
+    assert client.get("/api/account/instructions", headers=headers).json()["content"] == (
+        "Answer in bullet points."
+    )
+
+
+def test_saving_instructions_during_a_postgres_outage_is_a_503(client, ledger_and_counter):
+    """The same answer `PUT /api/account/preferences` gives the same outage. It
+    used to be a 500: the driver's error escaped the handler untouched."""
+    state, _ = ledger_and_counter
+    state["down"] = True
+    response = client.put(
+        "/api/account/instructions",
+        json={"content": "Be terse.", "enabled": True},
+        headers=auth(USER, "policymaker"),
+    )
+    assert response.status_code == 503
 
 
 def test_instructions_require_a_signed_in_user(client):
