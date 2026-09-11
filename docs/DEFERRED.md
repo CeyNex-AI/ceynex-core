@@ -280,22 +280,59 @@ throttled: login, a user reading their own history, and the admin routes.
   has no key, no token and no account. The integrity risk is bounded by news
   never being evidence (D11). Remove the override once :443 answers.
 
-## Stream resume after a dropped connection — not built
+## Stream resume after a dropped connection — built since (D12, amended)
 
-**Decided 2026-09-10, M2, while wiring the conversational layer's frontend.**
+Recorded here on 2026-09-10 as not built, because a safe resume needs a
+server-side token and retrying without one replays a fan-out that was already
+paid for. The completion pass that evening built exactly that: a turn runs as
+its own task and writes numbered frames to a log, the resume token is the
+`request_id` plus an owner check, and the "connection dropped" state is now what
+remains only after every resume attempt has failed. The write-up is the amended
+D12 in [ARCHITECTURE_DELTA.md](ARCHITECTURE_DELTA.md); this heading stays so the
+earlier statement is not simply gone.
 
-`src/lib/streamChat.ts` has no reconnect. A stream that drops mid-turn surfaces a
-distinct "the connection dropped before this turn finished" state — held apart
-from a failed turn on purpose, because the server never said it failed and the
-answer may well have completed and been charged for — with a "reload
-conversation" action that reads the persisted transcript to find out.
+## Two things the live pass found and left as they are
 
-What is *not* built is genuine resume. Doing it safely needs a server-side resume
-token: without one, retrying replays a turn that already ran the full five-agent
-fan-out and already spent its tokens, which is worse than asking the user. That is
-not a five-line change and it was not worth half-attempting, so the honest partial
-— tell the user precisely what is and is not known, and give them the read that
-settles it — is what shipped.
+**A cached routing decision is sticky.** The prompt cache (168-hour TTL) keys on
+the prompt, so when the LLM router drops an agent on a question — S07's
+one-in-five case, `EVALUATION.md` §8 — every later ask of that exact question
+replays the same route from the cache, evidence-free, in 30 ms, until the entry
+expires. Seen on 2026-09-11: the knitted-apparel question answered with no
+evidence from a cached decision and correctly three times out of three once the
+cache was cleared. Not caching a `router` result that fell back, or that dropped
+an agent the keyword router would have kept, is the shape of a fix; it changes
+what `make eval` measures and needs its own run.
+
+**"both" on the clarification card promises more than the agent delivers.** The
+gate asks "tea, cinnamon, or both?"; the composed query still passes through the
+export agent's single-item `parse_intent`, so "both" answers tea and states that
+cinnamon figures were not available. Honest, and better than the silent drop the
+gate was built to expose, but the option should either run two analyses or not
+be offered. Recorded here rather than removed, because the template's options
+are pinned by a test and the choice belongs to the owner.
+
+## Verification still owed by a human
+
+**A screen-reader pass.** WCAG 2.1 AA is implemented throughout the
+conversational layer and asserted by axe-core over every page state
+(`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths — the trace toggle,
+the clarification card, the workbench's sliders — are driven by pressing keys.
+None of it has been used with NVDA, JAWS or VoiceOver. Implementation and an
+automated scan are not that verification, and it is still owed.
+
+**A load test.** See "Measured but not measured under load" above; nothing in
+the conversational layer changes that, and a turn that outlives its reader (D12,
+amended) makes concurrent turns *more* likely to overlap, not less.
+
+**CI.** `.github/workflows/` still does not exist in either repo. Both suites —
+1,984 unit tests here, vitest and the Playwright suite in `ceynex-web` — run only
+on a developer machine. The unit suite needing Postgres for one test went
+unnoticed for a day for exactly this reason (fixed 2026-09-11).
+
+**The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
+deployed. The nginx heartbeat, resume and cancel checks were made against a real
+nginx container running the production `location /api/` directives, not against
+the frontend VM with TLS and the real network in play.
 
 ## Web-search results reaching an LLM — deliberately not built (D14)
 
@@ -311,6 +348,11 @@ here" block. Recorded so the constraint is not rediscovered by accident.
 question on routing exact match and one on ungrounded figures, and single-sector
 p95 moved 35% between them. Two consequences that are not deferred work so much as
 deferred *confidence*: a one-question difference between two single runs is not a
-result, and a p95 from one run of 12 samples should not be quoted. Establishing a
-repeated-run protocol (three runs, report the median and the spread) is the fix,
-and it is not built.
+result, and a p95 from one run of 12 samples should not be quoted.
+
+The repeated-run protocol is now built — `make eval-repeat` runs the set three
+times cold and `eval/repeat.py` reports medians, spread and the questions that
+disagreed with themselves (EVALUATION.md §9) — but the floor itself is a property
+of a 30-question set and a stochastic model, and stays. What is still deferred is
+a **larger set**: `chat_feedback` (§5 of the execution plan) is the growth path,
+and nothing has been promoted from it yet.
