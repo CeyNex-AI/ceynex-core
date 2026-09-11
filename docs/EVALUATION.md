@@ -903,25 +903,35 @@ Everything the feature was meant to do, it did: every `[n]` the model wrote
 pointed at a real evidence entry (24 of 27 answers carried markers), and 88% of
 the sentences stating a figure cited one.
 
-**What the extra ungrounded figures are — and are not.** Every one of them is a
-trade-economics *impact* figure: `161,815,198` and `30,216,274` on X09,
-`1,318,528,338` on M03, `2,872,929,484` on M05. The evidence entries carry those
-figures **signed** — "USD -161,815,198" — and the prose states them unsigned
-with the word "decrease". `grounding.ungrounded_figures` compares digit strings
-and keeps the sign, so `-161815198` does not ground `161815198`. This is §1's
-grounding class 1 (a figure the agent computed, quoted differently), not an
-invented number; the four ungrounded figures the off runs *always* carry (M01,
-M02, M03, M04) are the same shape. With citations on, the model wrote the impact
-figures this way more often, apparently because rule 6a asks it to cite the
-figure-carrying sentence and it then states the figure rather than the
-percentage. The routing and the evidence were unchanged.
+**What the extra ungrounded figures are — two classes, and only one is the
+metric's fault.** Read from the prose around each figure:
+
+- *X09* (`161,815,198`, `30,216,274`, in two of three cited runs): the
+  trade-economics impact figures, which the evidence carries **signed** ("USD
+  -161,815,198") and the prose states unsigned with the word "decrease".
+  `grounding.ungrounded_figures` compares digit strings and keeps the sign, so
+  `-161815198` does not ground `161815198`. That is §1's grounding class 1 — a
+  figure the agent computed, quoted differently — and the same shape as the four
+  ungrounded figures the off runs carry every time (M01, M02, M03, M04).
+- *M03* (`1,318,528,338`, one run) and *M05* (`2,872,929,484`, all three cited
+  runs against one of three off runs): **totals the model worked out itself** —
+  "resulting in a new total of about USD 1,318,528,338", which is the baseline
+  minus the impact, and "would bring the total apparel export revenue to around
+  USD 2,872,929,484", the baseline plus the shock. No finding and no evidence
+  entry states either number. These are exactly what the grounding check exists
+  to catch, and asking the model to cite every figure-carrying sentence appears
+  to make it *more* inclined to spell such a total out beside the citation.
+
+So the verdict is not an artefact of the metric. Citations cost real grounding
+on this set, on a rule written before the runs, and the flag stays off.
 
 **What this does not permit.** The rule was pre-registered and it is not revised
-here. A sign-tolerant comparison in `grounding.py` would very likely flip the
-verdict — and it would also change the runtime guard and every published
-grounding figure in this document, which is precisely the kind of change that
-needs its own pre-registered rule and its own six runs. That is the next step,
-recorded and not taken.
+here. A sign-tolerant comparison in `grounding.py` would remove the X09 class —
+and it would also change the runtime guard and every published grounding figure
+in this document, which is precisely the kind of change that needs its own
+pre-registered rule and its own six runs. The derived-total class is a prompt
+problem (rule 2 already forbids it; rule 6a seems to pull against it) and would
+need a reworded 6a, measured the same way. Both are recorded here and not taken.
 
 **Two things the repeated runs established on the side.** The questions that
 disagree with themselves across identical runs are X11 (route) and M05
