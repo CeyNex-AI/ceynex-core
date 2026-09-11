@@ -437,6 +437,71 @@ matters more than it sounds.
 and `POST /api/query` answers exactly as before, which is asserted rather than
 assumed.
 
+### D12, amended 2026-09-10 — a turn is not its HTTP response
+
+**Decided 2026-09-10, M2, in the completion pass; written up 2026-09-11.**
+**Spec touched:** SRS 3.3.1 (availability), 3.4.1.
+
+As first built, the orchestration ran inside the response generator, so
+whatever happened to the socket happened to the answer: a dropped connection
+cancelled a fan-out that was already being paid for, and the reader was told
+"it may have completed" about a turn the server had in fact thrown away.
+
+**A turn runs as its own task and writes numbered frames to a log**
+(`api/turn_log.py`, `api/turn_runner.py`). The HTTP response only *reads* the
+log, from any frame onward, with heartbeats while it is quiet. Every SSE frame
+therefore carries an `id:`, and `GET /api/chat/turns/{request_id}/events?after=N`
+(or the standard `Last-Event-ID` header) resumes a turn after the last frame a
+reader saw. The resume token is the unguessable `request_id` **and** an owner
+check — knowing someone's request id is not enough; being them is required —
+and an unknown, expired (ten minutes after `done`) or someone else's turn is a
+404 that does not say which. The in-process log is authoritative; a best-effort
+Redis stream mirror serves the one case it exists for, a reconnect that lands on
+the other uvicorn worker. Without `REDIS_URL` a resume works on the same worker
+only, which locally is always the case.
+
+**The disconnect semantics changed, deliberately.** A signed-in turn now outlives
+its reader: it finishes, is stored, and is waiting in the transcript or on the
+resume endpoint. An anonymous turn still cancels on disconnect, because nobody
+can resume it and nothing is stored, so finishing it would spend money on an
+answer no one can ever read. Stop is therefore an explicit request,
+`POST /api/chat/turns/{request_id}/cancel` — a browser's abort and a dropped
+network look identical from the server — reaching a turn on this worker as
+`task.cancel()` and one on the other worker through a Redis key it checks every
+250 ms. A cancelled turn stores nothing and ends in `done` with `cancelled: true`.
+The rule from the original entry still holds: a failure, a timeout and a
+cancellation are each frames in the log, never a status change.
+
+**The answer streams a grounded sentence at a time** (`orchestrator/answer_stream.py`).
+`SentenceGate` holds streamed model text until a whole sentence exists, checks
+that sentence with `grounding.ungrounded_figures` against the same corpus the
+whole-prose check uses, and only then releases it as an `answer_delta`. A figure
+contains no whitespace and a sentence boundary is always whitespace, so no
+figure is ever split across releases and nothing released could fail the
+merge's own check; the first failing sentence stops the stream and
+`answer_reset` withdraws the draft before `done` delivers the deterministic
+composition. Three seeded property tests (450 cases) pin those three
+properties. The stream is passed **only when `trace.active()`**, so the call
+`POST /api/query` and `make eval` make is byte-for-byte the unstreamed one —
+`test_merge_without_a_listener_never_streams` guards it. `answer_delta` is
+live-only: streamed and kept for a resume, never written to `chat_trace_event`,
+because the message row is the durable copy of the text.
+
+**Verified against real nginx on 2026-09-11**, with the production `location
+/api/` directives and `proxy_read_timeout` shortened to 20 s so the check could
+bite: a turn held quiet for 40 s survived on heartbeats at 15.05 s and 30.09 s
+and delivered `done` at 40.10 s; the control with heartbeats disabled was cut by
+nginx at 20.03 s (`upstream timed out … while reading upstream`). Resume by
+`after=`, resume by `Last-Event-ID`, the owner 404 and cancel were each driven
+by hand through the same proxy.
+
+**Cost, stated plainly.** No new table. One task per turn, a bounded in-process
+log (512 turns, ten-minute TTL after `done`), and an optional Redis stream per
+turn capped at 2,000 entries. A defect this exposed and fixed on the way: the
+`discuss` path awaited its model call to completion and flushed afterwards, so
+its sentences reached the wire in one burst just before `done`; both paths now
+share one pump.
+
 ---
 
 ## D13 — conversation state in Postgres, and a pre-routing clarification gate
@@ -619,7 +684,7 @@ its own client. **True daily spend can therefore reach 2× `daily_spend_cap_usd`
 only*: wiring it into enforcement would put a database round trip in front of
 every LLM call. The real fix is a Redis-backed shared counter shaped exactly like
 `rate_limit.py::RedisWindow` — a clean follow-up, and its own delta entry when it
-lands.
+lands. *It landed: see D16.*
 
 **A cache hit is two different numbers, and only one of them is a gap.** For
 *accounting*, a cache hit cost 0 tokens and $0, because no API call happened;
@@ -650,3 +715,101 @@ is not complete.
 
 **Cost, stated plainly.** One table, one batched insert per request off the event
 loop, four indexes. No new dependency and no new service.
+
+---
+
+## D16 — daily spend limits shared across workers, and a per-reader budget
+
+**Decided 2026-09-10, M2, in the completion pass; written up 2026-09-11.**
+**Spec touched:** SRS 3.4.3, 3.4.6; R5 (LLM quota and cost exhaustion).
+
+D15 named the daily cap's weakness rather than papering over it: `_cap_reached()`
+read a per-process counter, `ceynex-infra/backend/Dockerfile` runs two uvicorn
+workers, so true spend could reach **2× `daily_spend_cap_usd`** — and the page said
+so. Reading the code for this entry found a second weakness D15 had not named:
+the counter was per process *lifetime*, not per day. A worker that ran for a
+week capped itself for good; a restarted one forgot everything it had spent.
+
+**One number, keyed by UTC day, in Redis** (`observability/spend.py`). The cap is
+counted with `INCRBYFLOAT` on a key that names the day (48-hour TTL, so nothing
+depends on the expiry being exact), incremented after every paid call and read
+before the next one, on either worker. It rolls over at 00:00 UTC, and the Usage
+page says when. `test_two_workers_stop_at_the_cap_not_at_twice_it` is the
+central assertion.
+
+**A per-reader budget beside the global cap.** A single account is the likeliest
+way to run up a bill, and the deployment cap alone lets one reader spend all of
+it. `config/llm.yaml` gains `per_user_daily_cap_usd` (1.00 — roughly a hundred
+gpt-4o merges, a long working day of analysis and far past a demo; 0 disables).
+A call with no reader, such as the evaluation harness, meets only the global cap.
+
+**What happens at a limit is the degraded path, not a refusal.** The free
+OpenRouter failsafe is tried first, because it costs nothing against either
+limit; if there is none, or it fails, the answer degrades to figures, evidence
+and confidence — what SRS 3.4.3 already requires — and a `budget` trace event
+says which limit, how much, and when it resets. That notice is shown beside the
+answer as well as on the Usage page, which is SRS 3.4.6's "disclosed rather than
+enforced silently" applied where the restriction actually bites.
+
+**Failing open, but never weaker than before.** A Redis error is logged and the
+check falls back to this worker's own count for the day — the old per-worker
+cap, never no cap at all. `GET /api/usage/limits` reports `cap_is_per_worker:
+false` only when Redis carries the count, and a ledger read that fails returns
+the counter's figure rather than a false zero.
+
+**Cost, stated plainly.** No new table, no new service: the same Redis the rate
+limiter and the turn mirror (D12, amended) already use, two keys per day. The
+deployed compose already sets `REDIS_URL`, so a deploy of this branch gets the
+shared count without an infrastructure change.
+
+---
+
+## D17 — a scenario workbench over the analysis's own formulas
+
+**Decided 2026-09-11, M2.**
+**Spec touched:** SRS 3.1.5 (simulation must state its assumptions); SAD §4.1
+(partial results and refusals).
+
+`trade_economics` has simulated a rupee depreciation, a tariff and the loss of a
+unilateral preference since Day 7, from a question. A policymaker's next question
+is always "and if the elasticity were different?", and the answer was to rephrase
+the question and wait for a five-agent fan-out. The workbench puts sliders on the
+same parameters and re-runs in place.
+
+**One formula, in one module, or two that drift.** The arithmetic was lifted out
+of the agent into `ceynex/models/shocks.py`; the agent's `_simulate_*` helpers
+are now one-line delegations returning the same `(delta, pct, detail)` tuples,
+so every evidence claim and assumption string it writes is byte-identical.
+`tests/models/test_shocks.py` pins that against golden values computed from the
+agent's code *before* the move (`git show d71083d:…`), so the guard is against
+the formulas as they were, not against the module checking itself. The
+baseline read moved the same way — `trade_economics.baseline_value(kg, item)` is
+public, and the route calls it rather than copying the query.
+
+**Deterministic, no model call, and it refuses like the agent.** `POST
+/api/scenario/run` is two bounded graph reads and arithmetic. No baseline in the
+graph, or no recorded preference coverage for an agreement shock, is
+`refused: true` with the reason and the assumptions still stated — the SAD §4.1
+posture the agent takes. Policy documents are not consulted (the agent's D10
+sourced rate is an override the reader can set by hand), and the assumptions say
+so on every run.
+
+**Every parameter comes back with its provenance, `TBD` included.** All seven
+`source:` fields in `config/elasticities.yaml` are still placeholders. The agent
+reads only the value; the workbench returns `value / default / basis / source /
+overridden` for each and the page prints the `TBD` sources in amber under a line
+saying what they are. A slider over a number nobody has sourced must not look
+like a fitted estimate, and hiding the column would be the quiet way to make it
+look like one.
+
+**Its own allowance and its own switch.** A sixth rate-limit block,
+`scenario_rate_limit` in `config/api.yaml`, under a `scenario:` identity prefix
+for the reason every other block has one: moving a slider must never spend the
+allowance for asking questions. `GET /api/usage/limits` discloses it with the
+rest (SRS 3.4.6). `CEYNEX_SCENARIO=off` removes the route and nothing else — the
+agent keeps simulating from questions either way, because the formulas live in
+the shared module regardless.
+
+**Cost, stated plainly.** No new table, no new dependency, no model spend. One
+route, one page, one shared module; the agent file is 46 lines shorter.
+
