@@ -850,3 +850,33 @@ Measuring the conversational features needs a multi-turn harness, which
 `DEFERRED.md` records as not built.
 
 **Still not re-run:** the 21 GREEN questions in `queries.md`, and `make coherence`.
+
+## 9. Inline citations — the pre-registered rule, then the measurement
+
+**Rule written 2026-09-11, before any cited run.** `CEYNEX_CITATIONS` shipped off
+because enabling it changes the merge prompt every answer is written from, and §8
+established that a prompt change measured on a single run is worth nothing. The
+protocol that §8 called for now exists — `make eval-repeat` runs the set three
+times with the prompt cache cleared before each and reports medians and spread
+(`eval/repeat.py`) — so the flag can be decided rather than guessed.
+
+Two conditions, three cold runs each: `make eval-repeat` (off) and
+`make eval-repeat-cited` (on). The decision is made on the **medians**, and the
+thresholds below encode the noise floor §8 measured (one question on routing and
+grounding, one figure on the ungrounded count). All six must hold for the flag to
+go on:
+
+| # | Criterion | Why |
+|---|---|---|
+| 1 | Routing exact match and recall: medians **identical** to the off run | Citations touch the merge prompt only. Any movement here is a defect, not noise. |
+| 2 | `answers_fully_grounded` median ≥ off median − 0.037 | One question of 27. A larger drop means the SOURCES block is confusing the model. |
+| 3 | `ungrounded_figures_total` median ≤ off median + 1 | The measured floor is ±1. |
+| 4 | `citations.marker_valid_rate` median ≥ 0.98 | A `[n]` pointing past the evidence list is an invented citation — the failure the feature exists to prevent. |
+| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 | Below this the markers are decoration, not a discipline, and not worth a prompt change. |
+| 6 | `crashed` = 0 and `answers_with_no_evidence` no higher than the off median | Table stakes. |
+
+Anything else and the flag stays off, with the failing criterion recorded here.
+The rule is not revised after the runs; if it turns out to be the wrong rule, that
+is a new section with a new rule and a new set of runs.
+
+*Results: to be recorded below once the runs complete.*
