@@ -7,10 +7,11 @@ forward-looking tea-volume/cinnamon-price answers come from a target-matched
 registered model.  It intentionally refuses production and substitution claims
 when their required measurement or relationship is not represented faithfully.
 
-Confidence is derived from the number and recency of supporting observations;
-model forecasts also carry their rolling-origin MAPE.  The formula is local but
-uses the project's shared staleness penalty, so it never disguises a fixed score
-as a measurement.
+Confidence is derived from the number and recency of supporting observations.
+Model forecasts additionally use rolling-origin MAPE and interval coverage, so
+an interval that repeatedly misses held-out observations cannot receive the
+same confidence as a calibrated one. The formula is local but uses the project's
+shared staleness penalty, so it never disguises a fixed score as a measurement.
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ log = logging.getLogger(__name__)
 
 AGENT = "agriculture_commodity"
 EXPORT_VALUE_TARGET = "export_value_usd"
+NOMINAL_INTERVAL_COVERAGE = 0.80
+INTERVAL_COVERAGE_PENALTY_SCALE = 0.30
+INTERVAL_COVERAGE_PENALTY_CAP = 0.15
+MISSING_INTERVAL_COVERAGE_PENALTY = 0.10
 
 SERIES = {
     "price": {
@@ -358,11 +363,14 @@ async def _model_forecast(
     )
     mape = float((metadata.metrics or {}).get("mape", float("nan")))
     mape_text = f" Rolling-origin MAPE: {mape:.1%}." if mape == mape else ""
+    coverage_text, coverage_assumption = _coverage_limitation(metadata.metrics or {})
     assumptions = [
         f"Served from registered model {model_id}.",
         "The model uses its own annual training series; KG export-value history was not substituted.",
         "Intervals are 80% prediction intervals.",
     ]
+    if coverage_assumption:
+        assumptions.append(coverage_assumption)
     if intent.requested_frequency in {"quarter", "month"}:
         assumptions.append(
             f"You asked about {intent.requested_frequency}s, but this model is annual; returned periods are annual."
@@ -381,7 +389,7 @@ async def _model_forecast(
                 f"Model source: {metadata.source or 'not recorded'}; training window "
                 f"{(metadata.training_window or {}).get('period_start', '?')}–"
                 f"{(metadata.training_window or {}).get('period_end', '?')} with "
-                f"{metadata.training_rows or 0} observations.{mape_text}"
+                f"{metadata.training_rows or 0} observations.{mape_text}{coverage_text}"
             ),
             model_id=model_id,
             period=(
@@ -617,7 +625,48 @@ def _model_confidence(metadata: Any) -> float:
     accuracy_penalty = min(0.30, float(mape)) if isinstance(mape, int | float) else 0.20
     support = min(0.25, observations * 0.015)
     months_old = max(0, (datetime.now(UTC).year - latest_year) * 12)
-    return clamp(0.65 + support - accuracy_penalty - staleness_penalty(months_old))
+    return clamp(
+        0.65
+        + support
+        - accuracy_penalty
+        - staleness_penalty(months_old)
+        - _interval_coverage_penalty(metrics)
+    )
+
+
+def _interval_coverage_penalty(metrics: dict[str, Any]) -> float:
+    """Penalise 80% intervals that miss too many rolling-origin actuals.
+
+    The penalty is 0 at the nominal 80% coverage and rises by 0.03 for every
+    ten percentage points below it, capped at 0.15. A missing/invalid coverage
+    metric receives a fixed 0.10 penalty rather than assuming calibration.
+    """
+    coverage = metrics.get("coverage")
+    if isinstance(coverage, bool) or not isinstance(coverage, int | float) or not 0.0 <= float(coverage) <= 1.0:
+        return MISSING_INTERVAL_COVERAGE_PENALTY
+    shortfall = max(0.0, NOMINAL_INTERVAL_COVERAGE - float(coverage))
+    return min(INTERVAL_COVERAGE_PENALTY_CAP, shortfall * INTERVAL_COVERAGE_PENALTY_SCALE)
+
+
+def _coverage_limitation(metrics: dict[str, Any]) -> tuple[str, str | None]:
+    """Return evidence and an assumption whenever coverage weakens a forecast."""
+    coverage = metrics.get("coverage")
+    folds = metrics.get("folds")
+    penalty = _interval_coverage_penalty(metrics)
+    if isinstance(coverage, bool) or not isinstance(coverage, int | float) or not 0.0 <= float(coverage) <= 1.0:
+        return (
+            f" Rolling-origin 80% interval coverage is not recorded; confidence reduced by {penalty:.2f}.",
+            "The model has no valid rolling-origin interval-coverage metric; forecast confidence was reduced.",
+        )
+    if float(coverage) >= NOMINAL_INTERVAL_COVERAGE:
+        return f" Rolling-origin 80% interval coverage: {float(coverage):.0%}.", None
+    fold_text = f" over {int(folds)} folds" if isinstance(folds, int | float) and folds > 0 else ""
+    return (
+        f" Rolling-origin 80% interval coverage: {float(coverage):.0%}{fold_text}, below nominal 80%; "
+        f"confidence reduced by {penalty:.2f}.",
+        f"Backtest 80% interval coverage was {float(coverage):.0%}{fold_text}, below nominal 80%; "
+        f"forecast confidence was reduced by {penalty:.2f}.",
+    )
 
 
 def _load_model(item: str, target: str) -> tuple[Any, Any] | None:

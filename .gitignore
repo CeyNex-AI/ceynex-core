@@ -36,6 +36,10 @@ data/parquet/
 # LLM prompt-hash cache
 .cache/
 
+# Local end-to-end evaluation records. The harness is tracked; each run's
+# data-dependent output is kept local and summarised in docs/EVALUATION.md.
+eval/results/
+
 # Frontend (M3)
 web/node_modules/
 web/dist/

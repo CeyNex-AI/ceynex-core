@@ -372,6 +372,39 @@ GBM is retained only when it improves MAPE by at least 5% relative to the best
 simple candidate. It does not meet that threshold, so the annual naïve baseline
 is selected for both targets.
 
+### Fold-level forecast-error analysis
+
+`python -m eval.agriculture_forecast_errors` writes the three held-out
+predictions behind each selected annual-naïve model to a local, git-ignored JSON
+record. The following values were reproduced from the dated M1 snapshots on
+2026-09-07. Each fold trains only through the stated prior year and predicts the
+next year; it is not a random split.
+
+| Target | Test year | Actual | Forecast | Absolute percentage error | Inside 80% interval? |
+|---|---:|---:|---:|---:|---|
+| Tea export volume (kg) | 2023 | 241,912,000 | 250,191,000 | 3.42% | yes |
+| Tea export volume (kg) | 2024 | 245,787,000 | 241,912,000 | 1.58% | yes |
+| Tea export volume (kg) | 2025 | 257,440,000 | 245,787,000 | 4.53% | yes |
+| Cinnamon producer price (USD/kg) | 2022 | 9.9371 | 11.2900 | 13.61% | no |
+| Cinnamon producer price (USD/kg) | 2023 | 8.9257 | 9.9400 | 11.36% | yes |
+| Cinnamon producer price (USD/kg) | 2024 | 10.0533 | 8.9300 | 11.17% | no |
+
+Tea's largest held-out miss was 11,653,000 kg in 2025 (4.53%); all three
+actuals were inside the model's 80% intervals. This is **not** evidence of a
+calibrated 100% coverage rate: with only three folds, it can only indicate that
+the intervals were wide enough for these three outcomes. Cinnamon's 2022 price
+fall and 2024 rebound were both outside the intervals, giving 1/3 coverage
+against the nominal 80%. This undercoverage is a reason to present the interval
+as a limitation, not a guarantee.
+
+Forecast confidence now includes an interval-coverage penalty in addition to
+the existing MAPE, training-observation, and staleness terms. For valid coverage
+`c < 0.80`, the penalty is `min(0.15, 0.30 * (0.80 - c))`; it is zero at or
+above nominal coverage. Thus cinnamon's 1/3 coverage reduces its self-reported
+forecast confidence by **0.14**. A model without a valid coverage metric is
+penalised by 0.10 rather than assumed calibrated. The forecast evidence and
+assumptions state this limitation whenever the penalty applies.
+
 ### Cinnamon benchmark limitation
 
 The Liyanage/Silva/Marasinghe purchasing-price panel is unavailable. Therefore
@@ -380,6 +413,74 @@ is **not a reproduction of the published benchmark**. Any comparison in the
 report must quote the paper's reported MAPE with this target, frequency, and
 source difference stated beside it; it must not imply the same train/test split
 or data were used.
+
+### Agriculture agent end-to-end smoke evaluation
+
+Measured on **2026-09-06** against the local PostgreSQL `fact_trade` records,
+Neo4j graph, and registered M1 models. `python -m eval.agriculture_agent_e2e`
+runs five representative questions directly through the Agriculture & Commodity
+agent and writes its full local JSON record under `eval/results/`. It forces the
+LLM unavailable to make the run repeatable and to exercise SRS 3.4.3; therefore
+these are agent-level deterministic/degraded results, **not** a substitute for
+the orchestrator's 30-question evaluation.
+
+| Check | Required behaviour | Result |
+|---|---|---|
+| Cinnamon trend | Source-backed price trend with figures and two evidence records | Pass: 10.05 USD/kg in 2024, up 382.8% from 1991 |
+| Cinnamon forecast | Registered producer-price forecast with an 80% interval | Pass: 2025 point forecast 10.05 USD/kg; 8.96-11.15 interval; annual-frequency caveat stated |
+| Cinnamon districts | Do not invent a largest district without a sourced share | Pass: lists Matara, Galle, and Ratnapura; explicitly refuses a largest-share claim |
+| Tea export trend | Tea Board export-volume trend with figures and two evidence records | Pass: 257,440,000 kg in 2025, down 20.3% from 2011 |
+| Tea-to-rubber substitution | Do not infer a relationship without evidence | Pass: explicitly reports that the effect cannot be estimated responsibly |
+
+All **5 of 5** checks passed, with a mean of **2.0 evidence records** per
+answer. Each answer was correctly marked `degraded=True`, because no LLM prose
+was requested. The two refusal cases are passes, not missing functionality:
+they show the agent preserves evidence boundaries instead of manufacturing a
+district share or substitution effect.
+
+### Agriculture cross-source validation
+
+`python -m eval.agriculture_validation --write-flags` validates only
+semantically equivalent, connector-normalised annual export-volume totals. It
+aggregates partner-level UN Comtrade rows to a national total, keeps an existing
+Tea Board or DEA/EAC world-total row as-is, and compares tea (`TEA_BOARD` vs
+`UN_COMTRADE`) and cinnamon (`CINNAMON` vs `UN_COMTRADE`) by item and year.
+The run is non-destructive: source facts are only read, and only material
+(5-20%) or severe (>20%) discrepancies are inserted into `dq_flag`. Exact
+existing flags are not inserted twice.
+
+The run measured on **2026-09-07**, after the documented 2015--2024 UN
+Comtrade import, found 121 FAOSTAT, 15 Tea Board, 5 Cinnamon, 2,413 UN
+Comtrade, and 0 EDB agriculture facts. It evaluated 12 overlapping annual
+commodity-source pairs: 11 were minor differences, one was material, and none
+were severe. The material finding was tea export volume for 2020: Tea Board
+reported 265,569,000 kg and the partner-aggregated UN Comtrade total was
+279,710,426.42 kg (5.32\% difference). The run inserted this one material
+finding as a `dq_flag`; source facts were not altered. Repeating the command
+does not insert the same flag again.
+
+FAOSTAT's current `fact_trade` rows are producer prices, so they are not
+compared with export volumes; Pink Sheet is an auction-price series and is
+likewise not an export-volume comparator. The configured EDB connector is
+apparel-only. WITS tariff ingestion remains deliberately deferred and is
+reported as unavailable rather than treated as validated agriculture data.
+
+### Agriculture testing and evaluation record
+
+The agriculture checks are intentionally separated by failure type so a passing
+unit test cannot be mistaken for a validated external figure:
+
+| Evidence | Reproducible command or scope | Outcome on 2026-09-07 |
+|---|---|---|
+| Forecast-error analysis | `python -m eval.agriculture_forecast_errors` | 6 held-out predictions recorded; no source or model artifact changed |
+| Model selection | `tests/models/agriculture/test_evaluation.py` and `tests/models/agriculture/test_baseline.py` | annual-naïve selected for tea and cinnamon; interval contains each point forecast |
+| Backtest rules | `tests/eval/test_backtest.py` | expanding windows, error metrics, and interval coverage checked |
+| Agent behaviour | `tests/eval/test_agriculture_agent_e2e.py` | five planned questions passed in deterministic degraded mode; see the smoke-evaluation table above |
+| Cross-source validation | `tests/eval/test_agriculture_validation.py` and `python -m eval.agriculture_validation --write-flags` | 12 comparable pairs; 11 minor, 1 material, 0 severe; one material flag retained without altering facts |
+
+These checks do not validate WITS or reproduce the unavailable published
+cinnamon purchasing-price benchmark. Those are explicit deferred/limitation
+states, rather than passing results.
 
 ### Registry release procedure
 
