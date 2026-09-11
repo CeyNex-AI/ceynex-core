@@ -266,6 +266,17 @@ def clarify_enabled() -> bool:
     return value not in ("off", "0", "false", "no")
 
 
+def scenario_enabled() -> bool:
+    """Kill switch for the scenario workbench (deviation D17).
+
+    Off removes `/api/scenario/*` and nothing else: the trade-economics agent
+    keeps simulating from questions exactly as before, because the formulas it
+    shares with the workbench live in `models/shocks.py` either way.
+    """
+    value = (_env("CEYNEX_SCENARIO", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
 def web_search_enabled() -> bool:
     """Whether general web search may run at all (deviation D14).
 

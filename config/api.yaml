@@ -79,3 +79,14 @@ websearch_rate_limit:
   enabled: true
   searches_per_minute: 60
   window_seconds: 60
+
+# POST /api/scenario/run — the scenario workbench (docs/ARCHITECTURE_DELTA.md
+# D17). A sixth block and identity namespace, `scenario:`, so moving a slider
+# never spends the allowance for asking questions. Generous, because the unit is
+# a slider position: a reader exploring a shock changes a value several times a
+# minute, and each run is two bounded graph reads and some arithmetic — no LLM,
+# no fan-out, no outbound call.
+scenario_rate_limit:
+  enabled: true
+  runs_per_minute: 60
+  window_seconds: 60
