@@ -375,14 +375,15 @@ expired. It was seen on 2026-09-11: the knitted-apparel question answered with n
 evidence from a cached decision, and correctly three times out of three once the
 cache was cleared.
 
-- **Decided: don't cache suspect routes.** `router.py::llm_route` now drops the
-  cache entry for a response it could not trust: unparseable, naming no valid
-  agent, or dropping an agent `keyword_route` selected (`LLMReasoningClient.forget`).
-  The distrusted route is still used for that ask. The next ask routes afresh.
-- **Pinned by an end-to-end test** over the real client and on-disk cache.
-- **Still owed: the measurement.** A cold run of `make eval` cannot see this
-  change, by construction. What it changes is the *warm* run, so the check is a
-  cold-then-warm pair, and it is owed.
+- **Decided: don't let a route that went wrong stick.** A router response that
+  fell back (unparseable, or naming no valid agent) is not kept in the cache
+  (`router.py::distrust_route`). Nor is a route whose answer came back with no
+  evidence, which `api/query_runner.py` judges. The next ask routes afresh.
+- **Narrowed after measuring.** The first rule also distrusted any route that
+  narrowed the keyword route. A cold-then-warm pair showed that evicted 11 of 30,
+  five of them the expected route, for about 1.5 s a repeat and no changed route
+  (EVALUATION.md §12). The owner narrowed it.
+- **Pinned by end-to-end tests** over the real client and on-disk cache.
 
 **"both" on the clarification card promised more than the agent delivered.**
 The gate asked "tea, cinnamon, or both?". The composed query still passed
@@ -395,8 +396,8 @@ figures were not available.
 - **A worse defect was underneath (D13, amended).** Choosing *cinnamon* also
   answered tea. `parse_intent` took the question's first-named item, not the
   reader's choice. It now reads the choice first.
-- **Still owed: `make eval-chat`.** The multi-turn set's clarified turn now picks
-  cinnamon rather than "both", and it needs re-running.
+- **Measured.** Re-run on the changed set, the clarified turn answers the
+  cinnamon the reader chose (EVALUATION.md §12).
 
 ## Verification still owed by a human
 
