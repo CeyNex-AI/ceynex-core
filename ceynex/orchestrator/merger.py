@@ -101,11 +101,19 @@ MERGE_RULES_PRESENTATION = """5. Four to eight sentences. Plain English for a po
 #: and `docs/EVALUATION.md` §8 measures what an unmeasured prompt change is
 #: worth: nothing, until it is run against the 30-question set. `CEYNEX_CITATIONS`
 #: turns it on so that run can be done as a comparison rather than a leap.
+#:
+#: Rule 6a's last two sentences were added on 2026-09-12. §9 found that asking for
+#: a citation on every figure made the model spell out totals it had worked out
+#: itself ("a new total of about USD 1,318,528,338"), beside the citation. They
+#: are measured under §9's own rule (EVALUATION.md §14).
 MERGE_RULES_PRESENTATION_CITED = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer.
 6a. After each sentence containing a figure, cite the SOURCE it came from as a bracketed
    number, like [1] or [3]. Use only the numbers in the SOURCES list below. Never cite a
-   number that is not in that list, and never cite a source for a sentence with no figure."""
+   number that is not in that list, and never cite a source for a sentence with no figure.
+   Cite a figure only as a SOURCE states it: never add, subtract or combine figures into
+   a total, a difference or a new level, even beside a citation. If a sentence would need
+   a figure no SOURCE states, leave that figure out."""
 
 #: Also inviolable, and last because that is where it has always been. Kept
 #: separate only so the presentation rules can be swapped out from between the
