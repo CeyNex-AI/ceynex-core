@@ -14,6 +14,7 @@ from ceynex.llm import FakeLLMClient
 from ceynex.orchestrator.router import (
     MIXED_SCOPE_NOTE,
     NO_TOPIC_NOTE,
+    ROUTER_SYSTEM,
     SCOPE_SENTENCE,
     keyword_route,
     llm_route,
@@ -519,3 +520,74 @@ def test_an_ordinary_analytics_question_still_does_not_get_trade_economics():
 
     assert "trade_economics" not in route
     assert "export_analytics" in route
+
+
+# --- what the LLM router lets the prompt cache keep (docs/DEFERRED.md) ---------
+#
+# The cache replays a response for 168 hours. A route the router had to distrust
+# must not be replayed: that is how S07's dropped agent answered the same
+# question, evidence-free, for a week.
+
+#: The keyword router selects export_analytics and apparel_manufacturing here.
+KNITWEAR = "Which markets buy the most Sri Lankan knitted apparel?"
+
+
+def test_the_knitwear_question_is_routed_to_two_agents_by_keyword():
+    """The premise of the tests below, pinned so they cannot pass vacuously."""
+    assert keyword_route(KNITWEAR).route == ["export_analytics", "apparel_manufacturing"]
+
+
+async def test_a_route_that_drops_an_agent_the_keyword_router_kept_is_not_cached():
+    """S07's shape: the model dropped export_analytics."""
+    llm = FakeLLMClient(response='{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}')
+    decision = await llm_route(KNITWEAR, llm)
+    assert decision.route == ["apparel_manufacturing"], "this ask still uses the model's route"
+    assert llm.forgotten == [("router", ROUTER_SYSTEM, KNITWEAR)]
+
+
+async def test_a_route_the_keyword_router_agrees_with_stays_cached():
+    """Over-eviction would make every repeat of a question pay for routing again."""
+    llm = FakeLLMClient(
+        response='{"route": ["export_analytics", "apparel_manufacturing"], "sectors": ["apparel"]}'
+    )
+    await llm_route(KNITWEAR, llm)
+    assert llm.forgotten == []
+
+
+async def test_a_route_that_adds_an_agent_stays_cached():
+    """Only a dropped agent is distrusted; the model may know better than keywords."""
+    llm = FakeLLMClient(
+        response='{"route": ["export_analytics", "apparel_manufacturing", "forecast"], '
+        '"sectors": ["apparel"]}'
+    )
+    await llm_route(KNITWEAR, llm)
+    assert llm.forgotten == []
+
+
+async def test_unparseable_routing_output_is_not_cached():
+    llm = FakeLLMClient(response="not json at all")
+    await llm_route("cinnamon price trend", llm)
+    assert llm.forgotten == [("router", ROUTER_SYSTEM, "cinnamon price trend")]
+
+
+async def test_a_route_naming_no_real_agent_is_not_cached():
+    llm = FakeLLMClient(response='{"route": ["shipping_agent"], "sectors": []}')
+    await llm_route("cinnamon price trend", llm)
+    assert llm.forgotten == [("router", ROUTER_SYSTEM, "cinnamon price trend")]
+
+
+async def test_an_unavailable_model_leaves_nothing_to_forget():
+    llm = FakeLLMClient(available=False)
+    await llm_route("cinnamon price trend", llm)
+    assert llm.forgotten == []
+
+
+async def test_a_client_without_forget_still_routes():
+    """The contracts' client protocol has no `forget`; its absence changes nothing else."""
+
+    class Plain:
+        async def generate(self, role, system, user, *, json_mode=False):
+            return '{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}'
+
+    decision = await llm_route(KNITWEAR, Plain())
+    assert decision.route == ["apparel_manufacturing"]
