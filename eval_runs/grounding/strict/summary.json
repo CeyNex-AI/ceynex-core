@@ -1,0 +1,329 @@
+{
+  "degraded_run": false,
+  "repeat": {
+    "runs": 3,
+    "metrics": {
+      "routing.exact_match": {
+        "median": 0.5667,
+        "min": 0.5667,
+        "max": 0.6,
+        "values": [
+          0.6,
+          0.5667,
+          0.5667
+        ],
+        "runs": 3
+      },
+      "routing.recall": {
+        "median": 0.8917,
+        "min": 0.8917,
+        "max": 0.925,
+        "values": [
+          0.8917,
+          0.8917,
+          0.925
+        ],
+        "runs": 3
+      },
+      "routing.never_empty": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "evidence.answers_fully_grounded": {
+        "median": 0.9259,
+        "min": 0.9259,
+        "max": 0.9259,
+        "values": [
+          0.9259,
+          0.9259,
+          0.9259
+        ],
+        "runs": 3
+      },
+      "evidence.ungrounded_figures_total": {
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "values": [
+          2.0,
+          2.0,
+          2.0
+        ],
+        "runs": 3
+      },
+      "evidence.answers_fully_grounded_direction_aware": {
+        "median": 0.9259,
+        "min": 0.9259,
+        "max": 0.9259,
+        "values": [
+          0.9259,
+          0.9259,
+          0.9259
+        ],
+        "runs": 3
+      },
+      "evidence.ungrounded_figures_total_direction_aware": {
+        "median": 2.0,
+        "min": 2.0,
+        "max": 2.0,
+        "values": [
+          2.0,
+          2.0,
+          2.0
+        ],
+        "runs": 3
+      },
+      "evidence.figures_accepted_by_direction_rule": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "evidence.mean_evidence_per_answer": {
+        "median": 3.0,
+        "min": 3.0,
+        "max": 3.15,
+        "values": [
+          3.0,
+          3.0,
+          3.15
+        ],
+        "runs": 3
+      },
+      "evidence.answers_with_no_evidence": {
+        "median": 1.0,
+        "min": 0.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "refusal.unanswerable_correctly_refused": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "citations.answers_with_markers": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "citations.figure_sentences_cited_rate": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "crashed": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "degraded_answers": {
+        "median": 5.0,
+        "min": 4.0,
+        "max": 6.0,
+        "values": [
+          4.0,
+          5.0,
+          6.0
+        ],
+        "runs": 3
+      },
+      "guards.answers_served_deterministic": {
+        "median": 7.0,
+        "min": 6.0,
+        "max": 7.0,
+        "values": [
+          7.0,
+          7.0,
+          6.0
+        ],
+        "runs": 3
+      },
+      "guards.explanations_discarded": {
+        "median": 5.0,
+        "min": 4.0,
+        "max": 6.0,
+        "values": [
+          4.0,
+          5.0,
+          6.0
+        ],
+        "runs": 3
+      },
+      "provider_gave_up": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      }
+    },
+    "latency_ms": {
+      "single_sector": {
+        "p50": {
+          "median": 4195.2,
+          "min": 4190.6,
+          "max": 4458.4,
+          "values": [
+            4195.2,
+            4190.6,
+            4458.4
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 5140.3,
+          "min": 5138.2,
+          "max": 5804.5,
+          "values": [
+            5804.5,
+            5138.2,
+            5140.3
+          ],
+          "runs": 3
+        }
+      },
+      "cross_sector": {
+        "p50": {
+          "median": 4636.8,
+          "min": 4570.4,
+          "max": 4777.5,
+          "values": [
+            4570.4,
+            4777.5,
+            4636.8
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 7221.9,
+          "min": 6739.5,
+          "max": 8264.8,
+          "values": [
+            6739.5,
+            8264.8,
+            7221.9
+          ],
+          "runs": 3
+        }
+      },
+      "simulation": {
+        "p50": {
+          "median": 5371.9,
+          "min": 5195.3,
+          "max": 5510.8,
+          "values": [
+            5371.9,
+            5195.3,
+            5510.8
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 6322.6,
+          "min": 5733.7,
+          "max": 6599.0,
+          "values": [
+            6322.6,
+            5733.7,
+            6599.0
+          ],
+          "runs": 3
+        }
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "id": "S07",
+      "question": "Which markets buy the most Sri Lankan knitted apparel?",
+      "routes": [
+        [
+          "apparel_manufacturing"
+        ],
+        [
+          "apparel_manufacturing"
+        ],
+        [
+          "apparel_manufacturing",
+          "export_analytics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        0,
+        0
+      ],
+      "route_moved": true,
+      "grounding_moved": false
+    },
+    {
+      "id": "X11",
+      "question": "How does Sri Lanka's tea sector compare with its fisheries sector?",
+      "routes": [
+        [
+          "export_analytics"
+        ],
+        [
+          "agriculture_commodity",
+          "export_analytics"
+        ],
+        [
+          "agriculture_commodity",
+          "export_analytics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        0,
+        0
+      ],
+      "route_moved": true,
+      "grounding_moved": false
+    }
+  ]
+}

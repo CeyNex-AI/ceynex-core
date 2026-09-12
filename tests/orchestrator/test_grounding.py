@@ -201,3 +201,57 @@ async def test_the_degraded_path_never_reports_ungrounded_figures():
 
     assert result.ungrounded == []
     assert result.degraded
+
+
+# --- direction-aware grounding (CEYNEX_GROUNDING=direction, EVALUATION.md §13) --
+#
+# Trade economics reports an impact signed ("USD -161,815,198"), and the model
+# states it unsigned with a word for the fall ("a decrease of USD 161,815,198").
+# That is §1's grounding class 1 and §9's X09 misses. The rule accepts it only
+# when the figure's own sentence says the value fell.
+
+from ceynex.orchestrator.grounding import FELL, split_sentences  # noqa: E402
+
+SIGNED = ["Losing GSP+ changes export value by USD -161,815,198 (-5.7%)."]
+
+
+def test_a_fall_stated_without_its_sign_is_grounded_when_its_sentence_says_so():
+    answer = "Export value would decrease by USD 161,815,198 a year."
+    assert ungrounded_figures(answer, SIGNED, direction_aware=True) == []
+    assert ungrounded_figures(answer, SIGNED, direction_aware=False) == ["161,815,198"]
+
+
+def test_without_a_word_for_the_fall_the_unsigned_figure_stays_ungrounded():
+    """The sign flip the strict check exists to catch: a fall told as a rise."""
+    answer = "Export value would grow by USD 161,815,198 a year."
+    assert ungrounded_figures(answer, SIGNED, direction_aware=True) == ["161,815,198"]
+
+
+def test_the_word_must_be_in_the_figures_own_sentence():
+    answer = "Export value would decrease. The change is USD 161,815,198 a year."
+    assert ungrounded_figures(answer, SIGNED, direction_aware=True) == ["161,815,198"]
+
+
+def test_a_negative_figure_is_never_grounded_by_a_positive_one():
+    assert ungrounded_figures("It fell by -1,234,567 in all.", ["It was 1,234,567 in all."],
+                              direction_aware=True) == ["-1,234,567"]
+
+
+def test_direction_is_the_default_and_strict_restores_the_old_check(monkeypatch):
+    """The default flipped when EVALUATION.md §13's rule held (2026-09-12)."""
+    answer = "Export value would decrease by USD 161,815,198 a year."
+    monkeypatch.delenv("CEYNEX_GROUNDING", raising=False)
+    assert ungrounded_figures(answer, SIGNED) == []
+    monkeypatch.setenv("CEYNEX_GROUNDING", "strict")
+    assert ungrounded_figures(answer, SIGNED) == ["161,815,198"]
+
+
+def test_the_words_that_say_a_value_fell_are_whole_words():
+    assert FELL.search("a decline of") and FELL.search("would be cut") and FELL.search("down from")
+    assert not FELL.search("the breakdown by market") and not FELL.search("a downturn-free year")
+
+
+def test_splitting_loses_and_moves_nothing():
+    text = "Tea rose 4.25 percent. The U.S. was not covered! Why? 2024 was the last year."
+    assert "".join(split_sentences(text)) == text
+    assert len(split_sentences(text)) == 4

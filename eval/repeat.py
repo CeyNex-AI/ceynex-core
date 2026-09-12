@@ -36,6 +36,9 @@ HEADLINE_METRICS = (
     "routing.never_empty",
     "evidence.answers_fully_grounded",
     "evidence.ungrounded_figures_total",
+    "evidence.answers_fully_grounded_direction_aware",
+    "evidence.ungrounded_figures_total_direction_aware",
+    "evidence.figures_accepted_by_direction_rule",
     "evidence.mean_evidence_per_answer",
     "evidence.answers_with_no_evidence",
     "refusal.unanswerable_correctly_refused",
@@ -44,6 +47,9 @@ HEADLINE_METRICS = (
     "citations.figure_sentences_cited_rate",
     "crashed",
     "degraded_answers",
+    "guards.answers_served_deterministic",
+    "guards.explanations_discarded",
+    "provider_gave_up",
 )
 
 LATENCY_CATEGORIES = ("single_sector", "cross_sector", "simulation")

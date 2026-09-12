@@ -325,11 +325,25 @@ def elasticity_config() -> dict[str, Any]:
 def citations_enabled() -> bool:
     """Inline `[n]` citation markers in merge prose (execution plan §7).
 
-    **Default off**, unlike the other feature switches here, and deliberately so.
-    Turning it on changes the prompt every answer is written from, and
-    `docs/EVALUATION.md` §8 is explicit that an unmeasured prompt change is worth
-    nothing until it has been run against the 30-question set. The flag exists so
-    that run is a comparison rather than a leap.
+    **Default on** since 2026-09-12. It was off until then, because turning it on
+    changes the prompt every answer is written from, and `docs/EVALUATION.md` §8
+    is explicit that an unmeasured prompt change is worth nothing until it has
+    been run against the 30-question set. §9's rule kept it off; §14 ran the same
+    rule again with rule 6a reworded, and all seven criteria held.
+    `CEYNEX_CITATIONS=off` restores the uncited prompt exactly.
     """
-    value = (_env("CEYNEX_CITATIONS", "off") or "off").lower()
+    value = (_env("CEYNEX_CITATIONS", "on") or "on").lower()
     return value in ("on", "1", "true", "yes")
+
+
+def grounding_direction_aware() -> bool:
+    """Whether the grounding check (SRS 3.1.3) accepts an unsigned figure for a
+    negative one when its sentence says the value fell (EVALUATION.md §13).
+
+    **Default on** since 2026-09-12, when its pre-registered rule held on six
+    cold runs: the strict check was discarding correct prose on every
+    simulation question with a negative impact. `CEYNEX_GROUNDING=strict` keeps
+    the check exactly as it was before, the one every earlier grounding figure
+    was measured with.
+    """
+    return (_env("CEYNEX_GROUNDING", "direction") or "direction").lower() != "strict"

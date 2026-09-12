@@ -1415,3 +1415,377 @@ The two LLM misses are §10's own, read the same way: C07's derived band width
 withheld by the grounding guard, and C08's defensible `analyse`. §10's two S07
 misses on C03 did not recur, which is that question's usual nondeterminism, not
 a fix. The degraded misses are §10's rewrite limit.
+
+## 13. Direction-aware grounding — the pre-registered rule
+
+**Rule written 2026-09-12, before any run with `CEYNEX_GROUNDING=direction`.**
+
+### Why the check needs changing
+
+§9 counted *"decrease by approximately USD 161,815,198"* as an ungrounded
+figure. The trade-economics agent writes every impact signed ("USD
+-161,815,198"). The model restates it unsigned, beside the word "decrease", and
+`grounding.ungrounded_figures` keeps the sign. So the prose counts as
+ungrounded. M01–M04 carried one such figure in every off run.
+
+**On today's code that class costs prose, not grounding.** Since §9 ran, main's
+#58 (`70513bb`) arrived with the merge. It grounds each agent's own explanation
+before the merge sees it. That closed a real hole: an unchecked explanation
+used to launder its figures into the corpus the merge guard trusts. It also
+moved this class out of the metric and into the guard. The strict guard now
+does two things:
+
+- It discards the trade-economics explanation ("states a figure not in its own
+  findings").
+- It then discards the merge prose.
+
+The reader gets the deterministic composition, marked degraded. The cold run
+§12 took on this code (`eval_runs/router-cache/cold.json`, plus its console log,
+which is not committed; the harness did not record discards until now) shows it:
+
+- **4 answers degraded** (M01–M04). There were none in any of §9's six runs.
+- **7 answers served as the deterministic composition.** 5 of them (X09, M01,
+  M02, M03, M04) are this class. The other 2 cite years the evidence does not
+  state.
+- The strict ungrounded count **fell from §9's 4 to 2**, because the prose
+  that carried those figures was never served.
+
+`tests/agents/test_common.py` pins the mechanism, at no cost:
+
+- the same explanation is discarded under `strict` and kept under `direction`;
+- a rise stated for a fall is discarded under both.
+
+The plan approved on 2026-09-12 judged this change on
+`ungrounded_figures_total` (median ≤ baseline − 1). The guard now hides the
+class from that metric, so that criterion would have failed a change that
+works. It is replaced below, before any run, by what the change is for: prose
+restored. The plan's routing criterion is replaced too, for the reason given
+in criterion 1.
+
+### The change
+
+It sits behind `CEYNEX_GROUNDING=direction` and is off by default.
+
+- An unsigned figure in the prose is grounded by the same figure carried
+  negative, **but only when the figure's own sentence says the value fell**
+  (`grounding.FELL`: decrease, decline, fall, drop, lower, reduce, loss and the
+  like).
+- A signed figure still matches only its own sign.
+- A figure with no fall word in its sentence is judged exactly as before.
+
+The check reads one sentence at a time, so the whole-prose guard and the
+streaming `SentenceGate` still reach the same verdict. The 450 seeded property
+cases in `tests/orchestrator/test_answer_stream.py` pass unchanged, and 100 more
+exercise the direction rule.
+
+Two properties are inherited from strict:
+
+- **The prefix rule.** Strict accepts a prose figure when a corpus figure
+  starts with its integer part. The same generosity now reaches negative
+  figures: "USD 161.8 million" is accepted for "USD -161,815,198", just as it
+  is for "161,815,198".
+- **No check on a positive figure's direction.** "Fell by 11,355,453" is
+  grounded by "USD +11,355,453" under both rules, as it always was.
+
+### What each run records
+
+Every run file carries all of the following:
+
+- **`answers_fully_grounded` and `ungrounded_figures_total`** stay strict
+  whichever way the flag is set, so the series above stays continuous.
+- **The `…_direction_aware` versions** sit beside them.
+- **`figures_accepted_by_direction_rule`** lists what only the new rule
+  accepts. Each entry carries its sentence and the evidence entry that
+  carries it negative.
+- **`guards.answers_served_deterministic`** counts answers whose composed
+  prose the merge guard discarded. The merge runs once per question, so each
+  discard is one answer. Each `prose_discarded` entry names the figures it
+  rejected.
+- **`guards.explanations_discarded`** counts agent explanations discarded,
+  one per agent, so it can exceed the number of answers.
+- **`provider_gave_up`** counts calls on which the primary provider gave up.
+
+### The rule
+
+Two conditions, three cold runs each, all with `CEYNEX_CITATIONS=off`:
+
+- `CEYNEX_GROUNDING=strict` (the strict runs)
+- `CEYNEX_GROUNDING=direction` (the direction runs)
+
+Same stack, same day, and the stack is verified before the first run as in §9.
+Medians decide. All seven criteria must hold for `direction` to become the
+default:
+
+| # | Criterion | Why |
+|---|---|---|
+| 1 | Routing exact match and recall: the direction runs' medians are at most one question (≤ 0.034) from the strict runs' | The flag is read only after routing, so routing cannot move. This checks that the two sets of runs are comparable. It is not "identical", as in §9. Routing exact match was 0.60 in 3 of the 10 cold runs in §8 and §9, and 0.5667 in the other 7. With that spread, two medians of three would differ about one time in three by chance alone. |
+| 2 | The direction runs' `guards.answers_served_deterministic` median ≤ the strict runs' median − 1 | The change exists to stop discarding correct prose. A change to a guard that restores nothing is not worth making. |
+| 3 | **Every** figure the direction rule accepts, in all six runs, is read against its sentence and its evidence entry. Each must state that the same quantity fell, by the same amount up to the stated rounding. If even one does not, the change fails outright. That includes a figure stated as a rise, as a level, as another quantity's change, or as a different amount | Two things let a figure through that should not pass. One is sentence scope: a fall word elsewhere in the sentence vouches for the figure. The other is the prefix rule: a rounded form shares only the leading digits. Only reading catches either. The list is computed against evidence, as the metric is. The guard checks a wider corpus: the question, summaries, figures and assumptions. A figure it accepts from that corpus which evidence does not ground shows up in both ungrounded lists instead, and criterion 4 counts it. |
+| 4 | The direction runs' `ungrounded_figures_total_direction_aware` median ≤ the strict runs' `ungrounded_figures_total` median + 1 | Prose the guard now keeps may bring in no figure except the ones the rule accepts. The +1 is §8's floor. |
+| 5 | The direction runs' `answers_fully_grounded_direction_aware` median ≥ the strict runs' `answers_fully_grounded` median − 0.037 | One question of 27, as in §9's criterion 2. |
+| 6 | `crashed` = 0 in every run, and the direction runs' `answers_with_no_evidence` median ≤ the strict runs' | Table stakes. |
+| 7 | `make eval-degraded` under each setting: every answer is byte-identical | The deterministic path writes no prose to check, so the flag must not reach it. This check is free and has no noise. |
+
+**Reported beside the criteria, not criteria themselves:**
+
+- `degraded_answers` and `guards.explanations_discarded`, the explanation
+  half of the same effect.
+- The strict metric on the direction runs. It will rise: the prose that comes
+  back states its impacts unsigned, which is exactly what the change accepts.
+- Latency.
+
+**Void runs.** A run with `provider_gave_up` > 0 is void. On some call the free
+failsafe answered, or nothing did, and that says nothing about CeyNex. A first
+attempt that fails followed by a retry that answers does not count.
+`degraded_answers` is not a void condition, because under `strict` it is part
+of the effect being measured.
+
+A void run is renamed `void-run-N.json` and kept. Its replacement is written as
+the next free `run-N.json` in the same directory. The summary is recomputed
+over the three counted runs, and both are reported.
+
+**The expected result, stated now.** It comes from the §12 cold run. That was a
+single run taken for another purpose, so it is a prior, not a baseline; the
+strict runs supply the baseline. The strict runs should serve about five
+answers deterministic for this class and two for other reasons. The direction
+runs should serve about two. Criterion 2 should therefore clear by about five,
+not one. A pass by exactly one would mean the class is smaller than one run
+suggested.
+
+Anything else and the default stays `strict`, with the failing criterion
+recorded here. The rule is not revised after the runs.
+
+### Measured 2026-09-12 — all seven hold, and `direction` is the default
+
+Six cold runs, three each way, from 16:58 to 17:12, on the stack §9 used. It was
+verified before the first run: 4,625 `fact_trade` rows, 4,625 `EXPORTS_TO` edges
+and 901 policy chunks. The runs were taken on this branch before it was rebased
+onto `main` at `f80a703`. That rebase added only #80 and #81, and neither
+changes what the 30 questions do. #81 is the load test's own code. #80's two
+changes on this path act only on a clarified choice, marked by text none of
+the 30 contains, or on a route the router failed to produce, which is evicted
+from the cache afterwards rather than answered differently. No run was void: `provider_gave_up`
+was 0 in all six. The per-run files are in `eval_runs/grounding/`.
+
+| # | Criterion | strict (3 runs) | direction (3 runs) | holds? |
+|---|---|---:|---:|---|
+| 1 | routing exact match / recall | 0.5667 [0.5667–0.60] / 0.8917 [0.8917–0.925] | 0.5667 [0.5667–0.5667] / 0.925 [0.8917–0.925] | **yes** — 0 and 0.033 apart |
+| 2 | answers served deterministic | 7 [6–7] | 2 [1–3] | **yes**, by five |
+| 3 | accepted figures, read one by one | — | 18 of 18 correct | **yes** |
+| 4 | ungrounded figures, each by its own definition | 2 [2–2] | 0 [0–0] | **yes** |
+| 5 | answers fully grounded, each by its own definition | 0.9259 [0.9259–0.9259] | 1.00 [1.00–1.00] | **yes** |
+| 6 | crashed / answers with no evidence | 0 / 1 [0–1] | 0 / 0 [0–1] | **yes** |
+| 7 | degraded run, answers byte-identical | 30 of 30 | 30 of 30 | **yes** |
+
+**Criterion 2 cleared by five, as predicted.** Five answers carry the sign
+class: X09 and M01–M04. The strict guard served every one of them as the
+deterministic composition, in every strict run. Every direction run served them
+as model prose.
+
+**The audit (criterion 3).** The direction rule accepted 18 figures: X09's two
+impacts and one each for M01–M04, in each of the three direction runs. The
+strict runs accepted none, because their prose for those questions was
+discarded before scoring.
+
+- Each sentence says that the quantity its evidence entry names fell, by the
+  same amount. 16 state the amount exactly. Two state it to the stated
+  rounding: "USD 8.24 million" for USD -8,240,802, and "USD 161.8 million" for
+  USD -161,815,198.
+- None states a rise, a level, another quantity or another amount.
+- The closest call is M04 in the second run: *"a decrease in overall
+  agriculture export revenue by approximately USD 2,573,111 … from a baseline
+  of USD 214,425,881"*. It is judged the same quantity because the figure, its
+  direction and its baseline are exactly the evidence entry's. That entry
+  itself labels cinnamon's revenue "Agriculture export revenue". "Overall" is
+  the model's word, added on top of the agent's own label. The label predates
+  this change (§9's served prose used it too) and is recorded in `DEFERRED.md`
+  as a wording defect in its own right.
+
+**Beside the criteria:**
+
+- **Degraded answers** fell from 5 [4–6] to 0 [0–1], and **explanations
+  discarded** from 5 [4–6] to 0 [0–1]. The simulation questions' own
+  explanations now survive too.
+- **The strict metric on the direction runs** reads 6 ungrounded [6–6] and
+  0.8148 fully grounded. That is exactly the six accepted figures per run, as
+  stated beforehand.
+- **Single-sector p95** was 5.1 s [5.1–5.8] strict and 7.7 s [5.9–9.5]
+  direction. Each is a p95 of 12 samples per run, which §8 says not to quote.
+
+**What `direction` still discards.** Three questions:
+
+- **S05:** a year the evidence does not state (2023/2024, or the forecast
+  horizon 2027).
+- **S10:** 2024.
+- **X07:** "-2020", in all three direction runs.
+
+X07 is not the rule's doing. Both rules judge a signed figure identically, and
+X07 recorded no explanation discard in either condition. So both conditions fed
+the merge the same inputs, and the 3-to-0 split is the merge model's own
+sampling. The figure is almost certainly a hyphenated year, "post-2020" or
+"2016-2020", which `grounding.NUMBER` reads as a negative number. The discarded
+prose is not kept, so which one cannot be shown. The strict guard discarded
+prose for the same "-2020" three times during §11's model-backed load run
+(its server log, not committed). It is recorded in `DEFERRED.md`.
+
+**Decision.** `CEYNEX_GROUNDING` now defaults to `direction`, in `settings.py`
+and `.env.example`. `strict` remains available, and it is the check every
+grounding figure before this section was measured with. The published series
+is unchanged by the flip: `answers_fully_grounded` and
+`ungrounded_figures_total` stay strict whichever way the flag is set. §14's off
+runs are therefore the direction runs above, and its criteria 2 and 3 read the
+direction-aware metrics.
+
+## 14. Rule 6a reworded — §9's rule, run again
+
+**Rule written 2026-09-12, before any run with the reworded rule 6a.** §9 kept
+`CEYNEX_CITATIONS` off because criteria 2 and 3 failed. The extra ungrounded
+figures fell into two classes:
+
+- One was the metric's: the signs §13 takes up.
+- The other was the prompt's: totals the model worked out itself and wrote
+  beside a citation. Examples are M03's *"a new total of about USD
+  1,318,528,338"* and M05's *"USD 2,872,929,484"*. Rule 2 already forbade such
+  figures, and rule 6a ("every figure a SOURCE states is cited") seemed to pull
+  against it.
+
+Rule 6a now ends:
+
+> Cite a figure only as a SOURCE states it: never add, subtract or combine
+> figures into a total, a difference or a new level, even beside a citation. If
+> a sentence would need a figure no SOURCE states, leave that figure out.
+
+Rule 6a exists only in the cited prompt, so it cannot move an off run.
+
+**#58 hides the derived-total class from §9's metrics, just as it hides §13's
+class.** A total like M03's appears in no finding. On today's code the merge
+guard discards the prose that states it and serves the deterministic
+composition, so the ungrounded metric never sees the figure. §9's six criteria
+alone would therefore pass a prompt that made the model write *more* such
+totals, as long as the guard kept throwing them away. So this rule adds
+criterion 7, on what the guard discards. That makes the rule harder to pass.
+
+Criterion 1 moves the other way, as in §13 and for the same reason. It is
+reported both ways, identical medians and within one question, so a reader can
+apply §9's rule verbatim.
+
+The runs: three cold runs with `CEYNEX_CITATIONS=on` (the cited runs) against
+three off runs, both under whichever grounding §13 adopts.
+
+- **If §13 adopts `direction`,** its direction runs serve as the off runs.
+  Criteria 2 and 3 then read the direction-aware metrics
+  (`answers_fully_grounded_direction_aware`,
+  `ungrounded_figures_total_direction_aware`).
+- **If it does not,** its strict runs serve as the off runs, and the criteria
+  read the strict metrics, exactly as §9 did.
+
+Both definitions are reported either way, and §13's void rule applies.
+
+| # | Criterion |
+|---|---|
+| 1 | Routing exact match and recall: the medians are at most one question (≤ 0.034) from the off runs'. §9's "identical" is reported beside it |
+| 2 | `answers_fully_grounded` median ≥ off median − 0.037 |
+| 3 | `ungrounded_figures_total` median ≤ off median + 1 |
+| 4 | `citations.marker_valid_rate` median ≥ 0.98 |
+| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 |
+| 6 | `crashed` = 0, and `answers_with_no_evidence` no higher than the off median |
+| 7 | `guards.answers_served_deterministic` median ≤ off median + 1 |
+
+Criteria 5 and 7 are not independent. A deterministic answer carries no
+markers, so every discard also lowers the cited-sentence rate. If both fail on
+the same answers, that is one failure counted twice, and the write-up says so.
+
+If all seven hold, `CEYNEX_CITATIONS` defaults to on. That is a prompt change,
+so it is redeployed. Otherwise the flag stays off, with the failing criterion
+recorded here.
+
+Reported beside the criteria, and not one of them: the number of derived totals
+per run, whether they reached the prose or were rejected in a discard. A derived
+total is a figure that is the sum or difference of two stated ones, and it is
+the class the rewording is for.
+
+### Measured 2026-09-12 — all seven hold, and citations are on by default
+
+**The runs.** The off runs are §13's direction runs, since §13 adopted
+`direction`. The cited runs are three cold runs with `CEYNEX_CITATIONS=on` and
+`CEYNEX_GROUNDING=direction`. Runs 1 and 2 finished at 17:33 and 17:36. Run 3 is
+void and was replaced by run 4, which finished at 19:22.
+
+- **Same stack.** It was verified again before run 4: 4,625 `fact_trade` rows,
+  4,625 `EXPORTS_TO` edges and 901 policy chunks, as for §13.
+- **Runs 1 to 3 used the off runs' code:** the branch before its rebase onto
+  `f80a703`. The one addition made `direction` the grounding default, and every
+  cited run set that variable itself.
+- **Run 4 used the rebased branch.** Its code differs only by #80 and #81, and
+  §13 sets out why neither changes what the 30 questions do. #80's route
+  eviction also acts only after an answer, and a cold run asks each question
+  once.
+
+**The void run.** Run 3 recorded `provider_gave_up` = 34. The OpenAI account ran
+out of credits partway through, and from then on the provider refused calls.
+Under §13's void rule it is kept as `void-run-3.json`, and its figures are in no
+median here. The replacement ran after credits were added and recorded
+`provider_gave_up` = 0, as did runs 1 and 2. `summary.json` covers runs 1, 2
+and 4.
+
+| # | Criterion | off (§13's direction runs) | cited (runs 1, 2, 4) | holds? |
+|---|---|---:|---:|---|
+| 1 | routing exact match / recall | 0.5667 [0.5667–0.5667] / 0.925 [0.8917–0.925] | 0.5667 [0.5667–0.60] / 0.925 [0.8917–0.925] | **yes**. The medians are identical, so §9's wording holds too |
+| 2 | answers fully grounded (direction-aware) | 1.00 [1.00–1.00] | 1.00 [1.00–1.00] | **yes** |
+| 3 | ungrounded figures (direction-aware) | 0 [0–0] | 0 [0–0] | **yes** |
+| 4 | marker valid rate | — | 1.00 [1.00–1.00] | **yes** |
+| 5 | figure sentences cited | — | 0.869 [0.857–0.883] | **yes** |
+| 6 | crashed / answers with no evidence | 0 / 0 [0–1] | 0 / 0 [0–1] | **yes** |
+| 7 | answers served deterministic | 2 [1–3] | 2 [2–3] | **yes** |
+
+Criteria 5 and 7 both hold, so the overlap between them does not arise.
+
+**No derived totals in any counted cited run.** A derived total is a figure
+within 0.1% of the sum or difference of two figures the served answer states,
+where each part is at least 1% of the figure and neither is the figure itself.
+Every ungrounded figure and every figure a merge discard rejected was checked
+against that test. None qualified.
+
+§9's two cases are M03 (one run in three) and M05 (all three). In this set, both
+were served as model prose with markers, in all three runs, with no ungrounded
+figure. The guard did not hide them: criterion 7 is there to catch exactly that,
+and neither answer was discarded. Discarded prose is not kept, so a derived total
+inside a discard is caught only if its parts appear in the served answer.
+
+**What the guard discarded.** The same three questions as in the off runs:
+
+- **S05**, in all three runs: the years 2023 and 2024. In run 1 it also rejected
+  the forecast rounded to whole dollars, "1,310,610,516" for 1,310,610,515.97.
+  `grounding.py`'s docstring records this as known: a figure rounded differently
+  from its source counts as ungrounded, and a rounding up is not a prefix.
+- **S10**, in runs 1 and 4: 2024.
+- **X07**, in runs 1 and 2: "-2020", the hyphenated year recorded in
+  `DEFERRED.md`.
+
+**Beside the criteria:**
+
+- **The strict metrics** read 0.8148 fully grounded and 6 ungrounded in every
+  run, both cited and off. They are the six figures the direction rule accepts
+  in each run.
+- **Answers carrying markers:** 24, 24 and 25 of 27.
+- **Degraded answers and explanations discarded:** 0 [0–1] each, the same as
+  off. The one discarded explanation was M03's trade-economics explanation in
+  run 1. The off runs discarded M05's once.
+- **Single-sector p95** was 7.0 s [5.2–10.8] cited and 7.7 s [5.9–9.5] off. §8
+  says not to quote either.
+- **Questions that disagreed with themselves:** S07 and X11 on routing. S07 is
+  the known unreliable question.
+
+**Decision.** `CEYNEX_CITATIONS` now defaults to `on`, in `settings.py` and
+`.env.example`, and `off` restores the uncited prompt exactly. It is a prompt
+change, so it reaches production only when the backend is redeployed.
+
+- `make eval-repeat` now sets `CEYNEX_CITATIONS=off` itself, so `eval_runs/off`
+  still holds what its name says.
+- `make eval` measures the default, which is now cited.
+
+**Not covered by this rule.** The rule measured the 30 questions through
+`POST /api/query`'s path. §10's conversation set ran with citations off, and the
+flip reaches chat turns as well. That set has not been re-run with citations
+on. In a streamed turn the draft shows `[n]` as plain text until the finished
+answer replaces it with the rendered markers.

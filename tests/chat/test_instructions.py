@@ -106,12 +106,15 @@ def test_instructions_are_not_injected_into_grounding():
     assert "instruction" not in source
 
 
-def test_citations_are_off_by_default_so_the_prompt_is_unchanged():
+def test_citations_are_on_by_default_and_off_restores_the_uncited_prompt(monkeypatch):
     """Enabling `[n]` markers changes the prompt every answer is written from.
     `EVALUATION.md` §8 measures what an unmeasured prompt change is worth, so the
-    default has to be the measured one."""
+    default has to be the measured one: on since §14's rule held."""
     from ceynex.settings import citations_enabled
 
+    monkeypatch.delenv("CEYNEX_CITATIONS", raising=False)
+    assert citations_enabled() is True
+    monkeypatch.setenv("CEYNEX_CITATIONS", "off")
     assert citations_enabled() is False
 
 

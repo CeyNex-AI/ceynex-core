@@ -84,11 +84,12 @@ eval-degraded:
 
 # The repeated-run protocol (docs/EVALUATION.md §8-§9): three cold runs, medians
 # and spread, and the questions that disagreed with themselves. `-cited` is the
-# same with inline citations on, which is how the flag is decided rather than
-# guessed. Each run clears the prompt cache first, so every call is paid for.
+# same with inline citations on, which is how the flag was decided rather than
+# guessed (§14). Both set the flag, so neither depends on its default. Each run
+# clears the prompt cache first, so every call is paid for.
 REPEAT ?= 3
 eval-repeat:
-	$(PYTHON) -m eval.harness --repeat $(REPEAT) --cold --json-dir eval_runs/off
+	CEYNEX_CITATIONS=off $(PYTHON) -m eval.harness --repeat $(REPEAT) --cold --json-dir eval_runs/off
 
 eval-repeat-cited:
 	CEYNEX_CITATIONS=on $(PYTHON) -m eval.harness --repeat $(REPEAT) --cold --json-dir eval_runs/on

@@ -1,0 +1,1162 @@
+{
+  "degraded_run": false,
+  "summary": {
+    "questions": 30,
+    "crashed": 0,
+    "routing": {
+      "exact_match": {
+        "rate": 0.5667,
+        "of": 30
+      },
+      "recall": 0.8917,
+      "never_empty": {
+        "rate": 1.0,
+        "of": 30
+      }
+    },
+    "evidence": {
+      "answers_fully_grounded": {
+        "rate": 0.8148,
+        "of": 27
+      },
+      "ungrounded_figures_total": 6,
+      "answers_fully_grounded_direction_aware": {
+        "rate": 1.0,
+        "of": 27
+      },
+      "ungrounded_figures_total_direction_aware": 0,
+      "figures_accepted_by_direction_rule": 6,
+      "mean_evidence_per_answer": 3.0,
+      "answers_with_no_evidence": 1
+    },
+    "refusal": {
+      "unanswerable_correctly_refused": {
+        "rate": 1.0,
+        "of": 3
+      },
+      "answerable_with_no_content": {
+        "rate": 0.0,
+        "of": 27
+      },
+      "answerable_that_stated_some_limit": {
+        "rate": 0.7778,
+        "of": 27
+      }
+    },
+    "latency_ms": {
+      "cross_sector": {
+        "p50": 4877.6,
+        "p95": 6806.3,
+        "max": 6806.3,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "simulation": {
+        "p50": 6010.8,
+        "p95": 8742.4,
+        "max": 8742.4,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "single_sector": {
+        "p50": 4428.7,
+        "p95": 5210.2,
+        "max": 5210.2,
+        "budget_ms": 10000,
+        "within_budget": true
+      }
+    },
+    "degraded_answers": 0,
+    "guards": {
+      "answers_served_deterministic": 2,
+      "explanations_discarded": 0
+    },
+    "provider_gave_up": 0,
+    "citations": {
+      "answers_with_markers": 24,
+      "marker_valid_rate": {
+        "rate": 1.0,
+        "of": 74
+      },
+      "figure_sentences_cited_rate": {
+        "rate": 0.8571,
+        "of": 63
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "S01",
+      "category": "single_sector",
+      "question": "Which country takes the largest share of Sri Lanka's tea exports?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4562.6,
+      "confidence": 0.8400000000000001,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "In 2024, Iraq was the largest importer of Sri Lankan tea, taking 10.9% of the total export value, which amounted to USD 149,621,564 out of USD 1,373,467,019 [1]. Sri Lanka exported tea to 145 different markets, indicating a diversified export base [2]. The Herfindahl concentration index for these exports was 0.05, further reflecting the diversity in Sri Lanka's tea export destinations [2]. The United Arab Emirates was noted as the fastest-growing market for Sri Lankan tea between 2020 and 2024, with an annual growth rate of 31.6% [3].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 4,
+      "figure_sentences_cited": 4
+    },
+    {
+      "id": "S02",
+      "category": "single_sector",
+      "question": "How fast have cinnamon exports grown over the last five years?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4428.7,
+      "confidence": 0.565,
+      "degraded": false,
+      "evidence_count": 6,
+      "answer": "Cinnamon exports from Sri Lanka contracted at a rate of 0.2% per year over the last four years, reaching a total export value of USD 214,425,881 in 2024 [5]. Mexico was the largest market for Sri Lankan cinnamon, accounting for 38.4% of the total export value in 2024 [3]. Honduras was the fastest-growing destination for cinnamon exports between 2020 and 2024, with a growth rate of 7.7% per year [6]. There is no available data on cinnamon production at the district level, as no producing districts are recorded in the knowledge graph [2].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "S03",
+      "category": "single_sector",
+      "question": "How concentrated are Sri Lanka's rubber export destinations?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4471.7,
+      "confidence": 0.8400000000000001,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "Sri Lanka's rubber export destinations are relatively diversified. In 2024, the country exported USD 25,787,076 worth of rubber to 36 different markets [1]. Pakistan was the largest single market, accounting for 18.6% of the total export value, which equates to USD 4,797,272 [1]. The Herfindahl concentration index for these exports is 0.11, suggesting a diversified market [2]. India emerged as the fastest-growing destination for Sri Lankan rubber, with an annual growth rate of 18.1% from 2020 to 2024 [3].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 4,
+      "figure_sentences_cited": 4
+    },
+    {
+      "id": "S04",
+      "category": "single_sector",
+      "question": "Which district contributes the largest share of cinnamon production?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5210.2,
+      "confidence": 0.47333333333333333,
+      "degraded": false,
+      "evidence_count": 6,
+      "answer": "It is not possible to determine which district contributes the largest share of cinnamon production in Sri Lanka, as there is no recorded data on cinnamon-producing districts or their production shares [1][2]. While Mexico was the largest export destination for Sri Lankan cinnamon in 2024, accounting for 38.4% of the export value, this information does not provide insight into district-level production [3]. The cinnamon export market reached 81 destinations in 2024, with a Herfindahl concentration index of 0.19, indicating moderate concentration [4]. Additionally, the overall value of cinnamon exports decreased at a compounded annual rate of 0.2% from 2020 to 2024 [5].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 5,
+      "citations_valid": 5,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "S05",
+      "category": "single_sector",
+      "question": "Forecast tea export earnings for the next three years.",
+      "expected_route": [
+        "forecast"
+      ],
+      "actual_route": [
+        "forecast"
+      ],
+      "agents_used": [
+        "forecast"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4148.7,
+      "confidence": 0.9,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "Tea export value is projected at 1,310,610,515.97 USD for 2025, with a range between 1,174,909,788.54 USD and 1,446,311,243.40 USD at an 80% confidence interval. The forecast is based on a registered model that focuses on agriculture and tea export values. This rests on stated assumptions: Served from the model registry: agriculture/tea/export_value_usd@v20260819T171520Z. The registered model's own annual source series was used; no KG export-value history was substituted. Intervals are 80% prediction intervals.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [
+        "merge: 2023, 2024,"
+      ],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 0,
+      "citations_valid": 0,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "S06",
+      "category": "single_sector",
+      "question": "What is driving the recent movement in cinnamon prices?",
+      "expected_route": [
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity"
+      ],
+      "agents_used": [
+        "agriculture_commodity"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 3404.5,
+      "confidence": 0.2,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "The recent movement in cinnamon prices cannot be determined due to the lack of usable annual observations in the FAOSTAT dataset. At least two observations are required to establish a direction of change, but the dataset contains none [1][2].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 0,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "S07",
+      "category": "single_sector",
+      "question": "Which markets buy the most Sri Lankan knitted apparel?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "apparel_manufacturing"
+      ],
+      "agents_used": [],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 1256.7,
+      "confidence": 0.05,
+      "degraded": false,
+      "evidence_count": 0,
+      "answer": "This question could not be answered from the data currently loaded. The apparel side (knit and woven garments) could not be covered (No EDB Apparel sub-category data found in the graph.).",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 0,
+      "citations_valid": 0,
+      "figure_sentences": 0,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "S08",
+      "category": "single_sector",
+      "question": "Has woven apparel export value grown or fallen since 2020?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4824.4,
+      "confidence": 0.05000000000000002,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "The woven apparel export value from Sri Lanka was USD 1,579,945,752 in 2020, with the United States being the largest market, accounting for 44.8% of this value, or USD 707,774,621 [1]. The export value of woven apparel has fallen since 2020, as it had already been contracting at a rate of 4.4% per year from 2016 to 2020 [3]. There is no available data to determine the specific changes in export value for woven apparel beyond 2020, as the relevant data for subsequent years is not provided. Not covered: the apparel side (knit and woven garments) could not be covered (No EDB Apparel sub-category data found in the graph.).",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "S09",
+      "category": "single_sector",
+      "question": "Which importing country has shown the fastest-growing demand for Sri Lankan apparel?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5167.7,
+      "confidence": 0.24000000000000002,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "Croatia has shown the fastest-growing demand for Sri Lankan apparel knit, with an annual growth rate of 41.9% between 2020 and 2024 [4]. In 2024, Sri Lanka exported a total of USD 2,838,863,126 in apparel knit, with the United States being the largest market, accounting for 38.8% of that value [1]. The apparel knit exports reached 128 destination markets in 2024, indicating a moderately concentrated market with a Herfindahl concentration index of 0.19 [2]. The overall export value of apparel knit grew at a compounded annual rate of 2.8% from 2020 to 2024 [3]. The analysis is based on Comtrade's HS-code category for apparel knit, which is separate from the EDB's 'Apparel' sub-category, and thus, data from the latter could not be covered [1].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 5,
+      "citations_valid": 5,
+      "figure_sentences": 4,
+      "figure_sentences_cited": 4
+    },
+    {
+      "id": "S10",
+      "category": "single_sector",
+      "question": "Forecast knitted apparel export value for the next two years.",
+      "expected_route": [
+        "forecast"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "forecast"
+      ],
+      "agents_used": [
+        "forecast"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4118.4,
+      "confidence": 0.44999999999999996,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "The forecast for Sri Lanka's knitted apparel export value in 2025 is approximately 3.00 billion USD, with an 80% confidence interval ranging from 2.25 billion USD to 3.14 billion USD [1]. This projection is based on a registered model specifically designed for knitted apparel exports [2]. However, the forecast for the following year, 2026, could not be provided due to the lack of available data for that period. Additionally, data for woven garments could not be covered due to the absence of relevant sub-category data.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "S11",
+      "category": "single_sector",
+      "question": "How exposed is Sri Lanka's apparel sector to a single buyer market?",
+      "expected_route": [
+        "export_analytics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5103.0,
+      "confidence": 0.42000000000000004,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "Sri Lanka's apparel sector is moderately exposed to a single buyer market, with the United States accounting for 38.8% of the total apparel knit export value of USD 2,838,863,126 in 2024 [1]. The Herfindahl concentration index for these exports is 0.19, indicating a moderate level of concentration across 128 destination markets [2]. Croatia emerged as the fastest-growing destination for Sri Lankan apparel knit exports, with a compound annual growth rate of 41.9% from 2020 to 2024 [3]. However, the exposure of the entire apparel sector, including both knit and woven garments, could not be assessed due to the lack of data on the woven garments segment.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "S12",
+      "category": "single_sector",
+      "question": "What were Sri Lanka's tea exports in 2035?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "forecast"
+      ],
+      "agents_used": [
+        "forecast"
+      ],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 3325.5,
+      "confidence": 0.15,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "There is not enough history for Sri Lanka's tea exports to produce a forecast for 2035. The knowledge graph holds zero annual observations for tea, which is too few to generate a reliable estimate [1]. Not covered: part of the question is outside what CeyNex covers. Scope is agriculture (tea, cinnamon, rubber, coconut) and apparel (HS 61/62) exports \u2014 SRS 2.4.",
+      "ungrounded_figures": [
+        "2035."
+      ],
+      "ungrounded_figures_direction_aware": [
+        "2035."
+      ],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 1,
+      "citations_valid": 1,
+      "figure_sentences": 1,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "X01",
+      "category": "cross_sector",
+      "question": "Compare the growth of tea and apparel exports over the last five years.",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4643.7,
+      "confidence": 0.4900000000000001,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "Over the last five years, Sri Lanka's tea exports grew at a compounded annual growth rate (CAGR) of 1.2% [1]. In 2024, the total export value of tea was USD 1,373,467,019, with Iraq being the largest market, accounting for 10.9% of this value [1]. The tea exports were diversified across 145 destination markets, with the United Arab Emirates being the fastest-growing destination at a CAGR of 31.6% [1]. Unfortunately, data on the growth of apparel exports, including knit and woven garments, could not be provided due to the lack of available sub-category data [1].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "X02",
+      "category": "cross_sector",
+      "question": "Which sector is more dependent on the European Union, agriculture or apparel?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4765.1,
+      "confidence": 0.24000000000000002,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "It is not possible to determine which sector, agriculture or apparel, is more dependent on the European Union based on the available data. The data provides information on Sri Lanka's apparel knit exports to Europe, which amounted to USD 1,287,353,652 in 2024, with the United Kingdom accounting for 32.0% of that value, or USD 412,536,956 [1]. The apparel sector is moderately concentrated, with exports reaching 37 European markets and a Herfindahl concentration index of 0.18 [1]. However, there are no specific figures available for the agriculture sector's exports to the European Union for comparison.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "X03",
+      "category": "cross_sector",
+      "question": "Do agriculture and apparel exports go to the same destination markets?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6005.7,
+      "confidence": 0.24000000000000002,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "Agriculture and apparel exports do not necessarily go to the same destination markets, as there is no available data on agriculture export destinations for comparison. In 2024, Sri Lanka exported USD 2,838,863,126 worth of apparel knit to 128 markets, with the United States being the largest market, accounting for 38.8% of the export value, which is USD 1,101,173,031 [1]. The Herfindahl concentration index for apparel knit exports was 0.19, indicating a moderately concentrated market [2]. However, without data on agriculture exports, it is not possible to determine if these two sectors share common destination markets. Not covered: the apparel side (knit and woven garments) could not be covered (No EDB Apparel sub-category data found in the graph.); Agriculture and apparel exports do not go to the same destination markets, as there is no sourced export volume series available for apparel knit. Additionally, there are no compatible price, volume, or export-value series to provide further insights into this comparison..",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "X04",
+      "category": "cross_sector",
+      "question": "Which of Sri Lanka's export sectors is most concentrated in a single market?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6340.5,
+      "confidence": 0.43285714285714294,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "Sri Lanka's tea export sector is the most concentrated in a single market, with Iraq accounting for 10.9% of the total tea export value, which was USD 1,373,467,019 in 2024 [1]. This concentration amounts to USD 149,621,564 of tea exports to Iraq [1]. Despite this concentration, the tea sector is generally diversified, reaching 145 destination markets and having a Herfindahl concentration index of 0.05 [2]. The United Arab Emirates was the fastest-growing destination for tea exports, with a compound annual growth rate of 31.6% from 2020 to 2024 [3]. The concentration of other sectors, such as apparel, could not be assessed due to a lack of data [COULD NOT BE ANSWERED].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 4,
+      "figure_sentences_cited": 4
+    },
+    {
+      "id": "X05",
+      "category": "cross_sector",
+      "question": "Compare cinnamon and knitted apparel as export earners.",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6298.8,
+      "confidence": 0.24000000000000002,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "In 2024, Sri Lanka exported USD 214,425,881 worth of cinnamon to 81 destination markets, with Mexico being the largest market, accounting for 38.4% of the total export value, which is USD 82,418,643 [1]. The cinnamon export market is moderately concentrated, with a Herfindahl concentration index of 0.19 [2]. Over the period from 2020 to 2024, the export value of cinnamon has slightly contracted at a rate of 0.2% per year [3]. Honduras was the fastest-growing destination for cinnamon exports during this period, with an annual growth rate of 7.7% [4]. Unfortunately, data for knitted apparel as an export earner is not available, preventing a direct comparison between the two sectors.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "X06",
+      "category": "cross_sector",
+      "question": "Is Sri Lanka's export base becoming more or less diversified across sectors?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5932.7,
+      "confidence": 0.4900000000000001,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "Sri Lanka's export base for tea is becoming more diversified across sectors. In 2024, tea was exported to 145 destination markets, with Iraq being the largest single market, accounting for 10.9% of the total export value of USD 1,373,467,019 [1]. The Herfindahl concentration index of 0.05 further indicates a diversified export base [2]. Additionally, the United Arab Emirates emerged as the fastest-growing destination for tea, with a compound annual growth rate of 31.6% from 2020 to 2024 [3]. However, the diversification status of Sri Lanka's apparel exports could not be determined due to the lack of specific data on knit and woven garments.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "X07",
+      "category": "cross_sector",
+      "question": "Which sector recovered faster after 2020, agriculture or apparel?",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4877.6,
+      "confidence": 0.19000000000000003,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "The data provided does not include specific figures for the agriculture sector's export performance after 2020, so a comparison with the apparel sector's recovery is not available. In 2020, Sri Lanka exported USD 2,540,413,695 of apparel knit, with the United States accounting for 40.5% of that value. The apparel sector experienced a contraction of 1.5% per year over the four years leading up to 2020. Not covered: the apparel side (knit and woven garments) could not be covered (No EDB Apparel sub-category data found in the graph.); There is no sourced export volume series available for apparel, specifically for apparel_knit, so we cannot determine which sector, agriculture or apparel, recovered faster after 2020. Additionally, no compatible price, volume, or export-value series is available to provide a substitute for this information.. This rests on stated assumptions: Apparel Knit here is Comtrade's HS-code-based category, a separate source and boundary from EDB's own combined 'Apparel' sub-category reported elsewhere -- the two are not reconciled against each other, so they will not match.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [
+        "merge: -2020"
+      ],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 0,
+      "citations_valid": 0,
+      "figure_sentences": 4,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "X08",
+      "category": "cross_sector",
+      "question": "Forecast both tea and apparel exports and say which is expected to grow faster.",
+      "expected_route": [
+        "forecast",
+        "export_analytics"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "forecast"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "forecast"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4154.6,
+      "confidence": 0.30000000000000004,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "Tea exports are projected to reach approximately 1.31 billion USD in 2025, with a range between 1.17 billion and 1.45 billion USD [1]. However, the expected growth rate for tea exports is not provided, and there are no available figures for apparel exports. Consequently, it is not possible to compare the growth rates of tea and apparel exports or determine which is expected to grow faster [1]. Not covered: the apparel side (knit and woven garments) could not be covered (No EDB Apparel sub-category data found in the graph.); There are no available figures to forecast tea and apparel exports or to determine which is expected to grow faster. The context indicates that no compatible data series was available for this analysis..",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 1,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "X09",
+      "category": "cross_sector",
+      "question": "Which sector would be hurt more by losing access to the United States market?",
+      "expected_route": [
+        "export_analytics",
+        "trade_economics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6806.3,
+      "confidence": 0.39,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "Losing access to the United States market would hurt the apparel sector more than the agriculture sector. Apparel export revenue is projected to decrease by approximately USD 161,815,198, or 5.7%, from a 2024 baseline of USD 2,838,863,126 [3]. In contrast, agriculture export revenue would decline by about USD 30,216,274, or 2.2%, from a baseline of USD 1,373,467,019 [1]. The impact on apparel is larger by 3.5 percentage points. The analysis assumes a linear shock model over a 12-month horizon without compounding effects. However, specific data for knit and woven garments and tea export volume trends could not be covered due to data limitations.",
+      "ungrounded_figures": [
+        "161,815,198,",
+        "30,216,274,"
+      ],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [
+        "161,815,198, :: Apparel export revenue is projected to decrease by approximately USD 161,815,198, or 5.7%, from a 2024 baseline of USD 2,838,863,126 [3]. :: Apparel export revenue of USD 2,838,863,126 in 2024 is the baseline the simulation moves by -5.7%, USD -161,815,198. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC",
+        "30,216,274, :: In contrast, agriculture export revenue would decline by about USD 30,216,274, or 2.2%, from a baseline of USD 1,373,467,019 [1]. :: Agriculture export revenue of USD 1,373,467,019 in 2024 is the baseline the simulation moves by -2.2%, USD -30,216,274. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC"
+      ],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "X10",
+      "category": "cross_sector",
+      "question": "Compare the destination concentration of rubber and woven apparel.",
+      "expected_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4295.4,
+      "confidence": 0.46499999999999997,
+      "degraded": false,
+      "evidence_count": 4,
+      "answer": "In 2024, Sri Lanka exported USD 25,787,076 worth of rubber to 36 destination markets, with Pakistan being the largest single market, accounting for 18.6% of the total export value, which is USD 4,797,272 [1]. The Herfindahl concentration index for rubber exports is 0.11, indicating a diversified market [2]. However, a comparison of destination concentration between rubber and woven apparel cannot be made due to the lack of data on woven apparel exports [3].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "X11",
+      "category": "cross_sector",
+      "question": "How does Sri Lanka's tea sector compare with its fisheries sector?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity"
+      ],
+      "agents_used": [],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 2637.3,
+      "confidence": 0.15,
+      "degraded": false,
+      "evidence_count": 0,
+      "answer": "This question could not be answered from the data currently loaded. The question does not name anything CeyNex covers. Scope is agriculture (tea, cinnamon, rubber, coconut) and apparel (HS 61/62) exports \u2014 SRS 2.4.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 0,
+      "citations_valid": 0,
+      "figure_sentences": 0,
+      "figure_sentences_cited": 0
+    },
+    {
+      "id": "X12",
+      "category": "cross_sector",
+      "question": "Which is larger, Sri Lanka's apparel exports or its software services exports?",
+      "expected_route": [
+        "export_analytics"
+      ],
+      "actual_route": [
+        "export_analytics"
+      ],
+      "agents_used": [
+        "export_analytics"
+      ],
+      "answerable": false,
+      "partial": false,
+      "elapsed_ms": 5964.7,
+      "confidence": 0.8400000000000001,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "A direct comparison between Sri Lanka's apparel exports and software services exports cannot be made because data on software services exports is not available. In 2024, Sri Lanka exported USD 2,838,863,126 of apparel knit, with the United States accounting for 38.8% of this export value, amounting to USD 1,101,173,031 [1]. The apparel knit exports reached 128 destination markets, indicating a moderately concentrated market with a Herfindahl concentration index of 0.19 [2]. Croatia was the fastest-growing destination for these exports between 2020 and 2024, with an annual growth rate of 41.9% [3]. However, without data on software services exports, it is not possible to determine which sector is larger.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    },
+    {
+      "id": "M01",
+      "category": "simulation",
+      "question": "How would a 5% depreciation of the Sri Lankan rupee affect apparel exports compared to agriculture?",
+      "expected_route": [
+        "trade_economics",
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6010.8,
+      "confidence": 0.29000000000000004,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "A 5% depreciation of the Sri Lankan rupee is projected to decrease agriculture export revenue by approximately USD 8,240,802, a reduction of 0.6% from the 2024 baseline of USD 1,373,467,019 [1]. In contrast, apparel export revenue is expected to increase by about USD 11,355,453, representing a growth of 0.4% from a baseline of USD 2,838,863,126 [2]. This indicates that the depreciation would have a more negative impact on agriculture exports compared to apparel exports, with a difference of 1.0 percentage points in their respective changes [1]. However, specific data on the impact of the depreciation on different sub-categories of apparel, such as knit and woven garments, could not be provided due to the lack of detailed export volume and price series [1].",
+      "ungrounded_figures": [
+        "8,240,802,"
+      ],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [
+        "8,240,802, :: A 5% depreciation of the Sri Lankan rupee is projected to decrease agriculture export revenue by approximately USD 8,240,802, a reduction of 0.6% from the 2024 baseline of USD 1,373,467,019 [1]. :: Agriculture export revenue of USD 1,373,467,019 in 2024 is the baseline the simulation moves by -0.6%, USD -8,240,802. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC"
+      ],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 2
+    },
+    {
+      "id": "M02",
+      "category": "simulation",
+      "question": "What happens to apparel export revenue if Sri Lanka loses GSP+?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 6090.9,
+      "confidence": 0.29000000000000004,
+      "degraded": false,
+      "evidence_count": 2,
+      "answer": "If Sri Lanka loses GSP+, apparel export revenue is expected to decrease by approximately USD 161,815,198, representing a 5.7% reduction from the 2024 baseline of USD 2,838,863,126 [1]. This projection assumes the imposition of a Most Favored Nation (MFN) tariff of 9.5% on apparel [2]. The analysis is based on a linear model over a 12-month horizon, with elasticities derived from literature rather than specific Sri Lankan data [1]. However, the impact on the apparel sector, including both knit and woven garments, could not be fully covered due to the lack of specific sub-category data [1].",
+      "ungrounded_figures": [
+        "161,815,198,"
+      ],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [
+        "161,815,198, :: If Sri Lanka loses GSP+, apparel export revenue is expected to decrease by approximately USD 161,815,198, representing a 5.7% reduction from the 2024 baseline of USD 2,838,863,126 [1]. :: Apparel export revenue of USD 2,838,863,126 in 2024 is the baseline the simulation moves by -5.7%, USD -161,815,198. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC"
+      ],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 4,
+      "citations_valid": 4,
+      "figure_sentences": 1,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "M03",
+      "category": "simulation",
+      "question": "What if the European Union raised tariffs on Sri Lankan tea by 10%?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5164.7,
+      "confidence": 0.69,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "If the European Union raised tariffs on Sri Lankan tea by 10%, it is estimated that agriculture export revenue would decrease by approximately USD 54,938,681. This represents a 4.0% reduction from the 2024 baseline agriculture export revenue of USD 1,373,467,019 [1]. This scenario suggests a significant negative impact on the agriculture sector due to the tariff increase. The model assumes a linear response over a 12-month period and uses elasticity ranges from existing literature rather than estimates specific to Sri Lankan data [1].",
+      "ungrounded_figures": [
+        "54,938,681."
+      ],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [
+        "54,938,681. :: If the European Union raised tariffs on Sri Lankan tea by 10%, it is estimated that agriculture export revenue would decrease by approximately USD 54,938,681. :: Agriculture export revenue of USD 1,373,467,019 in 2024 is the baseline the simulation moves by -4.0%, USD -54,938,681. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC"
+      ],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": false,
+      "error": null,
+      "citations_total": 2,
+      "citations_valid": 2,
+      "figure_sentences": 2,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "M04",
+      "category": "simulation",
+      "question": "How would a 10% rupee depreciation change cinnamon export earnings?",
+      "expected_route": [
+        "trade_economics",
+        "agriculture_commodity"
+      ],
+      "actual_route": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 5668.2,
+      "confidence": 0.69,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "It is not possible to determine how a 10% rupee depreciation would specifically change cinnamon export earnings due to the lack of usable annual observations for cinnamon producer prices in the FAOSTAT dataset. However, for the broader category of agriculture exports, a 10% depreciation of the rupee is expected to decrease export revenue by approximately USD 2,573,111, representing a reduction of about 1.2% from the 2024 baseline of USD 214,425,881 [1]. This indicates a negative impact on agriculture export revenue overall, but the specific effect on cinnamon cannot be isolated from this data.",
+      "ungrounded_figures": [
+        "2,573,111,"
+      ],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [
+        "2,573,111, :: However, for the broader category of agriculture exports, a 10% depreciation of the rupee is expected to decrease export revenue by approximately USD 2,573,111, representing a reduction of about 1.2% from the 2024 baseline of USD 214,425,881 [1]. :: Agriculture export revenue of USD 214,425,881 in 2024 is the baseline the simulation moves by -1.2%, USD -2,573,111. MATCH (i)-[e:EXPORTS_TO]->(:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year WITH sum(e.value) AS total MATCH (i)-[e:EXPORTS_TO]->(c:Country) WHERE (i:Commodity OR i:ApparelCategory) AND toLower(i.name) = toLower($item) AND e.year = $year RETURN c.iso3 AS partner_iso3, c.name AS partner, e.value AS export_value_usd, total AS total_export_value_usd, CASE WHEN total > 0 THEN e.value / total ELSE 0.0 END AS share ORDER BY share DESC"
+      ],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 1,
+      "citations_valid": 1,
+      "figure_sentences": 1,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "M05",
+      "category": "simulation",
+      "question": "If global demand for knitted apparel fell 15%, what would that do to export revenue?",
+      "expected_route": [
+        "trade_economics",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "agents_used": [
+        "trade_economics"
+      ],
+      "answerable": true,
+      "partial": false,
+      "elapsed_ms": 4550.8,
+      "confidence": 0.165,
+      "degraded": false,
+      "evidence_count": 1,
+      "answer": "If global demand for knitted apparel fell by 15%, the apparel export revenue would paradoxically increase by approximately USD 34,066,358, representing a 1.2% rise from a baseline of USD 2,838,863,126 in 2024 [1]. This counterintuitive result is based on a simulation that assumes certain elasticities and a linear functional form over a 12-month horizon [1]. However, it is important to note that specific data for the knitted apparel sub-category could not be covered due to the absence of detailed EDB Apparel sub-category data [1].",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 1,
+      "figure_sentences_cited": 1
+    },
+    {
+      "id": "M06",
+      "category": "simulation",
+      "question": "Which sector should Sri Lanka prioritise for the next decade, and by how much will that raise GDP?",
+      "expected_route": [
+        "trade_economics",
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "actual_route": [
+        "export_analytics",
+        "agriculture_commodity",
+        "apparel_manufacturing"
+      ],
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "answerable": true,
+      "partial": true,
+      "elapsed_ms": 8742.4,
+      "confidence": 0.43285714285714294,
+      "degraded": false,
+      "evidence_count": 3,
+      "answer": "The data does not provide specific figures on which sector Sri Lanka should prioritize for the next decade or how much that would raise GDP. However, in 2024, Sri Lanka's tea exports amounted to USD 1,373,467,019 across 145 markets, with Iraq being the largest single market, accounting for 10.9% of the total export value, which is USD 149,621,564 [1]. The tea export market is diversified, with a Herfindahl concentration index of 0.05 [2]. The United Arab Emirates was the fastest-growing destination for tea exports, with a compound annual growth rate of 31.6% from 2020 to 2024 [3]. Unfortunately, no data is available for the apparel sector, and no specific projections for GDP growth from prioritizing any sector are provided.",
+      "ungrounded_figures": [],
+      "ungrounded_figures_direction_aware": [],
+      "direction_accepted": [],
+      "prose_discarded": [],
+      "provider_gave_up": 0,
+      "refused": true,
+      "error": null,
+      "citations_total": 3,
+      "citations_valid": 3,
+      "figure_sentences": 3,
+      "figure_sentences_cited": 3
+    }
+  ]
+}

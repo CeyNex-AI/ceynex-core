@@ -214,3 +214,121 @@ def test_the_repeat_summary_is_written_beside_the_runs(tmp_path):
     out = write_repeat_summary(tmp_path, [_summary(0.6, 4, 8000.0)], [[]], degraded=False)
     payload = json.loads(out.read_text())
     assert payload["repeat"]["runs"] == 1 and payload["disagreements"] == []
+
+
+def test_both_grounding_definitions_are_reported_on_the_same_answer():
+    """EVALUATION.md §13: the published series stays strict, whichever rule the
+    runtime used, and what only the direction rule accepts is listed with its
+    sentence for the audit."""
+    from eval.harness import direction_accepted
+
+    evidence = [
+        {"claim": "Baseline export value USD 2,838,863,126.", "detail": "2024"},
+        {"claim": "GSP+ loss changes export value by USD -161,815,198.", "detail": ""},
+    ]
+    answer = "Export value would decrease by USD 161,815,198 a year. It is a large share."
+    assert ungrounded(answer, evidence) == ["161,815,198"]
+    assert ungrounded(answer, evidence, direction_aware=True) == []
+    assert direction_accepted(answer, evidence) == [
+        "161,815,198 :: Export value would decrease by USD 161,815,198 a year."
+        " :: GSP+ loss changes export value by USD -161,815,198."
+    ]
+
+
+def test_the_strict_metric_ignores_the_runtime_switch(monkeypatch):
+    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
+    evidence = [{"claim": "USD -161,815,198", "detail": ""}]
+    assert ungrounded("It would decrease by USD 161,815,198 a year.", evidence) == ["161,815,198"]
+
+
+# --- what the guards discarded (EVALUATION.md §13) ------------------------
+
+
+def test_a_merge_discard_is_recorded_from_the_guard_that_made_it():
+    """Driven through the real guard, so a reworded log line breaks this test
+    rather than silently zeroing the count §13's rule is decided on."""
+    from ceynex.orchestrator.merger import _reject_ungrounded_prose
+    from eval.harness import GuardRecords
+
+    with GuardRecords() as guards:
+        _reject_ungrounded_prose("Exports rose to USD 999,999,999.", "How are exports?", {}, [])
+        _reject_ungrounded_prose("Exports rose to USD 4,200,000.", "q", {}, [
+            {"source_id": "KG", "claim": "USD 4,200,000 in 2024.", "detail": ""}
+        ])
+    assert guards.discarded == ["merge: 999,999,999."]
+
+
+async def test_an_explanation_discard_names_its_agent():
+    from ceynex.agents.common import AgentDeps, finish
+    from ceynex.contracts import Evidence, new_state
+    from ceynex.llm import FakeLLMClient
+    from eval.harness import GuardRecords
+
+    with GuardRecords() as guards:
+        await finish(
+            agent="trade_economics",
+            state=new_state("q", "tester"),
+            deps=AgentDeps(kg=None, llm=FakeLLMClient(response="It rose by USD 999,999,999.")),
+            summary="USD 4,200,000 in 2024.",
+            figures={},
+            evidence=[Evidence(source_id="KG", claim="USD 4,200,000 in 2024.", detail="")],
+            assumptions=[],
+        )
+    assert guards.discarded == ["explanation:trade_economics"]
+
+
+def test_records_stop_when_the_question_ends():
+    import logging
+
+    from eval.harness import GuardRecords
+
+    with GuardRecords() as guards:
+        pass
+    logging.getLogger("ceynex.orchestrator.merger").warning("merge prose discarded: 1 figure(s)")
+    assert guards.discarded == []
+
+
+def test_only_a_call_no_paid_model_answered_counts_as_the_provider_giving_up():
+    """A first attempt that times out and a retry that answers is ordinary: it
+    must not void a run. The format strings are `llm/client.py`'s own."""
+    import logging
+
+    from eval.harness import GuardRecords
+
+    client = logging.getLogger("ceynex.llm.client")
+    with GuardRecords() as guards:
+        client.warning("llm timed out after %.1fs (attempt %d/%d)", 8.0, 1, 2)
+        client.warning("llm call failed (attempt %d/%d): %s", 1, 2, "429")
+    assert guards.gave_up == 0
+
+    with GuardRecords() as guards:
+        client.warning("llm timed out after %.1fs (attempt %d/%d)", 8.0, 2, 2)
+        client.warning("llm call failed (attempt %d/%d): %s", 2, 2, "429")
+        client.warning(
+            "%s daily spend limit ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
+            "the deployment's", 5.0, 5.01, "degrading",
+        )
+        # After the primary gave up, so already counted on its last attempt.
+        client.warning("failsafe llm call failed: %s — degrading", "429")
+        client.warning("llm unavailable after primary and failsafe — degrading")
+    assert guards.gave_up == 3
+
+
+def test_the_report_counts_answers_served_deterministic_and_explanations_discarded():
+    from eval.harness import Result, report
+
+    def result(qid, discarded, gave_up=0):
+        return Result(
+            id=qid, category="simulation", question="q", expected_route=["a"],
+            actual_route=["a"], agents_used=["a"], answerable=True, partial=False,
+            elapsed_ms=10.0, confidence=0.5, degraded=bool(discarded), evidence_count=2,
+            answer="a", prose_discarded=discarded, provider_gave_up=gave_up,
+        )
+
+    summary = report([
+        result("M01", ["explanation:trade_economics", "merge: 8,240,802,"]),
+        result("M02", ["explanation:trade_economics", "explanation:forecast"]),
+        result("M03", [], gave_up=1),
+    ])
+    assert summary["guards"] == {"answers_served_deterministic": 1, "explanations_discarded": 3}
+    assert summary["provider_gave_up"] == 1

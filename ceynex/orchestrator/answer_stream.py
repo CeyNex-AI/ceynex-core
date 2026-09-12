@@ -40,20 +40,12 @@ their sentences arrive with `done`, which replaces the draft outright.
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 
 from ceynex.observability import trace
-from ceynex.orchestrator.grounding import ungrounded_figures
+from ceynex.orchestrator.grounding import SENTENCE_END, ungrounded_figures
 
 log = logging.getLogger(__name__)
-
-#: Terminal punctuation, any closing quotes or brackets, whitespace, then the
-#: start of another sentence. Whitespace is the whole point: no figure contains
-#: any, so a split here can never cut one. Missing a boundary only makes one
-#: release larger; it never makes one ungrounded.
-SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[\"'(\[]?[A-Z0-9])")
-
 
 def _emit_delta(text: str, index: int) -> None:
     trace.emit_live("answer_delta", text=text, index=index)

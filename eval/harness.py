@@ -120,6 +120,26 @@ class Result:
     evidence_count: int
     answer: str
     ungrounded_figures: list[str] = field(default_factory=list)
+    #: The same answer under the direction-aware rule (EVALUATION.md §13).
+    #: `ungrounded_figures` stays strict, so the published series is continuous
+    #: whichever way `CEYNEX_GROUNDING` is set for the run itself.
+    ungrounded_figures_direction_aware: list[str] = field(default_factory=list)
+    #: What only the direction rule accepts, each with its sentence and the
+    #: evidence entry carrying it negative: the list §13's rule has a person
+    #: read, one by one.
+    direction_accepted: list[str] = field(default_factory=list)
+    #: What the runtime grounding guards threw away on this question:
+    #: "merge: <figures>" when the composed prose gave way to the deterministic
+    #: composition, "explanation:<agent>" when an agent's own explanation did.
+    #: The metrics above cannot see either — discarded prose is replaced by
+    #: text that grounds — and both reach only the log, so `run_question`
+    #: collects them.
+    prose_discarded: list[str] = field(default_factory=list)
+    #: Calls the primary provider gave up on (its last attempt failed or timed
+    #: out) or the spend cap stopped. Not a finding about CeyNex: the free
+    #: failsafe, or nothing, answered instead, so EVALUATION.md §13 voids a run
+    #: with any.
+    provider_gave_up: int = 0
     refused: bool = False
     error: str | None = None
     #: Inline citations (`CEYNEX_CITATIONS`). All zero when the flag is off.
@@ -145,6 +165,59 @@ def load_questions(path: Path = QUESTIONS) -> list[dict[str, Any]]:
     return yaml.safe_load(path.read_text())["questions"]
 
 
+#: `(attempt 2/2)` in the client's retry warnings: equal numbers mean it was the last.
+LAST_ATTEMPT = re.compile(r"\(attempt (\d+)/(\d+)\)")
+#: The figures the merge guard rejected, from its own warning: which ones they
+#: were is what separates a sign-convention discard from a derived total.
+MERGE_DISCARD_FIGURES = re.compile(r"evidence entry \((.*)\); serving")
+
+
+class GuardRecords(logging.Handler):
+    """One question's guard decisions and provider failures, caught from the log.
+
+    Attached, for the length of one question, to the three loggers that write
+    them. The harness is sequential, so everything these loggers say in that
+    window belongs to that question.
+    """
+
+    LOGGERS = ("ceynex.orchestrator.merger", "ceynex.agents.common", "ceynex.llm.client")
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.discarded: list[str] = []
+        self.gave_up = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if record.name == "ceynex.orchestrator.merger" and message.startswith("merge prose discarded"):
+            figures = MERGE_DISCARD_FIGURES.search(message)
+            self.discarded.append(f"merge: {figures.group(1) if figures else '?'}")
+        elif record.name == "ceynex.agents.common" and ": explanation prose discarded" in message:
+            self.discarded.append("explanation:" + message.split(":", 1)[0])
+        elif record.name == "ceynex.llm.client" and provider_gave_up(message):
+            self.gave_up += 1
+
+    def __enter__(self) -> GuardRecords:
+        for name in self.LOGGERS:
+            logging.getLogger(name).addHandler(self)
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        for name in self.LOGGERS:
+            logging.getLogger(name).removeHandler(self)
+
+
+def provider_gave_up(message: str) -> bool:
+    """The client's log line for a call no paid model answered: the last attempt
+    failed or timed out, or the spend cap stopped it before one was made. A
+    first attempt that fails and a retry that succeeds is ordinary, and is not
+    this."""
+    if message.startswith(("llm timed out", "llm call failed")):
+        attempt = LAST_ATTEMPT.search(message)
+        return attempt is not None and attempt.group(1) == attempt.group(2)
+    return "daily spend limit" in message
+
+
 async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
     """Run one question through the orchestrator. Never raises."""
     from ceynex.orchestrator.demo import answer
@@ -158,10 +231,16 @@ async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
         "partial": bool(question.get("partial", False)),
     }
 
-    try:
-        result = await answer(question["question"], use_llm=use_llm, user_id="eval")
-    except Exception as exc:  # noqa: BLE001 - a crash is a result, and the run continues
-        log.warning("%s raised: %s", question["id"], exc)
+    error: str | None = None
+    with GuardRecords() as guards:
+        try:
+            result = await answer(question["question"], use_llm=use_llm, user_id="eval")
+        except Exception as exc:  # noqa: BLE001 - a crash is a result, and the run continues
+            log.warning("%s raised: %s", question["id"], exc)
+            result, error = None, str(exc)
+    common["prose_discarded"] = guards.discarded
+    common["provider_gave_up"] = guards.gave_up
+    if result is None:
         return Result(
             **common,
             actual_route=[],
@@ -171,7 +250,7 @@ async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
             degraded=True,
             evidence_count=0,
             answer="",
-            error=str(exc),
+            error=error,
         )
 
     text = result.get("answer", "") or ""
@@ -186,13 +265,17 @@ async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
         degraded=bool(result.get("degraded", False)),
         evidence_count=len(evidence),
         answer=text,
-        ungrounded_figures=ungrounded(text, evidence),
+        ungrounded_figures=ungrounded(text, evidence, direction_aware=False),
+        ungrounded_figures_direction_aware=ungrounded(text, evidence, direction_aware=True),
+        direction_accepted=direction_accepted(text, evidence),
         refused=is_refusal(text, result),
         **citation_counts(text, len(evidence)),
     )
 
 
-def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
+def ungrounded(
+    answer: str, evidence: list[dict[str, Any]], *, direction_aware: bool = False
+) -> list[str]:
     """Figures in the prose that appear in no evidence entry.
 
     Deliberately crude and deliberately generous: it compares digit strings, so a
@@ -212,9 +295,37 @@ def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
     figure is.
     """
     return grounding.ungrounded_figures(
-        answer,
-        [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence],
+        answer, _evidence_texts(evidence), direction_aware=direction_aware
     )
+
+
+def _evidence_texts(evidence: list[dict[str, Any]]) -> list[str]:
+    return [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence]
+
+
+def direction_accepted(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
+    """Each figure the direction rule accepts and the strict one does not, as
+    `figure :: sentence :: evidence` — the words that justified it, then the
+    entry that carries it negative. A result keeps only its evidence count, so
+    without the entry here the audit could not be done from the run's file."""
+    texts = _evidence_texts(evidence)
+    accepted = []
+    for sentence in grounding.split_sentences(answer or ""):
+        strict = ungrounded(sentence, evidence, direction_aware=False)
+        aware = set(ungrounded(sentence, evidence, direction_aware=True))
+        for figure in strict:
+            if figure not in aware:
+                source = next((t for t in texts if _carries_it_negative(figure, t)), "")
+                accepted.append(f"{figure} :: {sentence.strip()} :: {source.strip()}")
+    return accepted
+
+
+def _carries_it_negative(figure: str, text: str) -> bool:
+    """`text` grounds `figure` only as the same figure with a minus sign: strict
+    rejects it, and the direction rule, told the value fell, accepts it."""
+    return bool(
+        grounding.ungrounded_figures(figure, [text], direction_aware=False)
+    ) and not grounding.ungrounded_figures(f"fell {figure}", [text], direction_aware=True)
 
 
 def strip_citations(text: str) -> str:
@@ -320,6 +431,13 @@ def report(results: list[Result]) -> dict[str, Any]:
         "evidence": {
             "answers_fully_grounded": _rate([not r.ungrounded_figures for r in answerable]),
             "ungrounded_figures_total": sum(len(r.ungrounded_figures) for r in answerable),
+            "answers_fully_grounded_direction_aware": _rate(
+                [not r.ungrounded_figures_direction_aware for r in answerable]
+            ),
+            "ungrounded_figures_total_direction_aware": sum(
+                len(r.ungrounded_figures_direction_aware) for r in answerable
+            ),
+            "figures_accepted_by_direction_rule": sum(len(r.direction_accepted) for r in answerable),
             "mean_evidence_per_answer": round(
                 statistics.fmean([r.evidence_count for r in answerable]), 2
             )
@@ -344,6 +462,19 @@ def report(results: list[Result]) -> dict[str, Any]:
         },
         "latency_ms": _latency(results),
         "degraded_answers": sum(1 for r in results if r.degraded),
+        # EVALUATION.md §13: what the grounding guards threw away. A discard
+        # swaps prose for text that grounds, so it *lowers* the ungrounded
+        # count above; a guard that discards more looks better on that metric,
+        # and only these say what it cost the reader.
+        "guards": {
+            "answers_served_deterministic": sum(
+                1 for r in results if any(d.startswith("merge:") for d in r.prose_discarded)
+            ),
+            "explanations_discarded": sum(
+                1 for r in results for d in r.prose_discarded if d.startswith("explanation:")
+            ),
+        },
+        "provider_gave_up": sum(r.provider_gave_up for r in results),
         "citations": {
             # Present in every run, marker or not, so an "off" run and an "on"
             # run summarise to the same shape and can be diffed field for field.
@@ -427,6 +558,13 @@ def render(results: list[Result], summary: dict[str, Any]) -> str:
         lines.append("Figures with no supporting evidence (check each by hand):")
         for r in ungrounded_any:
             lines.append(f"  {r.id}: {r.ungrounded_figures}")
+        lines.append("")
+
+    discarded = [r for r in results if r.prose_discarded]
+    if discarded:
+        lines.append("Prose the grounding guards discarded:")
+        for r in discarded:
+            lines.append(f"  {r.id}: {r.prose_discarded}")
         lines.append("")
 
     return "\n".join(lines)

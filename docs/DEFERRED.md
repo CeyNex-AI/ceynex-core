@@ -465,3 +465,31 @@ disagreed with themselves (EVALUATION.md §9) — but the floor itself is a prop
 of a 30-question set and a stochastic model, and stays. What is still deferred is
 a **larger set**: `chat_feedback` (§5 of the execution plan) is the growth path,
 and nothing has been promoted from it yet.
+
+## Three things the grounding audit found and left as they are (EVALUATION.md §13)
+
+**A hyphenated year reads as a negative figure.** `grounding.NUMBER` takes the
+hyphen in "post-2020" or "2016-2020" as a minus sign. The guard then looks for
+"-2020", finds no finding that states it, and discards prose that was correct.
+X07's prose was discarded this way in all three direction runs. The strict guard
+did the same three times during §11's model-backed load run, so this is not the
+direction rule's doing. The likely fix is to read a hyphen as a sign only when
+no letter or digit comes before it. That changes the guard every answer passes
+through, so it waits for its own pre-registered rule and its own runs, as §13
+did.
+
+**Trade-economics evidence names an item's revenue by its sector.** The evidence
+entry for a cinnamon shock reads "Agriculture export revenue of USD 214,425,881
+in 2024". The prose follows that label: M04 says "agriculture export revenue"
+for cinnamon's figure, and once "overall agriculture export revenue". The figure
+is right and the words around it are not. The fix is in the agent's claim
+strings (`agents/trade_economics.py`), which should name the item when the shock
+was to one. It changes no figure, but it does change what the model is shown,
+so it should be checked against M01–M04 before and after.
+
+**Neither rule checks the direction of a positive figure.** "Fell by
+11,355,453" is grounded by "USD +11,355,453" under both, because `NUMBER`
+drops a plus sign and the strict rule never looked at direction. The direction
+rule closes this gap for negative figures only. Closing it for positive ones
+would mean reading a *rise* word the way `FELL` reads a fall word. No run has
+found the case yet, so it is recorded rather than built.

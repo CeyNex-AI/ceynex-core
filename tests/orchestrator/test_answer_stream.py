@@ -245,3 +245,40 @@ async def test_an_ungrounded_merge_is_withdrawn_and_replaced():
     ]
     assert "9,999,999" not in result.answer, "the deterministic composition replaced it"
     assert result.ungrounded
+
+
+# --- the direction rule keeps the gate and the whole-prose check agreeing ---------
+
+FELL_CORPUS = ["Losing GSP+ changes export value by USD -161,815,198."]
+#: "decrease" shares the figure's sentence, so the figure is grounded.
+FELL_SAID = (
+    "Losing GSP+ would cut export value. "
+    "The decrease would be about USD 161,815,198 a year. "
+    "Rubber is not affected."
+)
+#: The word is a sentence away from the figure, so it is not.
+FELL_ELSEWHERE = (
+    "Export value would decrease. "
+    "The change would be USD 161,815,198 a year. "
+    "Rubber is not affected."
+)
+
+
+@pytest.mark.parametrize("seed", range(100))
+def test_the_direction_rule_gives_the_gate_the_whole_prose_verdict(seed, monkeypatch):
+    """The rule reads a figure's own sentence, and the gate sees one sentence at
+    a time. Both must cut sentences in the same places, or a sentence could pass
+    the gate and fail the whole-prose check, or the reverse."""
+    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
+    for text, grounded in ((FELL_SAID, True), (FELL_ELSEWHERE, False)):
+        rng = random.Random(seed)
+        cuts = rng.sample(range(1, len(text)), k=rng.randint(0, 40))
+        gate = Recorder().gate(FELL_CORPUS)
+        _feed(gate, text, cuts)
+        assert (ungrounded_figures(text, FELL_CORPUS) == []) is grounded
+        assert ungrounded_figures(gate.released, FELL_CORPUS) == []
+        if grounded:
+            gate.close(accepted=True)
+            assert gate.released == text
+        else:
+            assert gate.held and "161,815,198" not in gate.released
