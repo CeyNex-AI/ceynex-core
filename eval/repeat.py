@@ -47,6 +47,9 @@ HEADLINE_METRICS = (
     "citations.figure_sentences_cited_rate",
     "crashed",
     "degraded_answers",
+    "guards.answers_served_deterministic",
+    "guards.explanations_discarded",
+    "provider_gave_up",
 )
 
 LATENCY_CATEGORIES = ("single_sector", "cross_sector", "simulation")
