@@ -260,6 +260,53 @@ def test_the_graph_carries_the_cypher_that_drew_it(client):
     assert any("EXPORTS_TO" in text for text in graph["queries"])
 
 
+SIMULATED = {
+    **ANSWERED,
+    "agent_outputs": {
+        **ANSWERED["agent_outputs"],
+        "trade_economics": {
+            "agent": "trade_economics", "summary": "s", "assumptions": [], "evidence": [],
+            "confidence": 0.8, "degraded": False,
+            "figures": {"agriculture_impact_usd": -8589405.0, "agriculture_impact_pct": -0.006},
+        },
+    },
+}
+
+
+@pytest.mark.parametrize("client", [SIMULATED], indirect=True)
+def test_a_simulated_answer_carries_its_result_on_the_graph(client):
+    """A shock simulation's own working, not just its output in the evidence
+    panel — `trade_economics` and the graph are independent agents that share
+    a subject, and without this join a reader asking "how would a 6%
+    depreciation affect cinnamon" saw the simulated change nowhere near the
+    picture of the market it was simulated against.
+
+    This is the regression case for the bug this fix's own first draft had:
+    `merge()`'s `as_state_patch()` never writes a merged `figures` dict onto
+    state, only `final_answer`/`final_confidence`/`merged_evidence` -- an
+    earlier version of `_annotate_focus` read `final["figures"]`, which is
+    always empty, and silently annotated nothing. This test posts through the
+    real endpoint rather than calling `_annotate_focus` directly, so it fails
+    the same way that bug did.
+    """
+    node = next(
+        n for n in post(client).json()["graph"]["nodes"] if n["id"] == "Commodity:cinnamon"
+    )
+    assert node["properties"]["simulated_revenue_change_pct"] == pytest.approx(-0.6)
+    assert node["properties"]["simulated_revenue_change_usd"] == pytest.approx(-8589405.0)
+
+
+@pytest.mark.parametrize("client", [ANSWERED], indirect=True)
+def test_an_unsimulated_answer_carries_no_simulation_properties(client):
+    """No trade_economics figures in this fixture -- the annotation must be
+    silent, not a KeyError, and must not invent properties on a node nobody
+    simulated."""
+    node = next(
+        n for n in post(client).json()["graph"]["nodes"] if n["id"] == "Commodity:cinnamon"
+    )
+    assert "simulated_revenue_change_pct" not in node["properties"]
+
+
 NO_KG_EVIDENCE = {
     **ANSWERED,
     "merged_evidence": [
