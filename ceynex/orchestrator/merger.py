@@ -97,15 +97,15 @@ MERGE_RULES_PRESENTATION = """5. Four to eight sentences. Plain English for a po
 #: formatting change, which is why it lives here and not among the inviolable
 #: rules — and why it can be swapped in the same way a user instruction is.
 #:
-#: Off by default. Enabling it changes the prompt every answer is written from,
-#: and `docs/EVALUATION.md` §8 measures what an unmeasured prompt change is
-#: worth: nothing, until it is run against the 30-question set. `CEYNEX_CITATIONS`
-#: turns it on so that run can be done as a comparison rather than a leap.
+#: On by default since 2026-09-12 (`CEYNEX_CITATIONS`). Enabling it changes the
+#: prompt every answer is written from, and `docs/EVALUATION.md` §8 measures what
+#: an unmeasured prompt change is worth: nothing, until it is run against the
+#: 30-question set. So it stayed off until a rule written before the runs held.
 #:
 #: Rule 6a's last two sentences were added on 2026-09-12. §9 found that asking for
 #: a citation on every figure made the model spell out totals it had worked out
-#: itself ("a new total of about USD 1,318,528,338"), beside the citation. They
-#: are measured under §9's own rule (EVALUATION.md §14).
+#: itself ("a new total of about USD 1,318,528,338"), beside the citation. §14
+#: ran §9's rule again with them, and all seven criteria held.
 MERGE_RULES_PRESENTATION_CITED = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer.
 6a. After each sentence containing a figure, cite the SOURCE it came from as a bracketed
