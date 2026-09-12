@@ -145,3 +145,69 @@ def test_without_the_marker_the_first_named_item_still_wins():
     from ceynex.agents.common import parse_intent
 
     assert parse_intent("How are tea and cinnamon exports doing?").item == "tea"
+
+
+# The trade-economics finding exactly as the agent writes it — every impact
+# signed (`USD {delta:+,.0f}`) — and the explanation the model gives of it in
+# EVALUATION.md §9: the same figure, unsigned, with the word that says it fell.
+_GSP_SUMMARY = (
+    "Apparel export revenue would move by roughly USD -161,815,198 (-5.7%) "
+    "from a 2024 base of USD 2,838,863,126."
+)
+_GSP_EVIDENCE = [
+    Evidence(
+        source_id="KG",
+        claim=(
+            "Apparel export revenue of USD 2,838,863,126 in 2024 is the baseline the "
+            "simulation moves by -5.7%, USD -161,815,198."
+        ),
+        detail="",
+    )
+]
+_GSP_EXPLANATION = (
+    "If Sri Lanka loses GSP+, apparel export revenue is projected to decrease by "
+    "approximately USD 161,815,198, a 5.7% reduction from USD 2,838,863,126."
+)
+
+
+async def _explain_gsp_loss() -> dict:
+    return await finish(
+        agent="trade_economics",
+        state=new_state("What happens to apparel export revenue if Sri Lanka loses GSP+?", "tester"),
+        deps=_deps(_GSP_EXPLANATION),
+        summary=_GSP_SUMMARY,
+        figures={"apparel_baseline_usd": 2838863126.0, "apparel_impact_usd": -161815198.18},
+        evidence=_GSP_EVIDENCE,
+        assumptions=[],
+    )
+
+
+async def test_a_decrease_stated_without_its_sign_is_discarded_under_the_strict_rule(monkeypatch):
+    """Why EVALUATION.md §13 exists. The strict check reads "decrease by USD
+    161,815,198" as a figure no finding states, so a correct explanation is
+    thrown away and the answer is served degraded, for a sign convention."""
+    monkeypatch.setenv("CEYNEX_GROUNDING", "strict")
+    output = (await _explain_gsp_loss())["agent_outputs"]["trade_economics"]
+    assert output["summary"] == _GSP_SUMMARY
+    assert output["degraded"] is True
+
+
+async def test_the_direction_rule_keeps_it(monkeypatch):
+    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
+    output = (await _explain_gsp_loss())["agent_outputs"]["trade_economics"]
+    assert output["summary"] == _GSP_EXPLANATION
+    assert not output["degraded"]
+
+
+async def test_the_direction_rule_still_discards_a_rise_stated_for_a_fall(monkeypatch):
+    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
+    patch = await finish(
+        agent="trade_economics",
+        state=new_state("What happens to apparel export revenue if Sri Lanka loses GSP+?", "tester"),
+        deps=_deps("Apparel export revenue would rise by approximately USD 161,815,198."),
+        summary=_GSP_SUMMARY,
+        figures={"apparel_impact_usd": -161815198.18},
+        evidence=_GSP_EVIDENCE,
+        assumptions=[],
+    )
+    assert patch["agent_outputs"]["trade_economics"]["degraded"] is True
