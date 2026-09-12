@@ -670,20 +670,20 @@ async def test_regenerate_skips_the_cached_answer_for_its_role_only(tmp_path, mo
 # --- what the router lets the cache keep (orchestrator/router.py::_distrust) ---
 
 
-async def test_a_distrusted_route_is_routed_afresh_and_a_trusted_one_is_replayed(
+async def test_a_route_that_fell_back_is_routed_afresh_and_a_good_one_is_replayed(
     tmp_path, monkeypatch
 ):
     """End to end, with the real client and the real on-disk cache.
 
-    S07's shape — the model dropped an agent the keyword router selected — must
-    cost a routing call on every ask rather than replay for 168 hours. A route
-    the keyword router agrees with must still be a cache hit the second time.
+    A router response that had to fall back must cost a routing call on every
+    ask rather than replay for 168 hours. A route the router could use must
+    still be a cache hit the second time, narrowed or not.
     """
     from ceynex.orchestrator.router import llm_route
 
     llm = client(tmp_path, api_key="sk-test", cache=True)
     question = "Which markets buy the most Sri Lankan knitted apparel?"
-    reply = {"route": '{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}'}
+    reply = {"route": "not json at all"}
     calls = []
 
     async def answer(*args, **kwargs):
@@ -694,12 +694,12 @@ async def test_a_distrusted_route_is_routed_afresh_and_a_trusted_one_is_replayed
 
     await llm_route(question, llm)
     await llm_route(question, llm)
-    assert len(calls) == 2, "the route that dropped an agent was replayed from the cache"
+    assert len(calls) == 2, "a response that fell back was replayed from the cache"
 
-    reply["route"] = '{"route": ["export_analytics", "apparel_manufacturing"], "sectors": ["apparel"]}'
+    reply["route"] = '{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}'
     await llm_route(question, llm)
     await llm_route(question, llm)
-    assert len(calls) == 3, "a route the keyword router agrees with should be replayed"
+    assert len(calls) == 3, "a usable route, even a narrowed one, should be replayed"
     assert llm.usage.cache_hits == 1
 
 

@@ -524,9 +524,11 @@ def test_an_ordinary_analytics_question_still_does_not_get_trade_economics():
 
 # --- what the LLM router lets the prompt cache keep (docs/DEFERRED.md) ---------
 #
-# The cache replays a response for 168 hours. A route the router had to distrust
-# must not be replayed: that is how S07's dropped agent answered the same
-# question, evidence-free, for a week.
+# The cache replays a response for 168 hours. A route that went wrong must not be
+# replayed: that is how S07's dropped agent answered the same question,
+# evidence-free, for a week. Here, "went wrong" is a response that fell back; an
+# answer with no evidence is the other half, judged in api/query_runner.py
+# (tests/api/test_route_cache.py). Narrowing the keyword route is not wrong.
 
 #: The keyword router selects export_analytics and apparel_manufacturing here.
 KNITWEAR = "Which markets buy the most Sri Lankan knitted apparel?"
@@ -537,12 +539,15 @@ def test_the_knitwear_question_is_routed_to_two_agents_by_keyword():
     assert keyword_route(KNITWEAR).route == ["export_analytics", "apparel_manufacturing"]
 
 
-async def test_a_route_that_drops_an_agent_the_keyword_router_kept_is_not_cached():
-    """S07's shape: the model dropped export_analytics."""
+async def test_a_route_that_narrows_the_keyword_route_stays_cached():
+    """Measured 2026-09-12: evicting every narrowed route dropped 11 of 30, five of
+    them the expected route, and cost ~1.5 s a repeat for no changed route
+    (EVALUATION.md §12). A narrowed route is only distrusted if its answer turns
+    out to carry no evidence, which the router cannot know here."""
     llm = FakeLLMClient(response='{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}')
     decision = await llm_route(KNITWEAR, llm)
-    assert decision.route == ["apparel_manufacturing"], "this ask still uses the model's route"
-    assert llm.forgotten == [("router", ROUTER_SYSTEM, KNITWEAR)]
+    assert decision.route == ["apparel_manufacturing"]
+    assert llm.forgotten == []
 
 
 async def test_a_route_the_keyword_router_agrees_with_stays_cached():
