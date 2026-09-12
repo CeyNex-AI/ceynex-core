@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass
 
 from ceynex.agents.common import evidence_from_web, parse_intent
+from ceynex.agents.trade_economics import SECTOR_OF_ITEM
 from ceynex.api import history
 from ceynex.api.deps import Runtime
 from ceynex.api.schemas import AnswerGraph, QueryResponse
@@ -317,12 +318,57 @@ async def _build_answer_graph(runtime: Runtime, query: str, final: dict) -> Answ
         return None
 
     return AnswerGraph(
-        nodes=[dataclasses.asdict(node) for node in built.nodes],
+        nodes=[dataclasses.asdict(node) for node in _annotate_focus(built.nodes, built.focus_id, final)],
         edges=[dataclasses.asdict(edge) for edge in built.edges],
         focus_id=built.focus_id,
         queries=built.queries,
         truncated=built.truncated,
     )
+
+
+def _annotate_focus(
+    nodes: list[kg_subgraph.Node], focus_id: str | None, final: dict
+) -> list[kg_subgraph.Node]:
+    """Carry a shock simulation's own result onto the node it simulated.
+
+    `trade_economics` and the graph are independent agents that happen to
+    share a subject — the graph draws the item's real trade network, the
+    simulation is pure arithmetic that never touches Neo4j, and neither knows
+    the other ran. Without this, a reader who asked "how would a 6%
+    depreciation affect apparel" saw the simulated revenue change only in the
+    evidence panel, never on the drawing whose whole point is to be the other
+    place an answer's figures live.
+
+    `merge()` never writes a merged `figures` dict onto state — its
+    `as_state_patch()` only carries `final_answer`/`final_confidence`/
+    `merged_evidence` (checked against `MergeResult` directly, not assumed).
+    Per-agent figures live where every agent wrote them: `agent_outputs`.
+    """
+    if focus_id is None:
+        return nodes
+    figures = (final.get("agent_outputs", {}).get("trade_economics") or {}).get("figures") or {}
+
+    def annotate(node: kg_subgraph.Node) -> kg_subgraph.Node:
+        if node.id != focus_id:
+            return node
+        # The focus node's own sector, not "whichever sector's figures exist
+        # first" -- a cross-sector question carries both agriculture_impact_pct
+        # and apparel_impact_pct at once, and each graph is centred on one item.
+        sector = SECTOR_OF_ITEM.get(node.name)
+        pct = figures.get(f"{sector}_impact_pct") if sector else None
+        usd = figures.get(f"{sector}_impact_usd") if sector else None
+        if pct is None or usd is None:
+            return node
+        return dataclasses.replace(
+            node,
+            properties={
+                **node.properties,
+                "simulated_revenue_change_pct": round(pct * 100, 1),
+                "simulated_revenue_change_usd": round(usd, 0),
+            },
+        )
+
+    return [annotate(node) for node in nodes]
 
 
 async def _graph_subject(runtime: Runtime, query: str) -> tuple[str | None, int | None]:
