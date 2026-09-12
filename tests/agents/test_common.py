@@ -122,3 +122,26 @@ async def test_no_explanation_call_when_summary_is_empty():
     )
     assert llm.usage.calls == 0
     assert patch["agent_outputs"]["forecast"]["summary"] == ""
+
+
+# --- parse_intent and the clarification gate's composed choice ----------------
+
+
+def test_an_item_chosen_after_the_marker_outranks_the_first_one_named():
+    from ceynex.agents.common import CHOSEN_MARKER, parse_intent
+
+    assert parse_intent(f"How are tea and cinnamon exports doing {CHOSEN_MARKER} cinnamon").item == "cinnamon"
+    assert parse_intent(f"How are tea and cinnamon exports doing {CHOSEN_MARKER} tea").item == "tea"
+
+
+def test_a_choice_naming_no_item_falls_back_to_the_question():
+    from ceynex.agents.common import CHOSEN_MARKER, parse_intent
+
+    assert parse_intent(f"How are tea exports doing {CHOSEN_MARKER} the latest year").item == "tea"
+
+
+def test_without_the_marker_the_first_named_item_still_wins():
+    """Every question the 30-question set asks carries no marker; nothing changes there."""
+    from ceynex.agents.common import parse_intent
+
+    assert parse_intent("How are tea and cinnamon exports doing?").item == "tea"

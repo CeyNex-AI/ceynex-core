@@ -1070,6 +1070,12 @@ The one clarified turn was answered through the resume path with the template's
 last option ("both"), the composed query ran the graph, and the gate did not ask
 again — the one-round cap holding in a real turn, not a route test.
 
+*The set changed on 2026-09-12 and these figures predate it (re-run: §12).* "both" is no longer
+offered (D13, amended), so C05's clarified turn now names its answer, cinnamon.
+That is also the case that was broken: a reader's second-named choice was
+answered with the first item. The run above has not been repeated on the
+changed set here; §12 has the re-run.
+
 ### Cost and shape, by mode — the number that replaces "3 frames against 22"
 
 That figure, quoted in D13 and in `IMPLEMENTED_FEATURES.md`, was measured before
@@ -1354,3 +1360,58 @@ component, and 3.4.2 allows capacity to grow "through standard scaling": a highe
 tier, a failover key (unset here), or the merge role on the cheaper model. Each
 of those is a change to measure the same way, under this same rule, before it
 is claimed.
+
+## 12. The owner's calls of 2026-09-12, measured
+
+**Measured 2026-09-12, M2**, on the stack §9 used, before either change was
+merged. The two calls `DEFERRED.md` left open after the live pass were decided:
+don't let a distrusted route stick in the prompt cache, and stop offering "both"
+on the clarification card (D13, amended). What each was expected to show was
+written into CeyNex-AI/ceynex-core#80 before these runs.
+
+### The router's prompt cache: the first rule was too broad, and was narrowed
+
+The first version distrusted any route that dropped an agent `keyword_route`
+selected. A cold run cannot see a cache change, so the check was a pair: a cold
+run (`--repeat 1 --cold`, then a look at which router responses the cache kept),
+then a warm run over what it kept (`eval_runs/router-cache/`).
+
+| | cold | warm |
+|---|---:|---:|
+| routing exact match / recall | 0.60 / 0.925 | 0.60 / 0.925 |
+| router responses kept in the cache | 19 of 30 | — |
+| routes that narrowed the keyword route, and were not kept | 11 | — |
+| …of those, already the *expected* route | 5 | — |
+| …whose route changed when asked again | — | **0** |
+| median time, replayed questions | — | 59 ms |
+| median time, the 11 re-routed | — | 1,511 ms (max 3,240) |
+| answers with no evidence | 0 | 0 |
+
+The rule did what it said. No suspect route was kept, by direct inspection of
+the cache. But it was the wrong rule. Most narrowings are the model being right,
+and at temperature 0 re-asking returned the same route every time. So it cost
+about 1.5 s on every repeat of a third of the set, and bought nothing this run
+could see. **The owner narrowed it.** A route is distrusted only if its response
+fell back (unparseable, or naming no real agent) or if **its answer came back with
+no evidence**. That is what S07 did, and `run_query` is where it is known. On
+these two runs the narrowed rule evicts nothing: neither had a fallback or an
+evidence-free answer. The S07 miss did not occur this time, as it does in roughly
+four runs of five (§8). When it does, its route no longer outlives its answer.
+
+### The clarification card: a choice is now the item analysed
+
+The multi-turn set was re-run (`eval_runs/chat-2026-09-12/`). C05's clarified
+turn now names its answer, cinnamon, because "both" is no longer an option. That
+is also the case that was broken: before the `parse_intent` fix in the same PR, a
+reader who chose cinnamon was given the tea analysis. The run answered C05 with
+Sri Lanka's USD 214,425,881 of cinnamon exports, with the model and in degraded
+mode alike.
+
+| | LLM (23 turns) | degraded (23 turns) |
+|---|---:|---:|
+| turns passing every check | **21** (19 in §10) | 18 (18 in §10) |
+
+The two LLM misses are §10's own, read the same way: C07's derived band width
+withheld by the grounding guard, and C08's defensible `analyse`. §10's two S07
+misses on C03 did not recur, which is that question's usual nondeterminism, not
+a fix. The degraded misses are §10's rewrite limit.

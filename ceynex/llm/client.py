@@ -269,6 +269,12 @@ class PromptCache:
             encoding="utf-8",
         )
 
+    def delete(self, key: str) -> None:
+        """Remove one entry. A no-op when it is absent or the cache is off."""
+        if not self.enabled:
+            return
+        (self.path / f"{key}.json").unlink(missing_ok=True)
+
 
 @dataclass
 class LLMReasoningClient:
@@ -429,6 +435,24 @@ class LLMReasoningClient:
 
     def _limits(self) -> dict[str, Any]:
         return self.config.get("limits", {})
+
+    def forget(self, role: str, system: str, user: str) -> None:
+        """Drop the cached response to exactly this request, if there is one.
+
+        For a caller that decides only after reading a response that it must not
+        be replayed. The router does this for a route it distrusted
+        (`orchestrator/router.py::llm_route`). The key is built exactly as
+        `generate` builds it, so this removes what `generate` stored whichever
+        provider answered: the failsafe's response is stored under the primary
+        model's key as well. Never raises — a cache that could not be cleaned
+        must not fail the answer.
+        """
+        try:
+            model_cfg = self._model(role)
+            temperature = float(model_cfg.get("temperature", 0.2))
+            self._cache.delete(self._cache.key(model_cfg["model"], system, user, temperature))
+        except Exception:  # noqa: BLE001 - see the docstring
+            log.warning("could not drop a cached %s response", role, exc_info=True)
 
     # --- the one call ----------------------------------------------------
 
@@ -808,6 +832,11 @@ class FakeLLMClient:
         #: Streamed responses arrive in pieces this long, so a test exercises
         #: boundaries that fall inside words and figures, as real ones do.
         self.chunk_size = chunk_size
+        #: Every `forget` call, so a test can assert what was kept out of the cache.
+        self.forgotten: list[tuple[str, str, str]] = []
+
+    def forget(self, role: str, system: str, user: str) -> None:
+        self.forgotten.append((role, system, user))
 
     async def generate(
         self,

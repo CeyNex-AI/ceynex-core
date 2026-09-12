@@ -329,15 +329,16 @@ async def run_conversation(conversation: dict[str, Any], runtime) -> list[TurnRe
 
             # A clarifying question the set expected: answer it the way the
             # resume route does, so the composed query and the gate-free path
-            # are exercised too. `answer` names the option; default the last
-            # one, which the template makes "both".
+            # are exercised too. `answer` names the option; default the first.
+            # (Until 2026-09-12 the default was the last, which the template
+            # made "both". "both" is no longer offered: see chat/clarify.py.)
             if result.clarified and turn.get("expect", {}).get("clarify"):
                 pending = next((f["data"] for f in frames if f["event"] == "clarify"), None)
                 if pending and pending.get("pending_id") is not None:
                     claimed = await store.resolve_clarification(int(pending["pending_id"]), EVAL_USER)
                     if claimed is not None:
                         options = list(pending.get("options") or [])
-                        chosen = turn.get("expect", {}).get("answer") or (options[-1] if options else "")
+                        chosen = turn.get("expect", {}).get("answer") or (options[0] if options else "")
                         composed = clarify.Clarification.compose(
                             str(claimed["original_query"]), [chosen] if chosen else []
                         )
