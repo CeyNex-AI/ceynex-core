@@ -28,6 +28,7 @@ from typing import Any
 from ceynex.agents.common import (
     AgentDeps,
     Intent,
+    evidence_from_model,
     evidence_from_policy,
     evidence_from_query,
     finish,
@@ -270,7 +271,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                 )
             continue
 
-        delta, pct, detail = outcome
+        delta, pct, detail = outcome.as_tuple()
         figures[f"{sector}_baseline_usd"] = round(baseline, 2)
         figures[f"{sector}_impact_usd"] = round(delta, 2)
         figures[f"{sector}_impact_pct"] = round(pct, 4)
@@ -321,7 +322,31 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             )
         evidence.extend(_policy_evidence(chunks, retrieval_detail, limit=2, exclude=sourced))
 
-        assumptions.append(detail)
+        # The formula itself, not just its output — and its own evidence entry
+        # rather than an assumption, because `_collect_assumptions` caps the
+        # merged answer at four sentences total across every contributing
+        # agent. On a cross-sector question, agriculture_commodity's or
+        # apparel_manufacturing's own caveats routinely fill that cap before
+        # trade_economics's turn comes up, and this sentence — the one place
+        # the pass-through/elasticity values and where they came from were
+        # ever stated — was being silently dropped from what a reader sees.
+        # Evidence has no such cap. Verified live 2026-09-12: a cross-sector
+        # fx question previously surfaced only the EDB market-share caveat and
+        # the two base "shock modelled"/"functional form" lines; the per-sector
+        # working never reached the answer at all.
+        provenance = "; ".join(
+            f"{p.name}={p.value:.4g} ({p.basis}, source: {p.source}"
+            + (", workbench override" if p.overridden else "")
+            + ")"
+            for p in outcome.parameters
+        )
+        evidence.append(
+            evidence_from_model(
+                claim=detail,
+                model_id=f"ceynex.models.shocks.{outcome.shock}_shock — {provenance}",
+                period=str(baseline_year),
+            )
+        )
         lines.append(
             f"{sector.title()} export revenue would move by roughly USD {delta:+,.0f} "
             f"({pct * 100:+.1f}%) from a {baseline_year} base of USD {baseline:,.0f}."
@@ -366,16 +391,16 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
 
 def _simulate_fx(
     sector: str, baseline: float, depreciation: float, config: dict[str, Any]
-) -> tuple[float, float, str]:
+) -> shocks.ShockOutcome:
     """A rupee depreciation makes exports cheaper abroad — see `shocks.fx_shock`."""
-    return shocks.fx_shock(sector, baseline, depreciation, config).as_tuple()
+    return shocks.fx_shock(sector, baseline, depreciation, config)
 
 
 def _simulate_tariff(
     sector: str, baseline: float, tariff: float, config: dict[str, Any]
-) -> tuple[float, float, str]:
+) -> shocks.ShockOutcome:
     """An importing tariff raises the buyer's price — see `shocks.tariff_shock`."""
-    return shocks.tariff_shock(sector, baseline, tariff, config).as_tuple()
+    return shocks.tariff_shock(sector, baseline, tariff, config)
 
 
 async def _simulate_agreement_loss(
@@ -385,7 +410,7 @@ async def _simulate_agreement_loss(
     baseline: float,
     config: dict[str, Any],
     sourced: SourcedRate | None = None,
-) -> tuple[tuple[float, float, str] | None, str]:
+) -> tuple[shocks.ShockOutcome | None, str]:
     """Losing a preference re-imposes the MFN tariff.
 
     Returns `(outcome, cypher)`. `outcome` is None when the graph records no
@@ -428,7 +453,7 @@ async def _simulate_agreement_loss(
         coverage=shocks.describe_coverage(preferences),
         mfn_tariff=rate, rate_basis=rate_basis,
     )
-    return outcome.as_tuple(), cypher
+    return outcome, cypher
 
 
 # --- describing a policy, rather than shocking one (D10) ------------------
