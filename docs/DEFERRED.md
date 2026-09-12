@@ -391,13 +391,21 @@ the clarification card, the workbench's sliders — are driven by pressing keys.
 None of it has been used with NVDA, JAWS or VoiceOver. Implementation and an
 automated scan are not that verification, and it is still owed.
 
-**A load test of the conversational layer.** The one-shot endpoint now has one
-(`eval/load_test.py`, EVALUATION.md §11, above). It sends one burst of 50
-anonymous requests to `POST /api/query`. It does not cover signed-in readers,
-load held over time, or `POST /api/chat/stream`. There, a turn that outlives
-its reader (D12, amended) makes concurrent turns *more* likely to overlap, not
-less. It also has no degraded run to separate CeyNex's own capacity from the
-model provider's.
+**A load test — measured on 2026-09-12, with one budget broken by the provider.**
+`eval/load_test.py` now also runs 50 *signed-in* users, sustained and paced
+under the rate limit, on `/api/query` and `/api/chat/stream`, against a rule
+written before the runs (EVALUATION.md §11).
+
+- **Degraded (a): passes on both endpoints.** No failures, no 429s, every p95
+  inside budget, at about 1,060 questions a minute.
+- **With the model (b): fails on single-sector only.** Its p95 was 11.6 s on
+  `/api/query` and 13.4 s on the stream, against 10 s. Neither breach was there
+  at one user. The API log names the cause: OpenAI's rate limit for the account
+  on `gpt-4o`.
+
+What is still owed: the same run against the deployed VM, and any change that
+lifts the ceiling (a higher tier, a failover key, or the merge role on the
+cheaper model), measured under the same rule before it is claimed.
 
 **CI — built on 2026-09-12, for both repos.**
 `.github/workflows/ci.yml` (PR #78) runs `ruff`, the unit suite on Python 3.11
