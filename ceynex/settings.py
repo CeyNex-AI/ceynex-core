@@ -244,6 +244,56 @@ def policy_retrieval_enabled() -> bool:
     return value not in ("off", "0", "false", "no")
 
 
+def chat_enabled() -> bool:
+    """Kill switch for the conversational surface.
+
+    Off leaves `POST /api/query` answering exactly as it always has — the same
+    posture `policy_retrieval_enabled` takes, and for the same reason: a new
+    surface has to be removable without touching the one the evaluation measures.
+    """
+    value = (_env("CEYNEX_CHAT", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def clarify_enabled() -> bool:
+    """Whether the clarification gate may ask before answering.
+
+    Separate from `chat_enabled` on purpose: a demo may want conversation without
+    ever being interrupted by a question, and a reviewer comparing answers
+    against `queries.md` needs to turn it off without losing chat.
+    """
+    value = (_env("CEYNEX_CLARIFY", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def scenario_enabled() -> bool:
+    """Kill switch for the scenario workbench (deviation D17).
+
+    Off removes `/api/scenario/*` and nothing else: the trade-economics agent
+    keeps simulating from questions exactly as before, because the formulas it
+    shares with the workbench live in `models/shocks.py` either way.
+    """
+    value = (_env("CEYNEX_SCENARIO", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def web_search_enabled() -> bool:
+    """Whether general web search may run at all (deviation D14).
+
+    Distinct from having a key: `tavily_api_key()` being None falls back to the
+    keyless provider, whereas this being off means no outbound search happens on
+    any provider. `off` is what makes "answers are byte-identical to the
+    pre-web-search system" a checkable claim.
+    """
+    value = (_env("CEYNEX_WEB_SEARCH", "on") or "on").lower()
+    return value not in ("off", "0", "false", "no")
+
+
+def tavily_api_key() -> str | None:
+    """None is a supported state, not an error — the keyless tier covers it."""
+    return _env("TAVILY_API_KEY") or None
+
+
 def data_dir() -> Path:
     return Path(_env("CEYNEX_DATA_DIR", str(REPO_ROOT / "data")) or "data")
 
@@ -270,3 +320,16 @@ def llm_config() -> dict[str, Any]:
 def elasticity_config() -> dict[str, Any]:
     """SRS 3.1.5 — the simulation assumptions, in a table a marker can read."""
     return load_config("elasticities")
+
+
+def citations_enabled() -> bool:
+    """Inline `[n]` citation markers in merge prose (execution plan §7).
+
+    **Default off**, unlike the other feature switches here, and deliberately so.
+    Turning it on changes the prompt every answer is written from, and
+    `docs/EVALUATION.md` §8 is explicit that an unmeasured prompt change is worth
+    nothing until it has been run against the 30-question set. The flag exists so
+    that run is a comparison rather than a leap.
+    """
+    value = (_env("CEYNEX_CITATIONS", "off") or "off").lower()
+    return value in ("on", "1", "true", "yes")

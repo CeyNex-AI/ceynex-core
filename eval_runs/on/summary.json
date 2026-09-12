@@ -1,0 +1,304 @@
+{
+  "degraded_run": false,
+  "repeat": {
+    "runs": 3,
+    "metrics": {
+      "routing.exact_match": {
+        "median": 0.5667,
+        "min": 0.5667,
+        "max": 0.5667,
+        "values": [
+          0.5667,
+          0.5667,
+          0.5667
+        ],
+        "runs": 3
+      },
+      "routing.recall": {
+        "median": 0.925,
+        "min": 0.8917,
+        "max": 0.925,
+        "values": [
+          0.925,
+          0.8917,
+          0.925
+        ],
+        "runs": 3
+      },
+      "routing.never_empty": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "evidence.answers_fully_grounded": {
+        "median": 0.7778,
+        "min": 0.7778,
+        "max": 0.8148,
+        "values": [
+          0.8148,
+          0.7778,
+          0.7778
+        ],
+        "runs": 3
+      },
+      "evidence.ungrounded_figures_total": {
+        "median": 7.0,
+        "min": 6.0,
+        "max": 7.0,
+        "values": [
+          6.0,
+          7.0,
+          7.0
+        ],
+        "runs": 3
+      },
+      "evidence.mean_evidence_per_answer": {
+        "median": 4.33,
+        "min": 4.19,
+        "max": 4.33,
+        "values": [
+          4.33,
+          4.19,
+          4.33
+        ],
+        "runs": 3
+      },
+      "evidence.answers_with_no_evidence": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 1.0,
+        "values": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "refusal.unanswerable_correctly_refused": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "citations.answers_with_markers": {
+        "median": 24.0,
+        "min": 23.0,
+        "max": 25.0,
+        "values": [
+          23.0,
+          24.0,
+          25.0
+        ],
+        "runs": 3
+      },
+      "citations.marker_valid_rate": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "citations.figure_sentences_cited_rate": {
+        "median": 0.8772,
+        "min": 0.8167,
+        "max": 0.8852,
+        "values": [
+          0.8167,
+          0.8772,
+          0.8852
+        ],
+        "runs": 3
+      },
+      "crashed": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "degraded_answers": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      }
+    },
+    "latency_ms": {
+      "single_sector": {
+        "p50": {
+          "median": 5108.0,
+          "min": 4939.2,
+          "max": 5139.6,
+          "values": [
+            5108.0,
+            5139.6,
+            4939.2
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 6153.7,
+          "min": 6153.1,
+          "max": 8894.5,
+          "values": [
+            6153.7,
+            6153.1,
+            8894.5
+          ],
+          "runs": 3
+        }
+      },
+      "cross_sector": {
+        "p50": {
+          "median": 5520.2,
+          "min": 5440.8,
+          "max": 5828.0,
+          "values": [
+            5520.2,
+            5440.8,
+            5828.0
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 9272.1,
+          "min": 7495.6,
+          "max": 11478.1,
+          "values": [
+            11478.1,
+            7495.6,
+            9272.1
+          ],
+          "runs": 3
+        }
+      },
+      "simulation": {
+        "p50": {
+          "median": 6986.6,
+          "min": 5953.1,
+          "max": 7364.5,
+          "values": [
+            7364.5,
+            5953.1,
+            6986.6
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 9413.6,
+          "min": 9375.6,
+          "max": 10023.6,
+          "values": [
+            9413.6,
+            10023.6,
+            9375.6
+          ],
+          "runs": 3
+        }
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "id": "S07",
+      "question": "Which markets buy the most Sri Lankan knitted apparel?",
+      "routes": [
+        [
+          "apparel_manufacturing",
+          "export_analytics"
+        ],
+        [
+          "apparel_manufacturing"
+        ],
+        [
+          "apparel_manufacturing",
+          "export_analytics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        0,
+        0
+      ],
+      "route_moved": true,
+      "grounding_moved": false
+    },
+    {
+      "id": "X09",
+      "question": "Which sector would be hurt more by losing access to the United States market?",
+      "routes": [
+        [
+          "agriculture_commodity",
+          "apparel_manufacturing",
+          "trade_economics"
+        ],
+        [
+          "agriculture_commodity",
+          "apparel_manufacturing",
+          "trade_economics"
+        ],
+        [
+          "agriculture_commodity",
+          "apparel_manufacturing",
+          "trade_economics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        2,
+        2
+      ],
+      "route_moved": false,
+      "grounding_moved": true
+    },
+    {
+      "id": "M03",
+      "question": "What if the European Union raised tariffs on Sri Lankan tea by 10%?",
+      "routes": [
+        [
+          "agriculture_commodity",
+          "trade_economics"
+        ],
+        [
+          "agriculture_commodity",
+          "trade_economics"
+        ],
+        [
+          "agriculture_commodity",
+          "trade_economics"
+        ]
+      ],
+      "ungrounded_counts": [
+        2,
+        1,
+        1
+      ],
+      "route_moved": false,
+      "grounding_moved": true
+    }
+  ]
+}

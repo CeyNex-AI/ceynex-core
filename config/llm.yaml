@@ -39,14 +39,90 @@ models:
     cost_per_1k_input_tokens: 0.00015
     cost_per_1k_output_tokens: 0.0006
 
+  # --- the conversational layer ----------------------------------------
+  #
+  # Every one of these is on the cheap model deliberately. They run per *turn*
+  # rather than per query, so a conversation multiplies them in a way the
+  # original three roles never were: putting any of them on gpt-4o would make
+  # chat cost several times what a single query costs today, against a
+  # daily_spend_cap_usd of 5.00.
+  #
+  # They are separate roles rather than reusing `router` so the per-role cost
+  # breakdown in the usage ledger can tell them apart — routing spend and
+  # turn-classification spend answer different questions.
+
+  # The 3-6 step plan shown before the fan-out starts. Degrades to a plan
+  # derived deterministically from the RouteDecision when no key is present, so
+  # the reasoning display still works in degraded mode (SRS 3.4.3).
+  planner:
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 300
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
+  # Phrases the clarifying questions when the deterministic gate fires, and may
+  # veto the gate if the phrasing already resolves the ambiguity. Never the
+  # thing that *decides* to ask -- that is free and deterministic.
+  clarifier:
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 400
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
+  # "discuss" vs "reanalyse" for a follow-up. The single most cost-relevant
+  # decision in the chat feature: it is what keeps most follow-ups off the
+  # five-agent fan-out entirely.
+  turn_classify:
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 200
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
+  # Answers a follow-up from the evidence already on screen, without re-running
+  # the graph. Slightly more headroom than the others because it is the only one
+  # of these whose output the user reads as prose.
+  chat:
+    model: gpt-4o-mini
+    temperature: 0.3
+    max_tokens: 800
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
+  # Rewrites a context-dependent follow-up into a standalone query.
+  condense:
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 200
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
+  # Names a conversation from its first exchange. Falls back to a truncated
+  # first question, so a missing key costs a nice title and nothing else.
+  title:
+    model: gpt-4o-mini
+    temperature: 0.3
+    max_tokens: 40
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
+
 limits:
   request_timeout_s: 8.0     # below the 10s single-sector budget in SRS 3.4.1
   max_retries: 1             # one retry, then degrade — retries eat the budget
-  # R5 (LLM quota/cost exhaustion): once LLMReasoningClient.usage.cost_usd
-  # crosses this for the process's lifetime, every further generate() call
-  # degrades (SRS 3.4.3) instead of spending more. Resets on process restart,
-  # same as the rest of `usage` — see LLMReasoningClient docstring.
+  # R5 (LLM quota/cost exhaustion): once today's spend reaches this, every further
+  # paid call degrades (SRS 3.4.3) instead of spending more — the free failsafe is
+  # still tried first. Counted per UTC day in ceynex/observability/spend.py, and
+  # shared by both uvicorn workers through Redis when REDIS_URL is set (D16);
+  # without Redis each worker counts only its own, and /api/usage/limits says so.
   daily_spend_cap_usd: 5.0
+  # One reader's share of the day (D16). A single account is the likeliest way to
+  # run up a bill, and the deployment cap alone lets one reader spend all of it.
+  # 1.00 is roughly a hundred gpt-4o merges — a long working day of analysis, far
+  # past a demo. Past it that reader's answers carry figures and evidence without
+  # model-written prose until 00:00 UTC; everyone else is unaffected. 0 disables.
+  per_user_daily_cap_usd: 1.0
 
 cache:
   # Prompt-hash cache. Required from Day 6 (R5) and it is also what makes the

@@ -1,0 +1,265 @@
+{
+  "degraded_run": false,
+  "repeat": {
+    "runs": 3,
+    "metrics": {
+      "routing.exact_match": {
+        "median": 0.5667,
+        "min": 0.5667,
+        "max": 0.6,
+        "values": [
+          0.6,
+          0.5667,
+          0.5667
+        ],
+        "runs": 3
+      },
+      "routing.recall": {
+        "median": 0.925,
+        "min": 0.925,
+        "max": 0.925,
+        "values": [
+          0.925,
+          0.925,
+          0.925
+        ],
+        "runs": 3
+      },
+      "routing.never_empty": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "evidence.answers_fully_grounded": {
+        "median": 0.8519,
+        "min": 0.8148,
+        "max": 0.8519,
+        "values": [
+          0.8519,
+          0.8519,
+          0.8148
+        ],
+        "runs": 3
+      },
+      "evidence.ungrounded_figures_total": {
+        "median": 4.0,
+        "min": 4.0,
+        "max": 5.0,
+        "values": [
+          4.0,
+          4.0,
+          5.0
+        ],
+        "runs": 3
+      },
+      "evidence.mean_evidence_per_answer": {
+        "median": 4.33,
+        "min": 4.33,
+        "max": 4.33,
+        "values": [
+          4.33,
+          4.33,
+          4.33
+        ],
+        "runs": 3
+      },
+      "evidence.answers_with_no_evidence": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "refusal.unanswerable_correctly_refused": {
+        "median": 1.0,
+        "min": 1.0,
+        "max": 1.0,
+        "values": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "runs": 3
+      },
+      "citations.answers_with_markers": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "citations.figure_sentences_cited_rate": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "crashed": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      },
+      "degraded_answers": {
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "values": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "runs": 3
+      }
+    },
+    "latency_ms": {
+      "single_sector": {
+        "p50": {
+          "median": 5001.6,
+          "min": 4737.5,
+          "max": 6890.2,
+          "values": [
+            6890.2,
+            5001.6,
+            4737.5
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 9218.6,
+          "min": 6519.0,
+          "max": 11567.5,
+          "values": [
+            11567.5,
+            6519.0,
+            9218.6
+          ],
+          "runs": 3
+        }
+      },
+      "cross_sector": {
+        "p50": {
+          "median": 5353.9,
+          "min": 5318.0,
+          "max": 6488.7,
+          "values": [
+            6488.7,
+            5353.9,
+            5318.0
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 9336.7,
+          "min": 8549.0,
+          "max": 10906.0,
+          "values": [
+            8549.0,
+            10906.0,
+            9336.7
+          ],
+          "runs": 3
+        }
+      },
+      "simulation": {
+        "p50": {
+          "median": 5621.7,
+          "min": 5522.8,
+          "max": 7191.0,
+          "values": [
+            7191.0,
+            5621.7,
+            5522.8
+          ],
+          "runs": 3
+        },
+        "p95": {
+          "median": 7772.9,
+          "min": 7261.7,
+          "max": 8397.4,
+          "values": [
+            8397.4,
+            7772.9,
+            7261.7
+          ],
+          "runs": 3
+        }
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "id": "X11",
+      "question": "How does Sri Lanka's tea sector compare with its fisheries sector?",
+      "routes": [
+        [
+          "export_analytics"
+        ],
+        [
+          "agriculture_commodity",
+          "export_analytics"
+        ],
+        [
+          "agriculture_commodity",
+          "export_analytics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        0,
+        0
+      ],
+      "route_moved": true,
+      "grounding_moved": false
+    },
+    {
+      "id": "M05",
+      "question": "If global demand for knitted apparel fell 15%, what would that do to export revenue?",
+      "routes": [
+        [
+          "apparel_manufacturing",
+          "trade_economics"
+        ],
+        [
+          "apparel_manufacturing",
+          "trade_economics"
+        ],
+        [
+          "apparel_manufacturing",
+          "trade_economics"
+        ]
+      ],
+      "ungrounded_counts": [
+        0,
+        0,
+        1
+      ],
+      "route_moved": false,
+      "grounding_moved": true
+    }
+  ]
+}

@@ -31,7 +31,10 @@ from ceynex.api.schemas import (
     NotificationPreferences,
     PasswordChangedResponse,
     RevokeApiKeyResponse,
+    UserInstructionRequest,
+    UserInstructionResponse,
 )
+from ceynex.chat import instructions
 
 router = APIRouter(tags=["account"])
 
@@ -211,3 +214,31 @@ async def revoke_api_key(
     if not found:
         raise HTTPException(status_code=404, detail=f"no api key with id {key_id}")
     return RevokeApiKeyResponse(id=key_id, revoked=True)
+
+
+@router.get("/api/account/instructions", response_model=UserInstructionResponse)
+async def get_instructions(
+    user: TokenPayload = Depends(require_user),  # noqa: B008 - FastAPI's dependency idiom
+) -> UserInstructionResponse:
+    """This reader's standing preference about how answers read (D15)."""
+    content, enabled = await instructions.get(user.email)
+    return UserInstructionResponse(
+        content=content, enabled=enabled, max_chars=instructions.MAX_INSTRUCTION_CHARS
+    )
+
+
+@router.put("/api/account/instructions", response_model=UserInstructionResponse)
+async def put_instructions(
+    request: UserInstructionRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> UserInstructionResponse:
+    """Save it. Tone only — see `ceynex/chat/instructions.py` for what this
+    cannot do, which is the more important half of the feature."""
+    content = request.content.strip()[: instructions.MAX_INSTRUCTION_CHARS]
+    try:
+        await instructions.save(user.email, content, request.enabled)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not save instructions") from exc
+    return UserInstructionResponse(
+        content=content, enabled=request.enabled, max_chars=instructions.MAX_INSTRUCTION_CHARS
+    )

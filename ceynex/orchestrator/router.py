@@ -384,12 +384,47 @@ Reply with JSON only:
 {"route": ["..."], "sectors": ["agriculture"|"apparel"|"cross_sector"|"macro"], "relevance": {"agent": 0.0-1.0}, "out_of_scope": false, "reason": "one short sentence"}"""
 
 
+def distrust_route(llm, query: str, why: str) -> None:  # noqa: ANN001 - protocol, not a concrete type
+    """Keep a route that went wrong out of the prompt cache.
+
+    The cache keys on the prompt, so a response it keeps is replayed for every
+    later ask of the same question until the TTL runs out — 168 hours. That
+    replay is the harm when the route went wrong: one unlucky decision became the
+    answer to that question for a week, evidence-free and in 30 ms. That was S07,
+    seen in the 2026-09-11 live pass (docs/DEFERRED.md). Dropping the entry means
+    the next ask routes afresh. Two things count as wrong:
+
+    - a response that had to fall back (unparseable, or naming no real agent),
+      decided here in `llm_route`;
+    - a route whose answer came back with no evidence, decided by
+      `api/query_runner.py`, the one place that knows.
+
+    Narrowing the keyword route is deliberately *not* one of them. It was, at
+    first. Measured on 2026-09-12, that evicted 11 of 30 cold routes, 5 of them
+    the expected route. It cost about 1.5 s on each repeat and changed none of
+    them (EVALUATION.md §12).
+
+    `forget` is optional: a client without one (a test double, another
+    implementation of the contract's protocol) simply keeps its cache.
+    """
+    forget = getattr(llm, "forget", None)
+    if forget is None:
+        return
+    log.info("router response not kept in the cache: %s", why)
+    try:
+        forget("router", ROUTER_SYSTEM, query)
+    except Exception:  # noqa: BLE001 - a cache that cannot be cleaned must not fail routing
+        log.warning("could not drop the router's cached response", exc_info=True)
+
+
 async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protocol, not a concrete type
     """LLM routing with `keyword_route` as the fallback for every failure mode.
 
     Falls back when: the LLM is unavailable, returns unparseable JSON, or returns
     a route containing no valid agent. The last one matters most — a plausible
     but wrong agent name would otherwise produce an empty graph invocation.
+
+    A response that fell back is not kept in the prompt cache (`distrust_route`).
     """
     fallback = keyword_route(query)
 
@@ -402,6 +437,7 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         parsed = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         log.warning("router returned unparseable JSON, falling back: %r", str(raw)[:200])
+        distrust_route(llm, query, "unparseable JSON")
         fallback.method = "llm->keyword"
         fallback.notes.append("LLM routing output was not valid JSON; routed by keyword.")
         return fallback
@@ -409,6 +445,7 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     route = [a for a in parsed.get("route", []) if a in ALL_AGENTS]
     if not route:
         log.warning("router returned no valid agents (%s), falling back", parsed.get("route"))
+        distrust_route(llm, query, "no valid agent")
         fallback.method = "llm->keyword"
         fallback.notes.append("LLM named no valid agent; routed by keyword.")
         return fallback
@@ -457,4 +494,4 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     )
 
 
-__all__ = ["RouteDecision", "keyword_route", "llm_route"]
+__all__ = ["RouteDecision", "distrust_route", "keyword_route", "llm_route"]

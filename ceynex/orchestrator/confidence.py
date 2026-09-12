@@ -37,6 +37,7 @@ clamp      Never 0.0 (the system did answer) and never 1.0 (nothing forecast
 """
 
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from ceynex.contracts.state import AgentName, AgentOutput
 
@@ -111,14 +112,64 @@ def aggregate_confidence(
     dq_severities: Iterable[str] = (),
 ) -> float:
     """The single entrypoint. See the module docstring for the formula and its rationale."""
+    return aggregate_confidence_breakdown(
+        outputs, route, relevance, months_since_latest_observation, dq_severities
+    ).final
+
+
+@dataclass(frozen=True)
+class ConfidenceBreakdown:
+    """Every term in the formula, kept rather than discarded.
+
+    The four penalty functions above have always been separate and named; only
+    the final number survived, which meant "how is this calculated?" — the most
+    predictable question this project will be asked (SRS 3.1.4) — could be
+    answered from the docstring but never from the answer in front of the
+    reader. This changes nothing about the arithmetic; it stops throwing the
+    working away.
+    """
+
+    weighted: float
+    staleness: float
+    dq: float
+    coverage: float
+    final: float
+
+    def as_dict(self) -> dict[str, float]:
+        return {
+            "weighted": round(self.weighted, 4),
+            "staleness": round(self.staleness, 4),
+            "dq": round(self.dq, 4),
+            "coverage": round(self.coverage, 4),
+            "final": round(self.final, 4),
+        }
+
+
+def aggregate_confidence_breakdown(
+    outputs: Mapping[AgentName, AgentOutput],
+    route: Iterable[AgentName] = (),
+    relevance: Mapping[AgentName, float] | None = None,
+    months_since_latest_observation: float | None = None,
+    dq_severities: Iterable[str] = (),
+) -> ConfidenceBreakdown:
+    """The same computation as `aggregate_confidence`, showing its working.
+
+    `aggregate_confidence` delegates here, so the two cannot disagree — which
+    matters more than the small duplication it avoids: a breakdown that did not
+    add up to the score beside it would be worse than no breakdown at all.
+    """
     route = list(route) or list(outputs.keys())
-    score = (
-        weighted_agent_confidence(outputs, relevance)
-        - staleness_penalty(months_since_latest_observation)
-        - dq_penalty(dq_severities)
-        - coverage_penalty(route, outputs)
+    weighted = weighted_agent_confidence(outputs, relevance)
+    staleness = staleness_penalty(months_since_latest_observation)
+    dq = dq_penalty(dq_severities)
+    coverage = coverage_penalty(route, outputs)
+    return ConfidenceBreakdown(
+        weighted=weighted,
+        staleness=staleness,
+        dq=dq,
+        coverage=coverage,
+        final=clamp(weighted - staleness - dq - coverage),
     )
-    return clamp(score)
 
 
 def confidence_band(score: float) -> str:

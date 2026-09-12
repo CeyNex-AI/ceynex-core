@@ -790,7 +790,358 @@ that unstable, and nothing in D10 targeted latency.
   columns are not, and a second pair of runs would be worth taking before these
   land in the Testing and Evaluation Document.
 
-## 8. Concurrency — 50 concurrent users (SRS 3.4.2)
+---
+
+## 8. The conversational layer, and the noise floor nobody had measured
+
+**Measured 2026-09-10, M2**, against the same local stack §1 used — verified
+identical before running: 4,625 `fact_trade` rows spanning 2015–2024, 4,625
+`EXPORTS_TO` relationships mirroring them, 901 chunks in `ceynex_policy`. The LLM
+cache was cleared before **every** run below, because a warm `.cache/llm` gives
+the false 65 ms p50 §1 warns about.
+
+The question this section answers: **did the conversational layer (D12/D13)
+change the orchestration path the 30-question set measures?** If it did, that is a
+defect, not a feature.
+
+### The committed baseline was two weeks stale, and comparing against it would have lied
+
+`eval_results.json` in this repo was last written 2026-08-28. `main` has since
+merged the out-of-scope routing fix. A fresh run of `main` today scores materially
+better than the committed file:
+
+| Metric | committed 2026-08-28 | `main` 2026-09-10 |
+|---|---:|---:|
+| routing exact match | 0.50 of 30 | 0.60 of 30 |
+| routing recall | 0.825 | 0.925 |
+| answers fully grounded | 0.8148 of 27 | 0.8519 of 27 |
+| ungrounded figures | 5 | 4 |
+| mean evidence per answer | 3.85 | 4.33 |
+| answers with no evidence | 1 | 0 |
+
+Diffing the feature branch against the committed file would have credited the
+conversational layer with a routing fix it had nothing to do with. **A comparison
+is only meaningful against a run of the code you are comparing to, taken now.**
+
+### The noise floor: ±1 question on routing and grounding, and p95 is not usable at n=1
+
+Two runs of **identical `main` code**, both cold-cache:
+
+| Metric | main run 1 | main run 2 |
+|---|---:|---:|
+| routing exact match | 0.60 | 0.5667 |
+| ungrounded figures | 4 | 5 |
+| single-sector p95 | 8,567.8 ms | 5,581.9 ms |
+
+Routing moved by one question and the ungrounded count by one figure with no code
+change at all. **Single-sector p95 moved by 35%.** Per-question, run 1 was the
+outlier on three questions (X11's route, M01's and M03's ungrounded figures) where
+run 2 and the branch agreed with each other.
+
+Two consequences worth carrying into the Testing and Evaluation Document:
+
+- **A single-run difference of one question is not a result.** The LLM path has a
+  noise floor of roughly ±3.3 pp on routing exact match and ±1 on ungrounded
+  figures. Report a difference only if it survives repetition.
+- **Latency p95 from one run of 12 samples should not be quoted at all.** §1
+  already flags the tail as unstable; this quantifies it. The 14.6 s and 29.0 s
+  figures in §1 and the 8.1 s in §7 are all single runs and should be read as
+  draws from a wide distribution, not as measurements.
+
+### S07 is nondeterministic on both branches, and that took 21 runs to establish
+
+The branch's full run differed from `main` on one structurally important
+question — S07, *"Which markets buy the most Sri Lankan knitted apparel?"*, where
+the route dropped `export_analytics` and the answer came back with **no evidence
+at all**. That is exactly the kind of thing this check exists to catch, so it was
+run down rather than waved through as noise.
+
+`keyword_route` returns the correct two-agent route for S07, so the failure is not
+a fallback — it is `llm_route` itself choosing a single agent. Sampling the
+question in isolation:
+
+| | correct | wrong |
+|---|---:|---:|
+| `main` | 11 | 2 |
+| feature branch | 6 | 3 |
+
+Fisher's exact p ≈ 0.36. **`main` fails S07 too, roughly one run in five.** The
+two branches are statistically indistinguishable on it. It is a real weakness of
+the LLM router on this phrasing and it belongs on the defect list — but it is not
+a regression, and it predates this work.
+
+### One genuine defect, found by this check and fixed
+
+`_plan_steps` ran **unconditionally** inside `route_node`, concurrently with
+routing. But `trace.emit("thought", ...)` is a no-op without a trace sink, so on
+`POST /api/query` and throughout `eval/harness.py` the planner's LLM call was
+made, paid for, and its result discarded — an extra call on every query, and extra
+concurrent load on the client during the one node whose output decides which
+agents run.
+
+Gated on `trace.active()`, the module's own "is anyone listening" helper. Measured
+effect on the two questions that had moved, sampled in isolation:
+
+| | S07 correct | X09 clean |
+|---|---:|---:|
+| before the gate | 2 of 3 | 0 of 3 |
+| after the gate | 4 of 4 | 3 of 4 |
+
+and on the full set, the ungrounded-figure count returned from 7 to 5 — inside
+`main`'s own observed range of 4–5. `tests/orchestrator/test_planner.py::
+test_no_planner_call_is_made_when_nothing_is_listening` guards it in both
+directions.
+
+### Verdict
+
+| Metric | `main` (2 runs) | branch, planner gated |
+|---|---:|---:|
+| routing exact match | 0.60 / 0.5667 | 0.5667 |
+| routing recall | 0.925 / 0.925 | 0.8917 |
+| answers fully grounded | 0.8519 / 0.8519 | 0.8148 |
+| ungrounded figures | 4 / 5 | 5 |
+| answers with no evidence | 0 / 0 | 1 *(S07, above)* |
+| crashed | 0 / 0 | 0 |
+| single-sector p95 | 8,568 / 5,582 ms | 5,353 ms *(within budget)* |
+
+**Degraded mode is byte-identical between `main` and the branch** — routing exact
+0.4667, recall 0.9667, grounded 0.9259, 30 of 30 degraded, 0 crashed, on both.
+That is the strongest single line here: degraded mode is the fully deterministic
+path, so if the orchestration had actually changed, it would show there first and
+without ambiguity. It does not.
+
+Every remaining difference on the LLM path sits inside the run-to-run variance
+measured above, and the one difference large enough to be worth chasing was
+chased and found to be present on `main` as well.
+
+**Not yet re-run:** the 21 GREEN questions in `queries.md`, and `make coherence`.
+
+### After all four phases — measured 2026-09-10
+
+Re-run with the clarification gate, web-search enrichment, the usage ledger,
+custom instructions and the confidence breakdown all in place, cold cache:
+
+| Metric | `main` run 1 | `main` run 2 | all phases |
+|---|---:|---:|---:|
+| routing exact match | 0.60 | 0.5667 | **0.60** |
+| routing recall | 0.925 | 0.925 | **0.925** |
+| answers fully grounded | 0.8519 | 0.8519 | 0.8148 |
+| ungrounded figures | 4 | 5 | 6 |
+| mean evidence per answer | 4.33 | 4.33 | **4.33** |
+| answers with no evidence | 0 | 0 | **0** |
+| crashed | 0 | 0 | **0** |
+| single-sector p95 | 8,568 ms | 5,582 ms | 5,867 ms *(within budget)* |
+
+Routing, mean evidence and the no-evidence count land exactly on `main`. Grounding
+is one question below it and the ungrounded count one figure above the observed
+`main` range of 4-5 — both inside the noise floor measured above, and neither
+worth reporting as a result on a single run.
+
+**Degraded mode remains byte-identical**: routing exact 0.4667, recall 0.9667,
+grounded 0.9259, 30 of 30 degraded, 0 crashed — the same figures `main` produces.
+Since degraded mode is the fully deterministic path, this is the line that says
+the orchestration itself is unchanged, and it says it without ambiguity.
+
+**None of this measures the new features**, and it is not meant to. The 30
+questions are one-shot queries: they never open a conversation, never trigger the
+clarification gate (asserted separately — it is silent on all 30), and never make
+an outbound web call. What this run establishes is the thing that mattered most —
+that adding all of it did not disturb the path the published numbers describe.
+Measuring the conversational features needs a multi-turn harness, which
+`DEFERRED.md` records as not built.
+
+**Still not re-run:** the 21 GREEN questions in `queries.md`, and `make coherence`.
+
+## 9. Inline citations — the pre-registered rule, then the measurement
+
+**Rule written 2026-09-11, before any cited run.** `CEYNEX_CITATIONS` shipped off
+because enabling it changes the merge prompt every answer is written from, and §8
+established that a prompt change measured on a single run is worth nothing. The
+protocol that §8 called for now exists — `make eval-repeat` runs the set three
+times with the prompt cache cleared before each and reports medians and spread
+(`eval/repeat.py`) — so the flag can be decided rather than guessed.
+
+Two conditions, three cold runs each: `make eval-repeat` (off) and
+`make eval-repeat-cited` (on). The decision is made on the **medians**, and the
+thresholds below encode the noise floor §8 measured (one question on routing and
+grounding, one figure on the ungrounded count). All six must hold for the flag to
+go on:
+
+| # | Criterion | Why |
+|---|---|---|
+| 1 | Routing exact match and recall: medians **identical** to the off run | Citations touch the merge prompt only. Any movement here is a defect, not noise. |
+| 2 | `answers_fully_grounded` median ≥ off median − 0.037 | One question of 27. A larger drop means the SOURCES block is confusing the model. |
+| 3 | `ungrounded_figures_total` median ≤ off median + 1 | The measured floor is ±1. |
+| 4 | `citations.marker_valid_rate` median ≥ 0.98 | A `[n]` pointing past the evidence list is an invented citation — the failure the feature exists to prevent. |
+| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 | Below this the markers are decoration, not a discipline, and not worth a prompt change. |
+| 6 | `crashed` = 0 and `answers_with_no_evidence` no higher than the off median | Table stakes. |
+
+Anything else and the flag stays off, with the failing criterion recorded here.
+The rule is not revised after the runs; if it turns out to be the wrong rule, that
+is a new section with a new rule and a new set of runs.
+
+### Measured 2026-09-11 — the flag stays off
+
+Six cold runs, three each way, on the same stack §8 used (4,625 `fact_trade` rows,
+4,625 `EXPORTS_TO` edges, verified before the first run). Every figure is a median
+of three with the spread in brackets; the per-run files are in `eval_runs/off/`
+and `eval_runs/on/`.
+
+| Metric | off (3 runs) | on (3 runs) | criterion | holds? |
+|---|---:|---:|---|---|
+| routing exact match | 0.5667 [0.5667–0.60] | 0.5667 [0.5667–0.5667] | identical medians | **yes** |
+| routing recall | 0.925 [0.925–0.925] | 0.925 [0.8917–0.925] | identical medians | **yes** |
+| answers fully grounded | 0.8519 [0.8148–0.8519] | 0.7778 [0.7778–0.8148] | ≥ 0.8149 | **no** |
+| ungrounded figures | 4 [4–5] | 7 [6–7] | ≤ 5 | **no** |
+| marker valid rate | — | 1.00 [1.00–1.00] | ≥ 0.98 | **yes** |
+| figure sentences cited | — | 0.877 [0.817–0.885] | ≥ 0.80 | **yes** |
+| crashed / no evidence | 0 / 0 | 0 / 0 [0–1] | 0 / ≤ off | **yes** |
+| single-sector p95 (ms) | 9,219 [6,519–11,568] | 6,154 [6,153–8,895] | — | noise |
+
+**Criteria 2 and 3 fail, so `CEYNEX_CITATIONS` stays off.** Two answers of 27
+lost their grounding, not one, and the ungrounded count rose by three, not one.
+Everything the feature was meant to do, it did: every `[n]` the model wrote
+pointed at a real evidence entry (24 of 27 answers carried markers), and 88% of
+the sentences stating a figure cited one.
+
+**What the extra ungrounded figures are — two classes, and only one is the
+metric's fault.** Read from the prose around each figure:
+
+- *X09* (`161,815,198`, `30,216,274`, in two of three cited runs): the
+  trade-economics impact figures, which the evidence carries **signed** ("USD
+  -161,815,198") and the prose states unsigned with the word "decrease".
+  `grounding.ungrounded_figures` compares digit strings and keeps the sign, so
+  `-161815198` does not ground `161815198`. That is §1's grounding class 1 — a
+  figure the agent computed, quoted differently — and the same shape as the four
+  ungrounded figures the off runs carry every time (M01, M02, M03, M04).
+- *M03* (`1,318,528,338`, one run) and *M05* (`2,872,929,484`, all three cited
+  runs against one of three off runs): **totals the model worked out itself** —
+  "resulting in a new total of about USD 1,318,528,338", which is the baseline
+  minus the impact, and "would bring the total apparel export revenue to around
+  USD 2,872,929,484", the baseline plus the shock. No finding and no evidence
+  entry states either number. These are exactly what the grounding check exists
+  to catch, and asking the model to cite every figure-carrying sentence appears
+  to make it *more* inclined to spell such a total out beside the citation.
+
+So the verdict is not an artefact of the metric. Citations cost real grounding
+on this set, on a rule written before the runs, and the flag stays off.
+
+**What this does not permit.** The rule was pre-registered and it is not revised
+here. A sign-tolerant comparison in `grounding.py` would remove the X09 class —
+and it would also change the runtime guard and every published grounding figure
+in this document, which is precisely the kind of change that needs its own
+pre-registered rule and its own six runs. The derived-total class is a prompt
+problem (rule 2 already forbids it; rule 6a seems to pull against it) and would
+need a reworded 6a, measured the same way. Both are recorded here and not taken.
+
+**Two things the repeated runs established on the side.** The questions that
+disagree with themselves across identical runs are X11 (route) and M05
+(grounding) with the flag off, S07 (route, §8's known case), X09 and M03 with it
+on — the same handful every time, which is where a larger question set would
+earn its keep. And single-sector p95 ranged from 6.2 s to 11.6 s across six runs
+of the same code with one question (S01, S10 or S11) over 10 s in two of them,
+which is the §8 warning in numbers: no single-run p95 from this set is a
+measurement.
+
+## 10. The conversational layer, measured on conversations
+
+**Measured 2026-09-11, M2**, on the same stack as §9, cold cache. §8 established
+that the layer left the one-shot path unchanged; nothing before this measured the
+layer itself. `eval/conversations.yaml` holds eight conversations, 22 turns,
+with each turn's expected behaviour written down before the run — which path the
+classifier should take, what a rewrite must carry, whether the gate should ask,
+whether a discussion must survive grounding. `eval/chat_harness.py` drives them
+through `api/turn_runner.py` exactly as `POST /api/chat/stream` does, in-process,
+and scores the frames each turn wrote (`make eval-chat`, `make eval-chat-degraded`;
+results in `eval_chat.json` and `eval_chat_degraded.json`).
+
+### Headline
+
+| Metric | LLM (23 turns) | degraded (23 turns) |
+|---|---:|---:|
+| classifier: follow-up took the expected path | **13 of 14** | 12 of 14 |
+| rewrite carried what the reader named | **6 of 6** | 3 of 6 |
+| discussion survived grounding | 6 of 7 | 7 of 7 *(trivially — the degraded discussion is the prior answer)* |
+| gate asked where expected / silent elsewhere | **1 of 1 / 22 of 22** | 1 of 1 / 22 of 22 |
+| turns passing every check | 19 of 23 | 18 of 23 |
+| analyses that stated some limit *(informational, SAD §4.1)* | 12 of 16 | 12 of 17 |
+
+The one clarified turn was answered through the resume path with the template's
+last option ("both"), the composed query ran the graph, and the gate did not ask
+again — the one-round cap holding in a real turn, not a route test.
+
+*The set changed on 2026-09-12 and these figures predate it (re-run: §12).* "both" is no longer
+offered (D13, amended), so C05's clarified turn now names its answer, cinnamon.
+That is also the case that was broken: a reader's second-named choice was
+answered with the first item. The run above has not been repeated on the
+changed set here; §12 has the re-run.
+
+### Cost and shape, by mode — the number that replaces "3 frames against 22"
+
+That figure, quoted in D13 and in `IMPLEMENTED_FEATURES.md`, was measured before
+`discuss` turns had a trace. With one:
+
+| mode | turns | SSE frames (median) | answer sentences | elapsed p50 | max | model calls | cost per turn |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| first turn (graph) | 8 | 35.5 | 3 | 6.8 s | 7.9 s | 5.25 | $0.0027 |
+| analyse follow-up (graph) | 8 | 32.5 | 3 | 5.8 s | 7.7 s | 5.4 | $0.0027 |
+| discuss follow-up (no graph) | 6 | 8.5 | 2.5 | 2.7 s | 3.9 s | 2 | $0.00025 |
+| clarify (gate only) | 1 | 5 | 0 | 1.3 s | — | 0 | $0 |
+
+A discussion is **8.5 frames against 33, in 2.7 s against 5.8, at a tenth of the
+cost** — two cheap-model calls (classification and the discussion) against five
+and a half. The cost argument in D13 holds; the frame count it quoted does not,
+and is corrected in both places. Degraded mode answers a first turn in 333 ms
+and a discussion in 33 ms, with no model calls at all.
+
+### The four misses, read one at a time
+
+- **C03 turn 1 and turn 2 — the S07 class, again.** *"Which markets buy the most
+  Sri Lankan knitted apparel?"* was routed to `apparel_manufacturing` alone,
+  dropping `export_analytics`, and on this stack (which has no EDB apparel
+  sub-category data) that agent declines, so the turn had no evidence. §8
+  measured this router failure at roughly one run in five on `main`; it landed
+  on the first turn here and again on the rewritten follow-up. The rewrite itself
+  was faithful (the United Kingdom and knitted apparel both carried), though it
+  said "volume" where the reader's original said value — the kind of drift the
+  `standalone_contains` check cannot see and a human reading the transcript can.
+  Not a defect of the conversational layer; the same question one-shot fails
+  the same way.
+- **C07 turn 2 — the grounding guard withheld a derived figure.** *"How wide is
+  the uncertainty band, and what does it mean?"* invites a subtraction, the model
+  performed it, and `ungrounded_figures` rejected the reply for a number no
+  finding stated. That is the guard doing its job (it is also what §9 found
+  citations encourage). It is scored as a miss deliberately: the set expects the
+  system to answer the question from the bounds it *was* given, and it did not.
+- **C08 turn 2 — a defensible classification counted against it.** *"Give me
+  just the agriculture side of that"* was classified `analyse` and re-run as
+  *"What are the export figures for Sri Lanka's agriculture sector to the
+  European Union in 2024?"* — a correct answer, at the cost of a fan-out the
+  previous answer could have supplied. The set says discuss; the model chose to
+  re-analyse; both are honest readings, and the miss is recorded as the set's.
+
+### Degraded mode: the limit is the rewrite, not the classifier
+
+With no model, the keyword classifier still took the expected path 12 times in
+14, and the template gate asked exactly where the LLM gate did. What it cannot do
+is **rewrite**: *"What about the United Kingdom specifically?"* and *"How has that
+dependence changed since 2020?"* went to the graph as typed, named nothing CeyNex
+covers, and were declined as out of scope. A follow-up that depends on the turn
+before it needs the model to make it standalone; SRS 3.4.3's degraded path keeps
+the conversation but not that. Recorded as the line to draw, not a defect to fix.
+
+### What this stack cannot show
+
+The local volumes hold the 2015–2024 Comtrade series and the policy corpus, and
+lack what the deployed host has: the Tea Board and FAOSTAT series, the EDB
+apparel sub-categories and the registered forecast models. Co-routed agents
+decline on those, so **per-answer confidence here is not comparable to
+`queries.md`** (a knitted-apparel market-share answer that scored 0.70 on the
+host scored 0.09 here with the same figures, because two of three agents
+reported no data). That is why the harness scores "answered" as prose plus
+evidence and records confidence without judging it.
+
+## 11. Concurrency — 50 concurrent users (SRS 3.4.2)
 
 Measured **2026-09-12** with `eval/load_test.py`, the first measurement of this
 requirement — `docs/DEFERRED.md` had flagged it untested since the rate limiter
@@ -906,3 +1257,161 @@ open; re-running this against the deployed VM itself (with the cost and
 availability implications that implies) is the remaining step before this is
 called measured against production rather than against a production-shaped
 local stack.
+
+### The sustained, signed-in run: the rule, written before it ran (2026-09-12)
+
+The burst above answers availability for one moment of 50 anonymous callers.
+SRS 3.4.2 names *authenticated* users, and a moment is not load. So there is a
+second measurement, and its rule is fixed here before any of it runs.
+
+**Shape.** 50 users, each signed in with a real account and token (`--signed-in`).
+Each one asks, waits for the answer, and asks again no sooner than 2.5 s after
+its last question (`--mode sustained`). They run against uvicorn `--workers 2`
+with Redis, the deployed topology, over the local stack. That offers up to 1,200
+questions a minute, with every user under its 30 a minute. Both endpoints are
+run: `/api/query`, and `/api/chat/stream`, where the time that counts is the time
+to its `done` frame. Each run's baseline is `--mode sequential`: one user, each
+question once, same session, same endpoint.
+
+**Two runs.**
+
+- **(a) Degraded, no model key, 180 s.** This measures CeyNex's own capacity.
+- **(b) With the model, the prompt cache off, 3 questions per user (150).** This
+  largely measures the provider's tier. A provider's 429 reaches the reader as a
+  degraded answer, which is reported, not scored.
+
+**The rule** (`eval/load_test.py::verdict`), applied to each run:
+
+1. No failures: no 5xx, timeouts, connection errors, or turns ending `failed`. No
+   429s: the pacing keeps every user under its allowance, so a 429 is a limiter
+   or identity bug.
+2. Each category's p95 within its SRS 3.4.1 budget: 10 s single-sector, 20 s
+   cross-sector and simulation. That is the literal reading of "no material
+   increase in the response times specified".
+3. Reported, not scored: p95 under load over the same session's single-user
+   p95. Above 1.5× it reads as a material increase, even inside budget.
+4. A category whose single-user p95 already breaks its budget is reported as
+   breached at one user, not blamed on concurrency.
+
+### Measured 2026-09-12 — run (a), degraded: both endpoints pass
+
+**Setup.**
+
+- The local stack, with uvicorn `--workers 2` and Redis (`redis:7.2`), on a
+  32-core machine that also ran the load generator.
+- The prompt cache off, through a copy of `config/` with `cache.enabled: false`,
+  so no answer was served from an earlier paid run. With the cache on, 4 of 30
+  baseline answers came back with cached prose despite there being no key.
+
+Every request came from a real signed-in account. Runs are in `eval_runs/load/`;
+the sustained runs keep their summary and every error, not all 3,600 rows.
+
+**The first sustained run failed rule 1, and the cause was the harness.** It met
+11 × 429, all on user 0. That account was the one the baseline had just used for
+30 queries in 4 s, so user 0 began the run with its window already full. The
+rule says a 429 means the limiter, or whose allowance a request was counted
+against, is wrong. This time it was the harness's accounting: two runs shared one
+account. Accounts are now named by mode (`eval/load_test.py`), and the run was
+repeated with the rule unchanged. Both runs are recorded.
+
+| endpoint | requests | succeeded | 429 | per minute | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---:|---|---|---:|
+| `/api/query` | 3,600 | 3,600 | 0 | 1,064 | 3.5 / 3.5 / 6.7 s | 65 / 67 / 5.7 | — |
+| `/api/chat/stream` | 3,600 | 3,600 | 0 | 837 | 4.5 / 4.8 / 6.8 s | 15 / 16 / 4.6 | 0.9 s (17 ms at one user) |
+
+**Both pass the rule.** There were no failures and no 429s at up to about 1,060
+questions a minute, and every category's p95 stayed inside its SRS 3.4.1 budget.
+Reading 3 calls the increase material. p95 grows from tens of milliseconds to
+several seconds, which is what two workers cost under this concurrency with no
+model in the path. That is CeyNex's own capacity. It leaves the budget room, but
+the room is the model's to spend: §1 measures the single-user p95 *with* the
+model at 6.2–11.6 s, before any concurrency. Run (b) is the one that says how
+the two add up.
+
+### Measured 2026-09-12 — run (b), with the model: single-sector breaks its budget, and the provider is why
+
+Same setup as (a), with the model key present (the prompt cache still off), 50
+signed-in users asking 3 questions each. No failover key was set, so a failed
+call went straight to a degraded answer.
+
+| endpoint | requests | succeeded | 429 from CeyNex | degraded (one user → load) | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---|---|---|---:|
+| `/api/query` | 150 | 150 | 0 | 5 of 30 → 14 of 150 | **11.6** / 14.9 / 14.0 s | 1.3 / 2.1 / 2.7 | — |
+| `/api/chat/stream` | 150 | 150 | 0 | 5 of 30 → 21 of 150 | **13.4** / 15.9 / 14.8 s | 2.2 / 2.0 / 2.3 | 79 ms |
+
+**Both fail rule 2, on single-sector only.** The breach is not there at one user:
+the same session's single-user p95 was 9.2 s on `/api/query` and 6.1 s on the
+stream. So it comes with concurrency. Cross-sector and simulation kept their
+20 s budgets, and nothing failed or met a 429 from CeyNex.
+
+**The cause, from the API's own log.** OpenAI answered 429, "Rate limit reached
+for gpt-4o in organization …", on 208 first attempts across the two runs. 176
+calls were still refused after their retry and degraded. That also answers what
+this section left open above: why the primary call fell through under load. It
+is the account's rate limit on `gpt-4o`, the model `config/llm.yaml` gives the
+merge role. The stream's first frame stayed under 0.1 s throughout, so a reader
+sees the trace start at once even when the answer is late.
+
+**What SRS 3.4.2 therefore gets.** CeyNex's own serving path holds 50
+authenticated users inside every budget, with no failures (run a). The system
+with this model account does not hold single-sector's 10 s. The ceiling is the
+provider's tier, not the server. SRS 3.6.5 treats the model as a purchased
+component, and 3.4.2 allows capacity to grow "through standard scaling": a higher
+tier, a failover key (unset here), or the merge role on the cheaper model. Each
+of those is a change to measure the same way, under this same rule, before it
+is claimed.
+
+## 12. The owner's calls of 2026-09-12, measured
+
+**Measured 2026-09-12, M2**, on the stack §9 used, before either change was
+merged. The two calls `DEFERRED.md` left open after the live pass were decided:
+don't let a distrusted route stick in the prompt cache, and stop offering "both"
+on the clarification card (D13, amended). What each was expected to show was
+written into CeyNex-AI/ceynex-core#80 before these runs.
+
+### The router's prompt cache: the first rule was too broad, and was narrowed
+
+The first version distrusted any route that dropped an agent `keyword_route`
+selected. A cold run cannot see a cache change, so the check was a pair: a cold
+run (`--repeat 1 --cold`, then a look at which router responses the cache kept),
+then a warm run over what it kept (`eval_runs/router-cache/`).
+
+| | cold | warm |
+|---|---:|---:|
+| routing exact match / recall | 0.60 / 0.925 | 0.60 / 0.925 |
+| router responses kept in the cache | 19 of 30 | — |
+| routes that narrowed the keyword route, and were not kept | 11 | — |
+| …of those, already the *expected* route | 5 | — |
+| …whose route changed when asked again | — | **0** |
+| median time, replayed questions | — | 59 ms |
+| median time, the 11 re-routed | — | 1,511 ms (max 3,240) |
+| answers with no evidence | 0 | 0 |
+
+The rule did what it said. No suspect route was kept, by direct inspection of
+the cache. But it was the wrong rule. Most narrowings are the model being right,
+and at temperature 0 re-asking returned the same route every time. So it cost
+about 1.5 s on every repeat of a third of the set, and bought nothing this run
+could see. **The owner narrowed it.** A route is distrusted only if its response
+fell back (unparseable, or naming no real agent) or if **its answer came back with
+no evidence**. That is what S07 did, and `run_query` is where it is known. On
+these two runs the narrowed rule evicts nothing: neither had a fallback or an
+evidence-free answer. The S07 miss did not occur this time, as it does in roughly
+four runs of five (§8). When it does, its route no longer outlives its answer.
+
+### The clarification card: a choice is now the item analysed
+
+The multi-turn set was re-run (`eval_runs/chat-2026-09-12/`). C05's clarified
+turn now names its answer, cinnamon, because "both" is no longer an option. That
+is also the case that was broken: before the `parse_intent` fix in the same PR, a
+reader who chose cinnamon was given the tea analysis. The run answered C05 with
+Sri Lanka's USD 214,425,881 of cinnamon exports, with the model and in degraded
+mode alike.
+
+| | LLM (23 turns) | degraded (23 turns) |
+|---|---:|---:|
+| turns passing every check | **21** (19 in §10) | 18 (18 in §10) |
+
+The two LLM misses are §10's own, read the same way: C07's derived band width
+withheld by the grounding guard, and C08's defensible `analyse`. §10's two S07
+misses on C03 did not recur, which is that question's usual nondeterminism, not
+a fix. The degraded misses are §10's rewrite limit.

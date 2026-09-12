@@ -31,8 +31,11 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from ceynex.observability import context as obs_context
+from ceynex.observability import spend as spend_limits
+from ceynex.observability import trace
 from ceynex.settings import llm_config, openai_api_key, openrouter_api_key
 
 log = logging.getLogger(__name__)
@@ -40,7 +43,17 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class LLMUsage:
-    """What the client did, so the orchestrator can report it and we can cost it."""
+    """What the client did, so the orchestrator can report it and we can cost it.
+
+    Process-lifetime, one instance per `LLMReasoningClient`, and `_cap_reached()`
+    reads `cost_usd` off it — so this must stay a running total and must not be
+    repurposed per request. Per-request accounting lives in
+    `ceynex/observability/context.py::RequestLLMUsage`, accumulated alongside.
+
+    `tokens_in`/`tokens_out` were added when the usage ledger landed: `_cost()`
+    had been reading them off every provider response and discarding them, so the
+    system was paying to learn a number it then threw away.
+    """
 
     calls: int = 0
     cache_hits: int = 0
@@ -48,6 +61,8 @@ class LLMUsage:
     fallback_calls: int = 0
     elapsed_s: float = 0.0
     cost_usd: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
 
     def merge(self, other: LLMUsage) -> None:
         self.calls += other.calls
@@ -56,6 +71,92 @@ class LLMUsage:
         self.fallback_calls += other.fallback_calls
         self.elapsed_s += other.elapsed_s
         self.cost_usd += other.cost_usd
+        self.tokens_in += other.tokens_in
+        self.tokens_out += other.tokens_out
+
+
+class TextStream(Protocol):
+    """Somewhere to send a response's text as it arrives (D12, amended).
+
+    `feed` receives each piece of text in order; `restart` says the attempt that
+    produced the pieces so far has been abandoned — a timeout before a retry, or
+    the primary before the failsafe — so whatever was shown from it must go.
+    `orchestrator/answer_stream.py::SentenceGate` is the one implementation, and
+    it is what stands between these pieces and the screen.
+    """
+
+    def feed(self, chunk: str) -> None: ...
+
+    def restart(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class _CallOutcome:
+    """One provider round trip. Internal to this module."""
+
+    text: str | None
+    cost_usd: float
+    tokens_in: int
+    tokens_out: int
+
+
+def _observe(
+    *,
+    role: str,
+    model: str,
+    provider: str,
+    elapsed_ms: float,
+    outcome: _CallOutcome | None = None,
+    cache_hit: bool = False,
+    fallback: bool = False,
+    failed: bool = False,
+    original: dict[str, Any] | None = None,
+) -> None:
+    """Report one call to the live trace and the per-request usage accumulator.
+
+    Both are ambient and both no-op outside a request, which is what keeps
+    `demo.py`, `eval/harness.py` and the existing test suite unaffected. This is
+    additive to `self.usage`, never a replacement: that counter is what
+    `_cap_reached()` reads, and moving it per-request would silently disable the
+    R5 spend cap.
+    """
+    tokens_in = outcome.tokens_in if outcome else 0
+    tokens_out = outcome.tokens_out if outcome else 0
+    cost_usd = outcome.cost_usd if outcome else 0.0
+
+    obs_context.record_llm_call(
+        obs_context.LLMCall(
+            role=role,
+            model=model,
+            provider=provider,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
+            elapsed_ms=round(elapsed_ms, 1),
+            cache_hit=cache_hit,
+            fallback=fallback,
+            failed=failed,
+        )
+    )
+
+    payload: dict[str, Any] = {
+        "role": role,
+        "model": model,
+        "provider": provider,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cost_usd": round(cost_usd, 6),
+        "elapsed_ms": round(elapsed_ms, 1),
+        "cache_hit": cache_hit,
+        "fallback": fallback,
+        "status": "failed" if failed else "ok",
+    }
+    if original:
+        # Only present when the cache entry predates nothing — i.e. was written
+        # by a build that stored it. Absent for up to the 168h TTL after deploy.
+        payload["original_tokens_in"] = original.get("tokens_in", 0)
+        payload["original_tokens_out"] = original.get("tokens_out", 0)
+    trace.emit("llm_call", **payload)
 
 
 @dataclass
@@ -98,6 +199,32 @@ class PromptCache:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
     def get(self, key: str) -> str | None:
+        entry = self._read(key)
+        return None if entry is None else entry.get("response")
+
+    def get_meta(self, key: str) -> dict[str, Any]:
+        """What the original, uncached call cost — for display only.
+
+        A cache hit costs nothing, so the ledger correctly records zero. This is
+        the separate, informational number: "reused a cached response (originally
+        ~340 tokens)".
+
+        Returns `{}` for an entry written before this metadata existed. That is
+        not a hypothetical: the TTL is 168 hours, so for a full week after this
+        ships the new `get_meta()` is reading entries the old `put()` wrote. Every
+        field is fetched with `.get()` for exactly that reason.
+        """
+        entry = self._read(key)
+        if entry is None:
+            return {}
+        return {
+            "tokens_in": entry.get("tokens_in", 0),
+            "tokens_out": entry.get("tokens_out", 0),
+            "cost_usd": entry.get("cost_usd", 0.0),
+            "model": entry.get("model"),
+        }
+
+    def _read(self, key: str) -> dict[str, Any] | None:
         if not self.enabled:
             return None
         entry = self.path / f"{key}.json"
@@ -107,19 +234,46 @@ class PromptCache:
             entry.unlink(missing_ok=True)
             return None
         try:
-            return json.loads(entry.read_text(encoding="utf-8"))["response"]
-        except (json.JSONDecodeError, KeyError):
+            payload = json.loads(entry.read_text(encoding="utf-8"))
+            if "response" not in payload:
+                raise KeyError("response")
+        except (json.JSONDecodeError, KeyError, TypeError):
             entry.unlink(missing_ok=True)
             return None
+        return payload
 
-    def put(self, key: str, response: str) -> None:
+    def put(
+        self,
+        key: str,
+        response: str,
+        *,
+        model: str | None = None,
+        tokens_in: int = 0,
+        tokens_out: int = 0,
+        cost_usd: float = 0.0,
+    ) -> None:
         if not self.enabled:
             return
         entry = self.path / f"{key}.json"
         entry.write_text(
-            json.dumps({"response": response, "cached_at": time.time()}),
+            json.dumps(
+                {
+                    "response": response,
+                    "cached_at": time.time(),
+                    "model": model,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "cost_usd": cost_usd,
+                }
+            ),
             encoding="utf-8",
         )
+
+    def delete(self, key: str) -> None:
+        """Remove one entry. A no-op when it is absent or the cache is off."""
+        if not self.enabled:
+            return
+        (self.path / f"{key}.json").unlink(missing_ok=True)
 
 
 @dataclass
@@ -134,7 +288,14 @@ class LLMReasoningClient:
     api_key: str | None = field(default_factory=openai_api_key)
     fallback_api_key: str | None = field(default_factory=openrouter_api_key)
     usage: LLMUsage = field(default_factory=LLMUsage)
+    #: Today's spend, deployment-wide and per reader — what the daily limits are
+    #: enforced against (D16). Shared through Redis by both uvicorn workers when
+    #: `REDIS_URL` is set; this worker's own count otherwise.
+    spend: spend_limits.SpendCounter = field(default_factory=spend_limits.shared_counter)
     _cache: PromptCache = field(init=False)
+    #: The deployment-wide figure the last check saw, for the synchronous
+    #: `provider_status()` — which must not make a network call to report.
+    _last_total_spend: float = field(init=False, default=0.0)
     _client: Any = field(init=False, default=None)
     _fallback_client: Any = field(init=False, default=None)
     # Last-attempt outcome per provider, for provider_status() below. None
@@ -173,8 +334,31 @@ class LLMReasoningClient:
         return bool(self.api_key) or self._fallback_enabled
 
     def _cap_reached(self) -> bool:
+        """Whether the deployment's daily cap was spent, as of the last check."""
         cap = float(self._limits().get("daily_spend_cap_usd", 0) or 0)
-        return bool(cap and self.usage.cost_usd >= cap)
+        return bool(cap and self._last_total_spend >= cap)
+
+    async def _over_budget(self, user_email: str | None) -> tuple[str, float, float] | None:
+        """`(scope, cap, spent)` when a daily limit is spent, else None.
+
+        `scope` is "global" — the deployment's `daily_spend_cap_usd` — or "user",
+        this reader's `per_user_daily_cap_usd`. Read from the shared counter, so
+        the cap is one number across both workers and resets at 00:00 UTC (D16).
+        A call with no reader (the eval harness, the demo CLI) meets only the
+        global cap.
+        """
+        limits = self._limits()
+        cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
+        per_user = float(limits.get("per_user_daily_cap_usd", 0) or 0)
+        if not cap and not per_user:
+            return None
+        spent = await self.spend.spent(user_email)
+        self._last_total_spend = spent.total_usd
+        if cap and spent.total_usd >= cap:
+            return "global", cap, spent.total_usd
+        if per_user and user_email and spent.user_usd >= per_user:
+            return "user", per_user, spent.user_usd
+        return None
 
     def provider_status(self) -> dict[str, ProviderStatus]:
         """Per-provider health for the admin dashboard (SRS 3.5.4).
@@ -252,6 +436,24 @@ class LLMReasoningClient:
     def _limits(self) -> dict[str, Any]:
         return self.config.get("limits", {})
 
+    def forget(self, role: str, system: str, user: str) -> None:
+        """Drop the cached response to exactly this request, if there is one.
+
+        For a caller that decides only after reading a response that it must not
+        be replayed. The router does this for a route it distrusted
+        (`orchestrator/router.py::llm_route`). The key is built exactly as
+        `generate` builds it, so this removes what `generate` stored whichever
+        provider answered: the failsafe's response is stored under the primary
+        model's key as well. Never raises — a cache that could not be cleaned
+        must not fail the answer.
+        """
+        try:
+            model_cfg = self._model(role)
+            temperature = float(model_cfg.get("temperature", 0.2))
+            self._cache.delete(self._cache.key(model_cfg["model"], system, user, temperature))
+        except Exception:  # noqa: BLE001 - see the docstring
+            log.warning("could not drop a cached %s response", role, exc_info=True)
+
     # --- the one call ----------------------------------------------------
 
     async def generate(
@@ -261,22 +463,52 @@ class LLMReasoningClient:
         user: str,
         *,
         json_mode: bool = False,
+        stream: TextStream | None = None,
     ) -> str | None:
         """Return the model's text, or None if it could not be obtained.
 
         Never raises. A caller that has to wrap this in try/except has been given
         the wrong interface — degrading is the normal path, not the exceptional
         one.
+
+        `stream` receives the text as it arrives, and is only ever passed when
+        someone is watching (`trace.active()`): with no stream this is exactly
+        the call it always was, so `POST /api/query` and `make eval` measure the
+        same path they always did. The returned text is identical either way —
+        the pieces fed to `stream` join to it.
         """
         model_cfg = self._model(role)
         model = model_cfg["model"]
         temperature = float(model_cfg.get("temperature", 0.2))
         max_tokens = int(model_cfg.get("max_tokens", 600))
+        if json_mode:
+            stream = None  # structured output is parsed whole, never shown
 
         cache_key = self._cache.key(model, system, user, temperature)
-        cached = self._cache.get(cache_key)
+        # Regenerate asks for a fresh answer from the same findings; serving the
+        # cached one would hand back the answer it is replacing. Only the read
+        # is skipped — the new response is still cached, and a regenerated
+        # answer is what an identical request gets next.
+        observation = obs_context.current()
+        bypass = observation is not None and role in observation.bypass_cache_roles
+        cached = None if bypass else self._cache.get(cache_key)
         if cached is not None:
+            if stream is not None:
+                # It arrives all at once, so it is shown all at once.
+                stream.feed(cached)
             self.usage.cache_hits += 1
+            # 0 tokens and $0 is the correct accounting, not a gap: no API call
+            # happened. `original_*` is the separate, informational number, and
+            # is absent for entries written before the cache stored it.
+            original = self._cache.get_meta(cache_key)
+            _observe(
+                role=role,
+                model=model,
+                provider="cache",
+                cache_hit=True,
+                elapsed_ms=0.0,
+                original=original,
+            )
             return cached
 
         fallback = self._fallback_model(role)
@@ -284,29 +516,40 @@ class LLMReasoningClient:
         if not self.available and fallback is None:
             log.info("no OPENAI_API_KEY and no usable failsafe — degrading (SRS 3.4.3)")
             self.usage.failures += 1
+            _observe(role=role, model=model, provider="none", failed=True, elapsed_ms=0.0)
             return None
 
         limits = self._limits()
         timeout_s = float(limits.get("request_timeout_s", 8.0))
         attempts = int(limits.get("max_retries", 1)) + 1
-        cap = float(limits.get("daily_spend_cap_usd", 0) or 0)
-        cap_reached = bool(cap and self.usage.cost_usd >= cap)
-        if cap_reached:
+        user_email = observation.user_email if observation is not None else None
+        over = await self._over_budget(user_email) if self.api_key else None
+        cap_reached = over is not None
+        if over is not None:
+            scope, limit, spent = over
             log.warning(
-                "daily spend cap ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
-                cap,
-                self.usage.cost_usd,
+                "%s daily spend limit ($%.2f, spent $%.2f) reached — %s (SRS 3.4.3, R5)",
+                "the deployment's" if scope == "global" else "this reader's",
+                limit,
+                spent,
                 "trying the free failsafe" if fallback else "degrading",
             )
+            # Said in the trace, not only the log: a reader whose answer arrives
+            # without prose should be able to see why.
+            trace.emit("budget", scope=scope, cap_usd=limit, spent_usd=round(spent, 6),
+                       resets_at=spend_limits.resets_at().isoformat())
 
         started = time.perf_counter()
 
         if self.api_key and not cap_reached:
             primary_error: str | None = None
             for attempt in range(1, attempts + 1):
+                if stream is not None:
+                    stream.restart()
                 try:
-                    text, cost = await asyncio.wait_for(
-                        self._call(model, system, user, temperature, max_tokens, json_mode, model_cfg),
+                    outcome = await asyncio.wait_for(
+                        self._call(model, system, user, temperature, max_tokens, json_mode,
+                                   model_cfg, stream=stream),
                         timeout=timeout_s,
                     )
                 except TimeoutError:
@@ -316,15 +559,35 @@ class LLMReasoningClient:
                     primary_error = str(exc)
                     log.warning("llm call failed (attempt %d/%d): %s", attempt, attempts, exc)
                 else:
+                    elapsed_s = time.perf_counter() - started
                     self.usage.calls += 1
-                    self.usage.elapsed_s += time.perf_counter() - started
-                    self.usage.cost_usd += cost
+                    self.usage.elapsed_s += elapsed_s
+                    self.usage.cost_usd += outcome.cost_usd
+                    self.usage.tokens_in += outcome.tokens_in
+                    self.usage.tokens_out += outcome.tokens_out
+                    # Counted against today's limits the moment it is spent, so
+                    # the next check — on either worker — already sees it.
+                    await self.spend.add(outcome.cost_usd, user_email)
                     self._primary_last_ok = True
                     self._primary_last_error = None
                     self._primary_last_checked_at = time.time()
-                    if text:
-                        self._cache.put(cache_key, text)
-                    return text
+                    _observe(
+                        role=role,
+                        model=model,
+                        provider="openai",
+                        outcome=outcome,
+                        elapsed_ms=elapsed_s * 1000,
+                    )
+                    if outcome.text:
+                        self._cache.put(
+                            cache_key,
+                            outcome.text,
+                            model=model,
+                            tokens_in=outcome.tokens_in,
+                            tokens_out=outcome.tokens_out,
+                            cost_usd=outcome.cost_usd,
+                        )
+                    return outcome.text
             # Every attempt failed -- record once per generate() call, not
             # per retry, so provider_status() reflects "is the primary
             # working right now" rather than flapping on individual retries.
@@ -334,8 +597,10 @@ class LLMReasoningClient:
 
         if fallback is not None:
             fallback_cfg = {"model": fallback["model"]}  # no cost fields — free tier, costs 0
+            if stream is not None:
+                stream.restart()
             try:
-                text, cost = await asyncio.wait_for(
+                outcome = await asyncio.wait_for(
                     self._call(
                         fallback["model"],
                         system,
@@ -346,6 +611,7 @@ class LLMReasoningClient:
                         fallback_cfg,
                         base_url=fallback["base_url"],
                         api_key=self.fallback_api_key,
+                        stream=stream,
                     ),
                     timeout=fallback["timeout_s"],
                 )
@@ -360,19 +626,41 @@ class LLMReasoningClient:
                 self._fallback_last_checked_at = time.time()
                 log.warning("failsafe llm call failed: %s — degrading", exc)
             else:
+                elapsed_s = time.perf_counter() - started
                 self.usage.calls += 1
                 self.usage.fallback_calls += 1
-                self.usage.elapsed_s += time.perf_counter() - started
-                self.usage.cost_usd += cost
+                self.usage.elapsed_s += elapsed_s
+                self.usage.cost_usd += outcome.cost_usd
+                self.usage.tokens_in += outcome.tokens_in
+                self.usage.tokens_out += outcome.tokens_out
                 self._fallback_last_ok = True
                 self._fallback_last_error = None
                 self._fallback_last_checked_at = time.time()
-                if text:
-                    self._cache.put(cache_key, text)
-                return text
+                _observe(
+                    role=role,
+                    model=fallback["model"],
+                    provider="openrouter",
+                    outcome=outcome,
+                    fallback=True,
+                    elapsed_ms=elapsed_s * 1000,
+                )
+                if outcome.text:
+                    self._cache.put(
+                        cache_key,
+                        outcome.text,
+                        model=fallback["model"],
+                        tokens_in=outcome.tokens_in,
+                        tokens_out=outcome.tokens_out,
+                        cost_usd=outcome.cost_usd,
+                    )
+                return outcome.text
 
+        elapsed_s = time.perf_counter() - started
         self.usage.failures += 1
-        self.usage.elapsed_s += time.perf_counter() - started
+        self.usage.elapsed_s += elapsed_s
+        _observe(
+            role=role, model=model, provider="none", failed=True, elapsed_ms=elapsed_s * 1000
+        )
         log.warning("llm unavailable after primary and failsafe — degrading")
         return None
 
@@ -402,13 +690,14 @@ class LLMReasoningClient:
         *,
         base_url: str | None = None,
         api_key: str | None = None,
-    ) -> tuple[str | None, float]:
+        stream: TextStream | None = None,
+    ) -> _CallOutcome:
         """The provider-specific part. Swapping vendors means changing this method.
 
-        Returns the text and what it cost, so `generate()` can charge it against
-        `daily_spend_cap_usd` (R5) without knowing anything provider-specific.
-        `base_url`/`api_key` select the failsafe provider (R5); omitted, this
-        calls the primary provider.
+        Returns the text, what it cost and the token counts, so `generate()` can
+        charge it against `daily_spend_cap_usd` (R5) and record it in the usage
+        ledger without knowing anything provider-specific. `base_url`/`api_key`
+        select the failsafe provider (R5); omitted, this calls the primary.
         """
         client = self._client_for(base_url, api_key)
 
@@ -424,10 +713,57 @@ class LLMReasoningClient:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
+        if stream is not None:
+            return await self._call_streaming(client, kwargs, model_cfg, stream)
+
         response = await client.chat.completions.create(**kwargs)
         text = response.choices[0].message.content
-        cost = self._cost(model_cfg, response.usage)
-        return text, cost
+        usage = getattr(response, "usage", None)
+        return _CallOutcome(
+            text=text,
+            cost_usd=self._cost(model_cfg, usage),
+            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+            tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
+
+    async def _call_streaming(
+        self, client: Any, kwargs: dict[str, Any], model_cfg: dict[str, Any], stream: TextStream
+    ) -> _CallOutcome:
+        """The same call, delivered in pieces.
+
+        `include_usage` asks for a final chunk carrying the token counts — the
+        chunk has no choices, only usage — so a streamed call is costed exactly
+        like a whole one (verified against the provider 2026-09-10). A provider
+        that omits it is costed as free, the same posture `_cost` takes with a
+        missing `usage` on a whole response.
+
+        The response is always closed, even on a timeout: an unclosed stream
+        holds its connection until the garbage collector finds it.
+        """
+        response = await client.chat.completions.create(
+            **kwargs, stream=True, stream_options={"include_usage": True}
+        )
+        parts: list[str] = []
+        usage = None
+        try:
+            async for chunk in response:
+                if getattr(chunk, "usage", None) is not None:
+                    usage = chunk.usage
+                if chunk.choices:
+                    piece = chunk.choices[0].delta.content
+                    if piece:
+                        parts.append(piece)
+                        stream.feed(piece)
+        finally:
+            close = getattr(response, "close", None)
+            if close is not None:
+                await close()
+        return _CallOutcome(
+            text="".join(parts) or None,
+            cost_usd=self._cost(model_cfg, usage),
+            tokens_in=int(getattr(usage, "prompt_tokens", 0) or 0),
+            tokens_out=int(getattr(usage, "completion_tokens", 0) or 0),
+        )
 
     @staticmethod
     def _cost(model_cfg: dict[str, Any], usage: Any) -> float:
@@ -480,18 +816,47 @@ class FakeLLMClient:
     tests that need prose construct it with a canned response.
     """
 
-    def __init__(self, response: str | None = "A canned explanation.", available: bool = True):
+    def __init__(
+        self,
+        response: str | None = "A canned explanation.",
+        available: bool = True,
+        chunk_size: int = 7,
+    ):
         self._response = response
         self.available = available
         self.usage = LLMUsage()
         self.calls: list[tuple[str, str, str]] = []
+        #: Whether each call was given a stream — so a test can assert that the
+        #: non-streaming path stayed non-streaming.
+        self.streamed: list[bool] = []
+        #: Streamed responses arrive in pieces this long, so a test exercises
+        #: boundaries that fall inside words and figures, as real ones do.
+        self.chunk_size = chunk_size
+        #: Every `forget` call, so a test can assert what was kept out of the cache.
+        self.forgotten: list[tuple[str, str, str]] = []
 
-    async def generate(self, role: str, system: str, user: str, *, json_mode: bool = False) -> str | None:
+    def forget(self, role: str, system: str, user: str) -> None:
+        self.forgotten.append((role, system, user))
+
+    async def generate(
+        self,
+        role: str,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        stream: TextStream | None = None,
+    ) -> str | None:
         self.calls.append((role, system, user))
+        self.streamed.append(stream is not None)
         if not self.available:
             self.usage.failures += 1
             return None
         self.usage.calls += 1
+        if stream is not None and self._response:
+            stream.restart()
+            for start in range(0, len(self._response), self.chunk_size):
+                stream.feed(self._response[start:start + self.chunk_size])
         return self._response
 
     async def generate_explanation(self, context: dict[str, Any]) -> str:

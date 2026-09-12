@@ -10,6 +10,8 @@ import pytest
 
 from ceynex.contracts import LLMReasoningClientProtocol
 from ceynex.llm import FakeLLMClient, LLMReasoningClient, PromptCache
+from ceynex.llm.client import _CallOutcome
+from ceynex.observability.spend import InProcessSpendCounter
 
 CONFIG = {
     "provider": "openai",
@@ -57,10 +59,13 @@ FALLBACK_CONFIG["fallback"] = {
 }
 
 
-def client(tmp_path, *, api_key=None, cache=False, fallback_api_key=None, config=None):
+def client(tmp_path, *, api_key=None, cache=False, fallback_api_key=None, config=None,
+           spend=None):
     config = json.loads(json.dumps(config if config is not None else CONFIG))
     config["cache"] = {"enabled": cache, "path": str(tmp_path / "cache"), "ttl_hours": 1}
-    return LLMReasoningClient(config=config, api_key=api_key, fallback_api_key=fallback_api_key)
+    # A counter of its own, so one test's spend never counts against another's.
+    return LLMReasoningClient(config=config, api_key=api_key, fallback_api_key=fallback_api_key,
+                              spend=spend if spend is not None else InProcessSpendCounter())
 
 
 # --- degrading -----------------------------------------------------------
@@ -128,7 +133,7 @@ async def test_failsafe_is_tried_after_the_primary_is_exhausted(tmp_path, monkey
     async def primary_or_fallback(*args, base_url=None, **kwargs):
         if base_url is None:
             raise RuntimeError("openai is down")
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", primary_or_fallback)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
@@ -146,7 +151,7 @@ async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypat
 
     async def fallback_only(*args, base_url=None, **kwargs):
         calls.append(base_url)
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", fallback_only)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
@@ -154,16 +159,24 @@ async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypat
 
 
 async def test_failsafe_is_tried_when_the_spend_cap_is_reached(tmp_path, monkeypatch):
-    """R5: the cap stops paid calls, not the free failsafe."""
+    """R5: the cap stops paid calls, not the free failsafe.
+
+    Records the calls rather than asserting inside the fake: `generate()` treats
+    any exception from `_call` as a provider failure and falls back, so an
+    assertion raised in here would be swallowed and the test would pass whether
+    or not the cap held.
+    """
     llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
-    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd
+    await llm.spend.add(5.0, None)  # == daily_spend_cap_usd
+    providers: list[str | None] = []
 
-    async def fallback_only(*args, base_url=None, **kwargs):
-        assert base_url is not None, "primary must not be called once the cap is reached"
-        return "failsafe prose", 0.0
+    async def record(*args, base_url=None, **kwargs):
+        providers.append(base_url)
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
-    monkeypatch.setattr(llm, "_call", fallback_only)
+    monkeypatch.setattr(llm, "_call", record)
     assert await llm.generate("explanation", "sys", "user") == "failsafe prose"
+    assert providers == ["https://openrouter.ai/api/v1"], "the paid primary was called"
 
 
 async def test_it_degrades_when_both_primary_and_failsafe_fail(tmp_path, monkeypatch):
@@ -262,7 +275,7 @@ async def test_a_successful_call_accumulates_cost_onto_usage(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test")
 
     async def costed(*args, **kwargs):
-        return "prose", 1.23
+        return _CallOutcome("prose", 1.23, 0, 0)
 
     monkeypatch.setattr(llm, "_call", costed)
     await llm.generate("explanation", "sys", "user")
@@ -274,13 +287,13 @@ async def test_the_spend_cap_degrades_further_calls_without_invoking_the_provide
     degrade (SRS 3.4.3) rather than place another paid call.
     """
     llm = client(tmp_path, api_key="sk-test")
-    llm.usage.cost_usd = 5.0  # == daily_spend_cap_usd in CONFIG
+    await llm.spend.add(5.0, None)  # == daily_spend_cap_usd in CONFIG
 
     calls = []
 
     async def spy(*args, **kwargs):
         calls.append(1)
-        return "prose", 0.01
+        return _CallOutcome("prose", 0.01, 0, 0)
 
     monkeypatch.setattr(llm, "_call", spy)
     result = await llm.generate("explanation", "sys", "user")
@@ -295,22 +308,22 @@ async def test_a_cache_hit_is_served_even_over_the_spend_cap(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test", cache=True)
 
     async def once(*args, **kwargs):
-        return "the explanation", 0.0
+        return _CallOutcome("the explanation", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", once)
     assert await llm.generate("explanation", "sys", "user") == "the explanation"
 
-    llm.usage.cost_usd = 5.0
+    await llm.spend.add(5.0, None)
     assert await llm.generate("explanation", "sys", "user") == "the explanation"
 
 
 async def test_a_zero_or_missing_cap_never_degrades(tmp_path, monkeypatch):
     llm = client(tmp_path, api_key="sk-test")
     llm.config["limits"] = {"request_timeout_s": 8.0, "max_retries": 1}  # no daily_spend_cap_usd
-    llm.usage.cost_usd = 999.0
+    await llm.spend.add(999.0, None)
 
     async def costed(*args, **kwargs):
-        return "prose", 0.0
+        return _CallOutcome("prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", costed)
     assert await llm.generate("explanation", "sys", "user") == "prose"
@@ -335,7 +348,7 @@ async def test_a_cache_hit_costs_no_call(tmp_path, monkeypatch):
 
     async def once(*args, **kwargs):
         calls.append(1)
-        return "the explanation", 0.0
+        return _CallOutcome("the explanation", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", once)
 
@@ -350,7 +363,7 @@ async def test_the_cache_answers_even_with_no_api_key(tmp_path, monkeypatch):
     warm = client(tmp_path, api_key="sk-test", cache=True)
 
     async def canned(*args, **kwargs):
-        return "cached prose", 0.0
+        return _CallOutcome("cached prose", 0.0, 0, 0)
 
     monkeypatch.setattr(warm, "_call", canned)
     await warm.generate("explanation", "sys", "user")
@@ -430,7 +443,7 @@ async def test_provider_status_is_ok_after_a_successful_call(tmp_path, monkeypat
     llm = client(tmp_path, api_key="sk-test")
 
     async def succeeds(*args, **kwargs):
-        return "prose", 0.0
+        return _CallOutcome("prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", succeeds)
     await llm.generate("explanation", "sys", "user")
@@ -464,7 +477,7 @@ async def test_provider_status_distinguishes_a_down_primary_from_an_ok_failsafe(
     async def primary_fails_fallback_succeeds(*args, base_url=None, **kwargs):
         if base_url is None:
             raise RuntimeError("openai is down")
-        return "failsafe prose", 0.0
+        return _CallOutcome("failsafe prose", 0.0, 0, 0)
 
     monkeypatch.setattr(llm, "_call", primary_fails_fallback_succeeds)
     await llm.generate("explanation", "sys", "user")
@@ -475,13 +488,231 @@ async def test_provider_status_distinguishes_a_down_primary_from_an_ok_failsafe(
     assert status["openrouter"].status == "ok"
 
 
-def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
+async def test_provider_status_reports_cap_reached_distinctly_from_down(tmp_path):
     """Calls are deliberately skipped to protect the budget (R5) -- an admin
     should not read that as "GPT-4o is broken", only that today's spend cap
-    is spent. Doesn't need a real generate() call: the cap check reads
-    `usage.cost_usd` live, same as generate() itself does.
+    is spent. The status reflects the last budget check, because reporting it
+    must not itself make a network call to the shared counter.
     """
     llm = client(tmp_path, api_key="sk-test")
-    llm.usage.cost_usd = 5.0  # == CONFIG's daily_spend_cap_usd
+    await llm.spend.add(5.0, None)  # == CONFIG's daily_spend_cap_usd
+    assert await llm.generate("explanation", "sys", "user") is None
 
     assert llm.provider_status()["openai"].status == "cap_reached"
+
+
+# --- streaming (D12, amended) ------------------------------------------------
+
+
+class _Delta:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, content):
+        self.delta = _Delta(content)
+
+
+class _Chunk:
+    def __init__(self, content=None, usage=None, final=False):
+        self.choices = [] if final else [_Choice(content)]
+        self.usage = usage
+
+
+class _StreamedResponse:
+    """What `create(..., stream=True)` returns: text in pieces, then a chunk
+    with no choices and only the token counts — verified against the provider."""
+
+    def __init__(self, pieces, usage, fail_after=None):
+        self._pieces = pieces
+        self._usage = usage
+        self._fail_after = fail_after
+        self.closed = False
+
+    def __aiter__(self):
+        async def gen():
+            for index, piece in enumerate(self._pieces):
+                if self._fail_after is not None and index == self._fail_after:
+                    raise ConnectionError("dropped mid-stream")
+                yield _Chunk(piece)
+            yield _Chunk(final=True, usage=self._usage)
+
+        return gen()
+
+    async def close(self):
+        self.closed = True
+
+
+class _StreamingCompletions:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.kwargs: list[dict] = []
+
+    async def create(self, **kwargs):
+        self.kwargs.append(kwargs)
+        return self._responses.pop(0)
+
+
+class _StreamingClient:
+    def __init__(self, *responses):
+        self.completions = _StreamingCompletions(responses)
+        self.chat = self
+
+
+class _Collect:
+    def __init__(self):
+        self.pieces: list[str] = []
+        self.restarts = 0
+
+    def feed(self, chunk):
+        self.pieces.append(chunk)
+
+    def restart(self):
+        self.restarts += 1
+        self.pieces = []
+
+
+async def test_a_streamed_call_returns_the_same_text_it_fed(tmp_path):
+    llm = client(tmp_path, api_key="sk-test")
+    response = _StreamedResponse(["Tea ", "rose. ", "Cinnamon fell."], _Usage(100, 20))
+    llm._client = _StreamingClient(response)
+    sink = _Collect()
+
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+
+    assert text == "Tea rose. Cinnamon fell."
+    assert "".join(sink.pieces) == text
+    assert llm._client.completions.kwargs[0]["stream"] is True
+    assert llm._client.completions.kwargs[0]["stream_options"] == {"include_usage": True}
+    assert response.closed, "an unclosed stream holds its connection"
+
+
+async def test_a_streamed_call_is_costed_from_its_final_usage_chunk(tmp_path):
+    """Streaming must not become a way to spend without the ledger seeing it."""
+    llm = client(tmp_path, api_key="sk-test")
+    llm._client = _StreamingClient(_StreamedResponse(["Tea rose."], _Usage(1000, 1000)))
+
+    await llm.generate("merge", "sys", "user", stream=_Collect())
+
+    assert llm.usage.tokens_in == 1000 and llm.usage.tokens_out == 1000
+    assert llm.usage.cost_usd == pytest.approx(0.0025 + 0.01)
+
+
+async def test_a_retry_after_a_dropped_stream_restarts_what_was_shown(tmp_path):
+    llm = client(tmp_path, api_key="sk-test")
+    first = _StreamedResponse(["Tea ", "rose. ", "Cinn"], _Usage(1, 1), fail_after=2)
+    second = _StreamedResponse(["Tea rose. ", "Cinnamon fell."], _Usage(1, 1))
+    llm._client = _StreamingClient(first, second)
+    sink = _Collect()
+
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+
+    assert text == "Tea rose. Cinnamon fell."
+    assert "".join(sink.pieces) == text, "two attempts were spliced together"
+    assert sink.restarts == 2, "each attempt starts clean"
+    assert first.closed and second.closed
+
+
+async def test_a_cached_answer_arrives_all_at_once(tmp_path):
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    llm._client = _StreamingClient(_StreamedResponse(["Tea ", "rose."], _Usage(1, 1)))
+    await llm.generate("merge", "sys", "user", stream=_Collect())
+
+    sink = _Collect()
+    text = await llm.generate("merge", "sys", "user", stream=sink)
+    assert text == "Tea rose."
+    assert sink.pieces == ["Tea rose."], "a cache hit is shown as it arrived: whole"
+
+
+async def test_json_mode_is_never_streamed(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test")
+    seen = {}
+
+    async def whole(*args, **kwargs):
+        seen.update(kwargs)
+        return _CallOutcome(text='{"ok": true}', cost_usd=0.0, tokens_in=1, tokens_out=1)
+
+    monkeypatch.setattr(llm, "_call", whole)
+    sink = _Collect()
+    await llm.generate("router", "sys", "user", json_mode=True, stream=sink)
+    assert seen.get("stream") is None and sink.pieces == []
+
+
+async def test_regenerate_skips_the_cached_answer_for_its_role_only(tmp_path, monkeypatch):
+    """Regenerate asks for a different wording of the same findings. The cache
+    would return the very answer being replaced — for that role, and no other."""
+    from ceynex.observability import context
+
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    # Keyed by model, which differs between the two roles: merge is gpt-4o and
+    # routing gpt-4o-mini in the test config.
+    answers = {"gpt-4o": iter(["First wording.", "Second wording."]),
+               "gpt-4o-mini": iter(["Routed.", "Routed again."])}
+
+    async def fresh(model, *args, **kwargs):
+        return _CallOutcome(text=next(answers[model]), cost_usd=0.0, tokens_in=1, tokens_out=1)
+
+    monkeypatch.setattr(llm, "_call", fresh)
+    assert await llm.generate("merge", "sys", "user") == "First wording."
+    await llm.generate("router", "sys", "user")
+
+    token = context.install(context.RequestObservability(bypass_cache_roles=frozenset({"merge"})))
+    try:
+        assert await llm.generate("merge", "sys", "user") == "Second wording."
+        assert await llm.generate("router", "sys", "user") == "Routed.", "router still cached"
+    finally:
+        context.reset(token)
+    # The regenerated answer is what an identical request is served next.
+    assert await llm.generate("merge", "sys", "user") == "Second wording."
+
+
+# --- what the router lets the cache keep (orchestrator/router.py::_distrust) ---
+
+
+async def test_a_route_that_fell_back_is_routed_afresh_and_a_good_one_is_replayed(
+    tmp_path, monkeypatch
+):
+    """End to end, with the real client and the real on-disk cache.
+
+    A router response that had to fall back must cost a routing call on every
+    ask rather than replay for 168 hours. A route the router could use must
+    still be a cache hit the second time, narrowed or not.
+    """
+    from ceynex.orchestrator.router import llm_route
+
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    question = "Which markets buy the most Sri Lankan knitted apparel?"
+    reply = {"route": "not json at all"}
+    calls = []
+
+    async def answer(*args, **kwargs):
+        calls.append(1)
+        return _CallOutcome(reply["route"], 0.0, 0, 0)
+
+    monkeypatch.setattr(llm, "_call", answer)
+
+    await llm_route(question, llm)
+    await llm_route(question, llm)
+    assert len(calls) == 2, "a response that fell back was replayed from the cache"
+
+    reply["route"] = '{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}'
+    await llm_route(question, llm)
+    await llm_route(question, llm)
+    assert len(calls) == 3, "a usable route, even a narrowed one, should be replayed"
+    assert llm.usage.cache_hits == 1
+
+
+def test_forget_never_raises(tmp_path):
+    """A cache that cannot be cleaned must not fail the answer."""
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    llm.forget("no_such_role", "sys", "user")
+    llm.forget("router", "sys", "never cached")
+
+
+def test_deleting_a_cache_entry_that_is_not_there_is_a_no_op(tmp_path):
+    cache = PromptCache(tmp_path / "c", ttl_hours=1)
+    cache.put("k", "v")
+    cache.delete("k")
+    cache.delete("k")
+    assert cache.get("k") is None

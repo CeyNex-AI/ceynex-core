@@ -23,6 +23,8 @@ from ceynex.news.gdelt import GdeltClient
 from ceynex.news.store import NewsStore
 from ceynex.orchestrator.graph import build_graph
 from ceynex.retrieval.client import PolicyRetriever
+from ceynex.websearch import WebSearchProvider
+from ceynex.websearch import from_settings as websearch_from_settings
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +44,12 @@ class Runtime:
     #: for it never to be handed to one.
     gdelt: GdeltClient | None = None
     news: NewsStore | None = None
+    #: General web search (D14). Here for exactly the reason `news` is here and
+    #: not in `AgentDeps`: no agent may reach it. Web results are appended after
+    #: `merge()` has returned, so they cannot reach the merge LLM, cannot enter
+    #: grounding, and cannot move confidence — and an agent holding the provider
+    #: could undo all three without anyone noticing.
+    websearch: WebSearchProvider | None = None
 
     @classmethod
     def build(cls) -> Runtime:
@@ -57,16 +65,26 @@ class Runtime:
         graph = build_graph(deps, use_llm_router=llm.available)
         gdelt = GdeltClient.from_settings()
         news = NewsStore.from_settings()
+        # Not passed to `AgentDeps` above, and that omission is the enforcement.
+        websearch = websearch_from_settings()
         log.info(
-            "runtime built: llm=%s router=%s policy_retrieval=%s news=%s news_index=%s",
+            "runtime built: llm=%s router=%s policy_retrieval=%s news=%s news_index=%s websearch=%s",
             "available" if llm.available else "degraded",
             "llm" if llm.available else "keyword",
             "on" if policy else "off",
             "on" if gdelt else "off",
             "on" if news else "off",
+            "on" if websearch else "off",
         )
         return cls(
-            kg=kg, llm=llm, deps=deps, graph=graph, policy=policy, gdelt=gdelt, news=news
+            kg=kg,
+            llm=llm,
+            deps=deps,
+            graph=graph,
+            policy=policy,
+            gdelt=gdelt,
+            news=news,
+            websearch=websearch,
         )
 
     async def warmup(self) -> None:

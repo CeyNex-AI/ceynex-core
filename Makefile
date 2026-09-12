@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence load-test docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-repeat eval-repeat-cited eval-chat eval-chat-degraded eval-policy eval-policy-baseline coherence load-test docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -11,6 +11,14 @@ CONTRACTS_SPEC ?= -e ../ceynex-contracts
 # Python-version error while .venv sat there on 3.12. Every target that runs
 # project code goes through this.
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python)
+
+# The policy retriever's models come from the Hugging Face Hub on first use
+# (into /tmp/fastembed_cache, which does not survive a reboot). Measured
+# 2026-09-11: the Hub's xet transfer path stalled indefinitely on this network
+# with 0-byte blobs and idle sockets, which hung `make eval` for 17 minutes
+# before its first model call; the plain HTTP path downloaded the same files at
+# ~320 KB/s. Off unless the environment says otherwise.
+export HF_HUB_DISABLE_XET ?= 1
 
 install:
 	$(PYTHON) -m pip install $(CONTRACTS_SPEC)
@@ -73,6 +81,26 @@ eval:
 
 eval-degraded:
 	$(PYTHON) -m eval.harness --degraded --json eval_degraded.json
+
+# The repeated-run protocol (docs/EVALUATION.md §8-§9): three cold runs, medians
+# and spread, and the questions that disagreed with themselves. `-cited` is the
+# same with inline citations on, which is how the flag is decided rather than
+# guessed. Each run clears the prompt cache first, so every call is paid for.
+REPEAT ?= 3
+eval-repeat:
+	$(PYTHON) -m eval.harness --repeat $(REPEAT) --cold --json-dir eval_runs/off
+
+eval-repeat-cited:
+	CEYNEX_CITATIONS=on $(PYTHON) -m eval.harness --repeat $(REPEAT) --cold --json-dir eval_runs/on
+
+# The multi-turn set (eval/conversations.yaml): follow-ups, the classifier, the
+# clarification gate and the streamed answer, driven through the turn runner
+# in-process against the real store. Needs the docker stack.
+eval-chat:
+	$(PYTHON) -m eval.chat_harness --cold --json eval_chat.json
+
+eval-chat-degraded:
+	$(PYTHON) -m eval.chat_harness --degraded --json eval_chat_degraded.json
 
 # The 15-question policy-retrieval set (eval/policy_questions.yaml), separate
 # from the 30 so that baseline stays comparable. Run both of these: the delta

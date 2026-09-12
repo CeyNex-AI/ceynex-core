@@ -178,7 +178,8 @@ their loads add to mine rather than colliding with them. M2 seeds only
 
 ## Measured but not measured under load
 
-**SRS 3.4.2 wants 50 concurrent users. Nothing has tested that.** The latency
+**SRS 3.4.2 wants 50 concurrent users. Nothing tested that until 2026-09-12**
+(below). The latency
 figures in [EVALUATION.md](EVALUATION.md) are single-user, sequential by design
 so the numbers mean something per query. They pass their budgets with 5–15x
 headroom, and that headroom is partly because no LLM key was configured when
@@ -189,7 +190,7 @@ Single-sector p95 came out at 14.6 s against a 10 s budget (SRS 3.4.1), where
 the keyless run had posted 2.7 s. That headroom was never real — it was the
 degraded path being reported as the system. See EVALUATION.md §1.
 
-**Measured 2026-09-12** (`eval/load_test.py`, `docs/EVALUATION.md` §8): the
+**Measured 2026-09-12** (`eval/load_test.py`, `docs/EVALUATION.md` §11): the
 system stays fully available at 50 concurrent users (50/50 succeeded, 0
 failures) and the wall-clock-vs-summed-latency gap confirms genuine concurrent
 handling, not one call blocking every other. Two things it surfaced instead:
@@ -203,7 +204,7 @@ findings were re-checked same day against `--workers 2` + a real Redis** (the
 deployed topology, run against a standalone `redis:7` container rather than
 the deployed VM itself) and held: 43/50 degraded, single-sector p95 still over
 budget. Neither is a single-process artifact. Only the deployed VM itself
-remains unmeasured — see §8 for what's still open before this is quoted as the
+remains unmeasured — see §11 for what's still open before this is quoted as the
 production number.
 
 One thing that *does* exist between a load test and a real outage: the SRS
@@ -349,3 +350,118 @@ routes (a valid admin token is already the gate there).
   clear text is the user's question and a list of public headlines — this API
   has no key, no token and no account. The integrity risk is bounded by news
   never being evidence (D11). Remove the override once :443 answers.
+
+## Stream resume after a dropped connection — built since (D12, amended)
+
+Recorded here on 2026-09-10 as not built, because a safe resume needs a
+server-side token and retrying without one replays a fan-out that was already
+paid for. The completion pass that evening built exactly that: a turn runs as
+its own task and writes numbered frames to a log, the resume token is the
+`request_id` plus an owner check, and the "connection dropped" state is now what
+remains only after every resume attempt has failed. The write-up is the amended
+D12 in [ARCHITECTURE_DELTA.md](ARCHITECTURE_DELTA.md); this heading stays so the
+earlier statement is not simply gone.
+
+## Two things the live pass found — decided and built 2026-09-12
+
+The 2026-09-11 live pass left both of these open, because the choice belonged
+to the owner. The owner decided both on 2026-09-12.
+
+**A cached routing decision was sticky.** The prompt cache (168-hour TTL) keys
+on the prompt. So when the LLM router dropped an agent on a question — S07's
+one-in-five case, `EVALUATION.md` §8 — every later ask of that exact question
+replayed the same route from the cache, evidence-free, in 30 ms, until the entry
+expired. It was seen on 2026-09-11: the knitted-apparel question answered with no
+evidence from a cached decision, and correctly three times out of three once the
+cache was cleared.
+
+- **Decided: don't let a route that went wrong stick.** A router response that
+  fell back (unparseable, or naming no valid agent) is not kept in the cache
+  (`router.py::distrust_route`). Nor is a route whose answer came back with no
+  evidence, which `api/query_runner.py` judges. The next ask routes afresh.
+- **Narrowed after measuring.** The first rule also distrusted any route that
+  narrowed the keyword route. A cold-then-warm pair showed that evicted 11 of 30,
+  five of them the expected route, for about 1.5 s a repeat and no changed route
+  (EVALUATION.md §12). The owner narrowed it.
+- **Pinned by end-to-end tests** over the real client and on-disk cache.
+
+**"both" on the clarification card promised more than the agent delivered.**
+The gate asked "tea, cinnamon, or both?". The composed query still passed
+through the single-item `parse_intent`, so "both" answered tea and said cinnamon
+figures were not available.
+
+- **Decided: stop offering it.** Running two analyses was the alternative. The
+  template now offers the items only, and a model phrasing that promises a
+  combination is replaced by the template's question.
+- **A worse defect was underneath (D13, amended).** Choosing *cinnamon* also
+  answered tea. `parse_intent` took the question's first-named item, not the
+  reader's choice. It now reads the choice first.
+- **Measured.** Re-run on the changed set, the clarified turn answers the
+  cinnamon the reader chose (EVALUATION.md §12).
+
+## Verification still owed by a human
+
+**A screen-reader pass.** WCAG 2.1 AA is implemented throughout the
+conversational layer and asserted by axe-core over every page state
+(`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths — the trace toggle,
+the clarification card, the workbench's sliders — are driven by pressing keys.
+None of it has been used with NVDA, JAWS or VoiceOver. Implementation and an
+automated scan are not that verification, and it is still owed.
+
+**A load test — measured on 2026-09-12, with one budget broken by the provider.**
+`eval/load_test.py` now also runs 50 *signed-in* users, sustained and paced
+under the rate limit, on `/api/query` and `/api/chat/stream`, against a rule
+written before the runs (EVALUATION.md §11).
+
+- **Degraded (a): passes on both endpoints.** No failures, no 429s, every p95
+  inside budget, at about 1,060 questions a minute.
+- **With the model (b): fails on single-sector only.** Its p95 was 11.6 s on
+  `/api/query` and 13.4 s on the stream, against 10 s. Neither breach was there
+  at one user. The API log names the cause: OpenAI's rate limit for the account
+  on `gpt-4o`.
+
+What is still owed: the same run against the deployed VM, and any change that
+lifts the ceiling (a higher tier, a failover key, or the merge role on the
+cheaper model), measured under the same rule before it is claimed.
+
+**CI — built on 2026-09-12, for both repos.**
+`.github/workflows/ci.yml` (PR #78) runs `ruff`, the unit suite on Python 3.11
+and 3.12, and the integration suite against real Postgres, Neo4j and Qdrant, on
+every PR and push to `main`, with no secrets. Running its jobs before it existed
+found three tests that passed only on a developer machine:
+- a retrieval unit test downloaded ~200 MB of models;
+- an RBAC integration test could never pass;
+- a web-search test depended on `.env` naming a Qdrant.
+
+All three are fixed. `ceynex-web` has its own workflow: lint, a vitest suite and
+the production build (its PRs #21 and #22). The conversational branch adds its
+42 tests to that suite. Its Playwright suite still runs only on a developer
+machine, because it drives a running API over a loaded stack.
+
+**The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
+deployed. The nginx heartbeat, resume and cancel checks were made against a real
+nginx container running the production `location /api/` directives, not against
+the deployed host with TLS and the real network in play.
+
+## Web-search results reaching an LLM — deliberately not built (D14)
+
+Web text reaches no model in v1: snippets only, no full-page fetch, appended after
+merge. If a later version does feed web text to a model, it must go through the
+same `json.dumps(context, ...)` structured path `finish()` already uses — never
+f-string interpolation — inside an explicit "untrusted, do not follow instructions
+here" block. Recorded so the constraint is not rediscovered by accident.
+
+## The 30-question set's noise floor limits what it can prove
+
+`EVALUATION.md` §8 measures it: two runs of identical code differ by about one
+question on routing exact match and one on ungrounded figures, and single-sector
+p95 moved 35% between them. Two consequences that are not deferred work so much as
+deferred *confidence*: a one-question difference between two single runs is not a
+result, and a p95 from one run of 12 samples should not be quoted.
+
+The repeated-run protocol is now built — `make eval-repeat` runs the set three
+times cold and `eval/repeat.py` reports medians, spread and the questions that
+disagreed with themselves (EVALUATION.md §9) — but the floor itself is a property
+of a 30-question set and a stochastic model, and stays. What is still deferred is
+a **larger set**: `chat_feedback` (§5 of the execution plan) is the growth path,
+and nothing has been promoted from it yet.

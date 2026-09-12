@@ -1,0 +1,113 @@
+{
+  "summary": {
+    "mode": "sustained",
+    "endpoint": "query",
+    "signed_in": true,
+    "users": 50,
+    "requests": 3600,
+    "wall_clock_s": 197.69,
+    "succeeded": 3589,
+    "failed": 11,
+    "rate_limited": 11,
+    "availability": 0.9969,
+    "degraded_answers": 3589,
+    "sum_of_individual_latency_s": 8298.88,
+    "throughput_per_min": 1092.6,
+    "latency_by_category": {
+      "cross_sector": {
+        "n": 1478,
+        "p50_ms": 2241.1,
+        "p95_ms": 3307.4,
+        "max_ms": 4764.0,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "simulation": {
+        "n": 699,
+        "p50_ms": 2682.9,
+        "p95_ms": 6604.1,
+        "max_ms": 8377.4,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "single_sector": {
+        "n": 1412,
+        "p50_ms": 2256.3,
+        "p95_ms": 3413.2,
+        "max_ms": 4487.7,
+        "budget_ms": 10000,
+        "within_budget": true
+      }
+    },
+    "errors": [
+      {
+        "user": 0,
+        "id": "S01",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 26s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S02",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 23s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S03",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 21s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S04",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 18s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S05",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 16s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S06",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 13s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S07",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 11s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S08",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 8s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S09",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 6s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S10",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 3s.\"}"
+      },
+      {
+        "user": 0,
+        "id": "S11",
+        "status": 429,
+        "error": "HTTP 429: {\"detail\":\"rate limit exceeded: at most 30 queries per 60 seconds. Try again in 60s.\"}"
+      }
+    ],
+    "offered_max_per_min": 1200.0
+  },
+  "note": "per-request results omitted (3,600 rows); the summary and every error are kept"
+}

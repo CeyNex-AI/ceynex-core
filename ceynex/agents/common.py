@@ -99,13 +99,29 @@ class Intent:
     pct_change: float | None = None
 
 
+#: What `chat/clarify.py::Clarification.compose` puts between a question and the
+#: reader's answer to the clarifying question about it: "How are tea and cinnamon
+#: exports doing — specifically: cinnamon". Defined here, below the chat layer,
+#: because this is where it is read.
+CHOSEN_MARKER = "— specifically:"
+
+
 def parse_intent(query: str) -> Intent:
     lowered = query.lower()
     intent = Intent()
 
-    for item, keywords in ITEM_KEYWORDS.items():
-        if any(keyword in lowered for keyword in keywords):
-            intent.item = item
+    # The reader's choice outranks the first item the question happens to name.
+    # The item loop below takes the first match in ITEM_KEYWORDS order, so
+    # "tea and cinnamon — specifically: cinnamon" answered tea until 2026-09-12:
+    # a reader who chose cinnamon on the clarification card got a tea analysis.
+    # A choice that names no item falls back to the whole question.
+    chosen = lowered.rsplit(CHOSEN_MARKER, 1)[1] if CHOSEN_MARKER in lowered else ""
+    for scope in (chosen, lowered):
+        for item, keywords in ITEM_KEYWORDS.items():
+            if any(keyword in scope for keyword in keywords):
+                intent.item = item
+                break
+        if intent.item is not None:
             break
     if intent.item is None:
         for word, item in SECTOR_FALLBACK_ITEMS.items():
@@ -287,6 +303,36 @@ def evidence_from_policy(
     return evidence
 
 
+def evidence_from_web(
+    claim: str,
+    detail: str,
+    url: str,
+    period: str | None = None,
+) -> Evidence:
+    """Evidence for a general web result (D14). `source_id` is `"WEB"`.
+
+    **This is not the same kind of thing as the four constructors above**, and the
+    difference is the point. A KG, dataset, policy or model claim names something
+    that was queried and can be re-queried. A web result names something somebody
+    published, which nobody here has verified.
+
+    That is why web evidence is appended *after* `merge()` has already returned:
+    it never reaches the merge LLM, never enters
+    `orchestrator/grounding.py::ungrounded_figures()`, and cannot move
+    `aggregate_confidence()`. Those are structural consequences of when it is
+    created, not checks that could be forgotten — which is why this docstring is
+    the only place they are written down, and why moving this call earlier would
+    quietly undo all three at once.
+
+    `url` is required rather than optional, unlike `evidence_from_policy`. An
+    unverified claim a reader cannot go and check is not evidence at all.
+    """
+    evidence = Evidence(source_id="WEB", claim=_as_sentence(claim), detail=detail, url=url)
+    if period:
+        evidence["period"] = period
+    return evidence
+
+
 def evidence_from_model(claim: str, model_id: str, period: str | None = None) -> Evidence:
     evidence = Evidence(source_id="MODEL", claim=_as_sentence(claim), detail=model_id)
     if period:
@@ -433,6 +479,7 @@ __all__ = [
     "evidence_from_model",
     "evidence_from_policy",
     "evidence_from_query",
+    "evidence_from_web",
     "figures_evidence",
     "find_region",
     "finish",

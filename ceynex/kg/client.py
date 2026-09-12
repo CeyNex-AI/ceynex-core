@@ -20,6 +20,7 @@ and the orchestrator answers with whatever else succeeded (SAD §4.1).
 from __future__ import annotations
 
 import logging
+import time
 from types import TracebackType
 from typing import Any, Self
 
@@ -31,6 +32,7 @@ from neo4j import (
 )
 from neo4j import exceptions as neo4j_exceptions
 
+from ceynex.observability import trace
 from ceynex.settings import neo4j_config
 
 log = logging.getLogger(__name__)
@@ -143,12 +145,26 @@ class KnowledgeGraphClient:
         params = params or {}
         _warn_if_unparameterized(cypher)
 
+        # One event per logical call, not per attempt: a retry is reported as
+        # `attempts=2` on the one query the caller made, because the timeline
+        # describes what the caller asked for, not the driver's internal
+        # recovery. `trace.emit` is a no-op unless a request installed a sink.
+        started = time.perf_counter()
         last_error: Exception | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             try:
                 async with self.driver.session(database=self._database) as session:
                     result = await session.run(cypher, params)  # type: ignore[arg-type]
                     rows = [record.data() async for record in result]
+                trace.emit(
+                    "kg_query",
+                    cypher=cypher,
+                    params=_describe_params(params),
+                    row_count=len(rows),
+                    attempts=attempt,
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                    status="ok",
+                )
                 return rows, cypher
             except (
                 neo4j_exceptions.ServiceUnavailable,
@@ -159,8 +175,26 @@ class KnowledgeGraphClient:
                 log.warning("neo4j attempt %d/%d failed: %s", attempt, MAX_ATTEMPTS, exc)
             except neo4j_exceptions.Neo4jError as exc:
                 # A malformed query is our bug; retrying cannot help.
+                trace.emit(
+                    "kg_query",
+                    cypher=cypher,
+                    params=_describe_params(params),
+                    attempts=attempt,
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                    status="failed",
+                    error=str(exc),
+                )
                 raise KnowledgeGraphUnavailableError(f"cypher rejected by neo4j: {exc}") from exc
 
+        trace.emit(
+            "kg_query",
+            cypher=cypher,
+            params=_describe_params(params),
+            attempts=MAX_ATTEMPTS,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+            status="failed",
+            error=str(last_error),
+        )
         raise KnowledgeGraphUnavailableError(
             f"neo4j unreachable at {self._uri} after {MAX_ATTEMPTS} attempts: {last_error}"
         ) from last_error
@@ -211,6 +245,27 @@ def split_statements(script: str) -> list[str]:
         line for line in script.splitlines() if not line.strip().startswith("//")
     )
     return [chunk.strip() for chunk in without_comments.split(";") if chunk.strip()]
+
+
+def _describe_params(params: dict[str, Any]) -> str:
+    """Render bind parameters for the live trace, compactly.
+
+    Values are included, not just keys: they are derived from the asking user's
+    own question by `parse_intent`, they are shown only back to that user, and
+    `MATCH ... WHERE c.name = $item` with `item=tea, year=2025` is the difference
+    between a timeline that explains the answer and one that just proves a query
+    ran. Long values (a doc-id allow-list, say) are cut here; the sink clips the
+    rendered string again at `trace.MAX_TEXT` as a backstop.
+    """
+    if not params:
+        return ""
+    parts = []
+    for key, value in params.items():
+        rendered = repr(value)
+        if len(rendered) > 60:
+            rendered = rendered[:60] + "…"
+        parts.append(f"{key}={rendered}")
+    return ", ".join(parts)
 
 
 def _warn_if_unparameterized(cypher: str) -> None:

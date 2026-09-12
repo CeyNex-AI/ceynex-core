@@ -97,6 +97,13 @@ class QueryResponse(BaseModel):
     # answer did not come from the graph: a diagram beside an answer the graph
     # did not produce would claim a provenance that isn't there.
     graph: AnswerGraph | None = None
+    #: What the answer cost (D15). Additive, and optional so an older client is
+    #: unaffected. The ledger has recorded this since the observability layer
+    #: shipped; this is the first surface that shows it.
+    usage: dict[str, Any] | None = None
+    #: Every term in the SRS 3.1.4 confidence formula — weighted, staleness, dq,
+    #: coverage, final — so "why this confidence?" is answerable from the answer.
+    confidence_breakdown: dict[str, float] | None = None
 
 
 class GraphFragment(BaseModel):
@@ -448,3 +455,299 @@ class SiteThemeResponse(BaseModel):
 
 class SetSiteThemeRequest(BaseModel):
     theme: str
+
+
+# --- the conversational layer (deviation D13) --------------------------------
+#
+# Separate from `QueryResponse` on purpose. That shape is what the existing
+# one-shot Query page binds to and is frozen in practice; a conversation is a new
+# surface, and folding turns into the old shape would couple the two so that
+# neither could move.
+
+
+class ConversationSummary(BaseModel):
+    """One row in the past-chats sidebar."""
+
+    id: int
+    title: str | None
+    created_at: str
+    updated_at: str
+    pinned: bool
+    archived: bool
+    message_count: int
+
+
+class ConversationCreateRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=80)
+
+
+class ConversationPatchRequest(BaseModel):
+    """All three optional: a PATCH sets only what it names."""
+
+    title: str | None = Field(default=None, max_length=80)
+    pinned: bool | None = None
+    archived: bool | None = None
+
+
+class UsageSummary(BaseModel):
+    """What one turn spent. A cache hit is 0 tokens and $0 — see
+    `ceynex/observability/ledger.py` on why that is correct rather than missing."""
+
+    calls: int = 0
+    cache_hits: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+
+
+class ChatMessageItem(BaseModel):
+    """One turn. A user turn carries `content` and nothing else; an assistant
+    turn carries the whole answer payload so reopening a conversation redisplays
+    the evidence panel, the forecast and the graph rather than just the prose."""
+
+    #: The row id, so a reader can rate this answer (§5). `seq` orders the
+    #: transcript; it does not identify the row.
+    id: int | None = None
+    seq: int
+    role: str
+    content: str
+    created_at: str | None = None
+    mode: str | None = None
+    request_id: str | None = None
+    confidence: float | None = None
+    confidence_band: str | None = None
+    degraded: bool | None = None
+    agents_used: list[str] = Field(default_factory=list)
+    route: list[str] = Field(default_factory=list)
+    sectors: list[str] = Field(default_factory=list)
+    unanswered: list[str] = Field(default_factory=list)
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    forecast: list[ForecastPointItem] | None = None
+    graph: AnswerGraph | None = None
+    elapsed_ms: float | None = None
+    usage: UsageSummary | None = None
+    #: Cross-link to the existing `query_history` row, so the chat UI's save
+    #: button calls the untouched `/api/history/{id}/save` rather than a parallel one.
+    query_history_id: int | None = None
+    #: That row's `saved` flag, read through the join rather than stored twice.
+    saved: bool = False
+    #: SRS 3.1.4's working behind `confidence`, when it was computed.
+    confidence_breakdown: dict[str, float] | None = None
+    #: A `discuss` turn only: False when its prose was withheld as ungrounded.
+    grounded: bool | None = None
+    #: A user turn only: the query actually run, when it differs from `content`.
+    effective_query: str | None = None
+    #: A regenerated answer: the id of the version it replaces.
+    regenerated_from: int | None = None
+
+
+class ConversationDetail(BaseModel):
+    conversation: ConversationSummary
+    messages: list[ChatMessageItem]
+
+
+class TraceEventItem(BaseModel):
+    """One step of a stored reasoning trace, replayed when a chat is reopened.
+
+    `payload` is open rather than typed per kind: the kinds are a taxonomy that
+    will grow (a web-search step, a clarification step), and freezing the shape
+    here would mean a contract change every time a call site learns to report
+    something new. The frontend renders per `kind` and ignores what it does not
+    recognise.
+    """
+
+    seq: int
+    kind: str
+    node: str | None = None
+    ts: float
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatStreamRequest(BaseModel):
+    """A turn. `conversation_id` is optional so the streaming transport still
+    works for a stateless question — which is what makes it demonstrable before
+    any account exists."""
+
+    query: str = Field(min_length=1, max_length=2000, description="A question in plain English.")
+    conversation_id: int | None = None
+
+
+class ClarifyAnswerRequest(BaseModel):
+    """The reader's reply to a clarifying question (D13).
+
+    `skip` is the "just answer it" escape, and it is not the same as sending no
+    answers: it says the reader looked at the question and decided the original
+    wording was what they meant.
+    """
+
+    answers: list[str] = Field(default_factory=list, max_length=8)
+    skip: bool = False
+
+
+# --- usage and cost (docs/ARCHITECTURE_DELTA.md D15) -------------------------
+
+
+class UsageRollupItem(BaseModel):
+    """One grouped row — a day, or a role/model pair. `key` says which."""
+
+    key: str
+    calls: int
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+
+
+class UsageSummaryResponse(BaseModel):
+    days: int
+    #: "user" (the caller's own) or "all" (admin-only, everyone's).
+    scope: str
+    by_day: list[UsageRollupItem] = Field(default_factory=list)
+    by_role: list[UsageRollupItem] = Field(default_factory=list)
+    total_cost_usd: float
+    total_calls: int
+    total_tokens_in: int
+    total_tokens_out: int
+
+
+class UsageLimitsResponse(BaseModel):
+    """SRS 3.4.6's disclosure: the restrictions, said out loud."""
+
+    limits: list[UsageRollupItem] = Field(default_factory=list)
+    daily_spend_cap_usd: float
+    spent_today_usd: float
+    #: True when the cap is counted per uvicorn worker — no Redis to share the
+    #: count — so real spend can reach `worker_count` times it. Said in the
+    #: response rather than hidden: showing a per-worker cap as exact would be
+    #: the silent enforcement the requirement forbids. False once D16's shared
+    #: counter carries it.
+    cap_is_per_worker: bool = True
+    worker_count: int = 2
+    #: This reader's own daily model budget (D16). 0 means none is set.
+    per_user_daily_cap_usd: float = 0.0
+    spent_today_by_you_usd: float = 0.0
+    #: When both daily limits start again: the next 00:00 UTC.
+    resets_at: str | None = None
+    #: Whether a limit is spent right now, so the page can say what it means:
+    #: answers carry figures and evidence, without model-written prose.
+    your_budget_spent: bool = False
+    deployment_cap_spent: bool = False
+
+
+class UserInstructionResponse(BaseModel):
+    content: str
+    enabled: bool
+    max_chars: int
+
+
+class UserInstructionRequest(BaseModel):
+    content: str = Field(default="", max_length=2000)
+    enabled: bool = True
+
+
+class DataFreshnessResponse(BaseModel):
+    """How current the trade record is. Always HTTP 200 — see the route."""
+
+    available: bool
+    #: The most recent period the dataset actually holds, not "now".
+    latest_observation: str | None = None
+    observations: int = 0
+    #: The last ingest that *finished successfully*; a failed run says nothing
+    #: about how current the data is.
+    last_ingest_at: str | None = None
+
+
+# --- answer feedback and shared conversations (execution plan §5) ------------
+
+
+class FeedbackRequest(BaseModel):
+    #: 1 for 👍, -1 for 👎. Not a 5-point scale: a rating nobody can interpret
+    #: consistently is not eval data.
+    rating: int = Field(ge=-1, le=1)
+    reason: str = Field(default="", max_length=2000)
+
+
+class FeedbackResponse(BaseModel):
+    message_id: int
+    rating: int
+
+
+class ShareRequest(BaseModel):
+    shared: bool
+
+
+class ShareResponse(BaseModel):
+    shared: bool
+    #: None when sharing was turned off — the link is revoked, not hidden.
+    token: str | None = None
+
+
+class SharedConversationResponse(BaseModel):
+    """A read-only transcript. Carries no `user_email`, by design."""
+
+    title: str | None = None
+    created_at: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- the scenario workbench (docs/ARCHITECTURE_DELTA.md D17) -----------------
+
+
+class ScenarioOverrides(BaseModel):
+    """Slider positions for the elasticities, by config group. A field left
+    None keeps the configured value; the response says which were moved."""
+
+    fx_pass_through: float | None = Field(default=None, ge=0.0, le=1.0)
+    export_demand_elasticity: float | None = Field(default=None, ge=-5.0, le=0.0)
+    tariff_incidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    agreement_loss_mfn_tariff: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ScenarioRequest(BaseModel):
+    shock: str = Field(pattern="^(fx|tariff|agreement)$")
+    sector: str = Field(pattern="^(agriculture|apparel)$")
+    #: One of the items the graph records; defaults to the sector's representative.
+    item: str | None = Field(default=None, max_length=32)
+    #: A fraction: 0.05 is a 5% depreciation or a 5-point tariff. Unused by the
+    #: agreement shock, whose rate is the MFN tariff.
+    magnitude: float = Field(default=0.05, ge=-1.0, le=1.0)
+    overrides: ScenarioOverrides | None = None
+
+
+class ScenarioParameter(BaseModel):
+    name: str
+    value: float
+    default: float
+    basis: str
+    source: str
+    overridden: bool
+
+
+class ScenarioOutcome(BaseModel):
+    shock: str
+    sector: str
+    baseline_usd: float
+    revenue_change_usd: float
+    revenue_change_pct: float
+    price_change_pct: float
+    volume_change_pct: float
+    parameters: list[ScenarioParameter]
+    detail: str
+
+
+class ScenarioResponse(BaseModel):
+    shock: str
+    sector: str
+    item: str
+    magnitude: float
+    #: SAD §4.1: without a baseline, or without preference coverage for an
+    #: agreement shock, nothing is simulated and `reason` says why.
+    refused: bool
+    reason: str | None = None
+    baseline_usd: float | None = None
+    baseline_year: int | None = None
+    #: The literal Cypher that read the baseline, so the number is checkable.
+    baseline_cypher: str | None = None
+    outcome: ScenarioOutcome | None = None
+    #: SRS 3.1.5 — stated on every run, refusal or not. Never empty.
+    assumptions: list[str]
+    evidence: list[EvidenceItem]

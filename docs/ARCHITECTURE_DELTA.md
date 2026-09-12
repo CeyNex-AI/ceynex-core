@@ -274,6 +274,8 @@ approval. The proposed diff is in
 [CONTRACT_PROPOSAL_POLICY_DOCUMENT.md](CONTRACT_PROPOSAL_POLICY_DOCUMENT.md);
 the loader works without it, so the PR is not on the critical path.
 
+---
+
 ## D11 — a news sidecar over the same Qdrant, deliberately not evidence
 
 **What the SAD says.** Nothing. There is no news source in the SRS, no current-
@@ -352,3 +354,491 @@ works, this works; the compose file carries the one-line check.
 **Reversal cost is low.** `CEYNEX_NEWS=off`. Both endpoints stay up and report
 `unavailable`, the refresher returns immediately, and the query flow is
 untouched — it never depended on either.
+
+---
+
+## D12 — an SSE transport beside the request/response endpoint
+
+**Decided 2026-09-10, M2.**
+**Spec touched:** SRS 3.4.1, 3.4.3, 3.9.1; SAD §8 (layer rules).
+
+The SRS says *"no persistent socket based or streaming protocol is required for
+standard query submission and response."* Not required is not forbidden, but it
+means a stream is an addition beyond the written design, in the same class as
+D10 and D11, and recorded the same way.
+
+**Why.** `EVALUATION.md` §1 records single-sector p95 at 14.6 s against SRS
+3.4.1's 10 s budget, with a 29.0 s cold tail. Streaming makes nothing faster. It
+moves time-to-first-paint from the whole wait to the first frame and turns a
+documented budget breach into progressive disclosure. Everything it shows was
+already being produced and thrown away: `kg/client.py::run` has always returned
+`(rows, cypher_text)` so the query could be cited, the policy retriever has
+always returned its filter description, and the LLM client has always read
+`prompt_tokens`/`completion_tokens` off every response.
+
+**Nothing in the stream is invented.** Every event is emitted from a call site
+that actually ran, carrying its real payload and real duration. An earlier draft
+reserved one concession — holding a completed step on screen for a ~250 ms
+minimum so a 40 ms Cypher query did not flash past. It was built and then
+removed: rows are appended and never removed, so nothing flashes past, and
+keeping the constant would have meant a docstring describing a delay the code did
+not apply. `tests/observability/test_trace_is_truthful.py` asserts it in both
+directions — every traced query ran, and every query that ran was traced.
+
+**A context-scoped bus, not `astream_events`.** LangGraph's own event stream sees
+node boundaries; the interesting facts happen three layers below one. So
+`ceynex/observability/` holds a `ContextVar` set before `ainvoke()`, and `emit()`
+is a no-op when it is unset — which is why `demo.py`, `eval/harness.py` and every
+pre-existing test are untouched. This rests on LangGraph copying the caller's
+context into each parallel node task, true in 1.2 via the private
+`pregel/_executor.py`. `langgraph` is therefore pinned `>=1.2,<1.3` and
+`tests/observability/test_context_propagation.py` is the canary to re-run before
+widening it.
+
+**SSE, not WebSocket, is an infrastructure fact.**
+`ceynex-infra/frontend/nginx.conf.template`'s `location /api/` sets no
+`Upgrade`/`Connection` headers, so a WebSocket upgrade cannot cross the proxy
+today. Two nginx defaults would each have broken SSE silently, and both are
+handled in code rather than left to a deploy: `proxy_buffering` is on by default,
+defeated with `X-Accel-Buffering: no`; and `proxy_read_timeout` is 60 s, kept
+alive by a 15 s heartbeat comment with `STREAM_BUDGET_S = 45.0` finishing first so
+our own `error` frame is what a pathological request produces rather than the
+proxy dropping the socket. Verified against the *unmodified* production block in
+a real nginx container: first frame at 3 ms, last at 1.85 s, a 1.41 s gap between
+— buffering would have delivered all 18 together — and nginx consumed the header,
+which is how it signals it acted on it. **No infrastructure change is needed to
+deploy this.**
+
+**One orchestration path, two transports.** `submit_query()`'s body was lifted
+into `ceynex/api/query_runner.py::run_query()`, which both routes now call. The
+extraction is behaviour-preserving, so `tests/api/test_query.py`'s fixtures pass
+unmodified, and
+`test_the_done_frame_carries_the_same_answer_as_the_json_endpoint` is the guard
+that the two never diverge. It also applied a timeout that was declared and never
+used: `REQUEST_TIMEOUT_S = 25.0` was never passed to anything, so the real ceiling
+was nginx's 60 s — which is why `EVALUATION.md` records a 29 s tail rather than a
+25 s failure.
+
+**A deliberate departure from `history.py`'s own pattern.** That module calls
+`psycopg.connect()` synchronously inside an async handler, which is fine for a
+bounded one-shot request and not fine here: a blocking call stalls the event loop
+while a stream is meant to be emitting heartbeats, and with `--workers 2` it
+stalls every other request on the process. So the live trace never touches the
+database — events stream from an in-memory queue and the whole trace is persisted
+once per turn in a single multi-row insert, best-effort — and every new write path
+goes through `asyncio.to_thread`. One driver, one pattern, no new dependency.
+
+**Cost, stated plainly.** Six tables in Postgres, no new service, no new
+dependency. The planner is the only added LLM call on this path and it is
+**skipped entirely when nothing is listening** — see D15's note on why that
+matters more than it sounds.
+
+**Reversal cost is low.** `CEYNEX_CHAT=off` removes the conversational surface
+and `POST /api/query` answers exactly as before, which is asserted rather than
+assumed.
+
+### D12, amended 2026-09-10 — a turn is not its HTTP response
+
+**Decided 2026-09-10, M2, in the completion pass; written up 2026-09-11.**
+**Spec touched:** SRS 3.3.1 (availability), 3.4.1.
+
+As first built, the orchestration ran inside the response generator, so
+whatever happened to the socket happened to the answer: a dropped connection
+cancelled a fan-out that was already being paid for, and the reader was told
+"it may have completed" about a turn the server had in fact thrown away.
+
+**A turn runs as its own task and writes numbered frames to a log**
+(`api/turn_log.py`, `api/turn_runner.py`). The HTTP response only *reads* the
+log, from any frame onward, with heartbeats while it is quiet. Every SSE frame
+therefore carries an `id:`, and `GET /api/chat/turns/{request_id}/events?after=N`
+(or the standard `Last-Event-ID` header) resumes a turn after the last frame a
+reader saw. The resume token is the unguessable `request_id` **and** an owner
+check — knowing someone's request id is not enough; being them is required —
+and an unknown, expired (ten minutes after `done`) or someone else's turn is a
+404 that does not say which. The in-process log is authoritative; a best-effort
+Redis stream mirror serves the one case it exists for, a reconnect that lands on
+the other uvicorn worker. Without `REDIS_URL` a resume works on the same worker
+only, which locally is always the case.
+
+**The disconnect semantics changed, deliberately.** A signed-in turn now outlives
+its reader: it finishes, is stored, and is waiting in the transcript or on the
+resume endpoint. An anonymous turn still cancels on disconnect, because nobody
+can resume it and nothing is stored, so finishing it would spend money on an
+answer no one can ever read. Stop is therefore an explicit request,
+`POST /api/chat/turns/{request_id}/cancel` — a browser's abort and a dropped
+network look identical from the server — reaching a turn on this worker as
+`task.cancel()` and one on the other worker through a Redis key it checks every
+250 ms. A cancelled turn stores nothing and ends in `done` with `cancelled: true`.
+The rule from the original entry still holds: a failure, a timeout and a
+cancellation are each frames in the log, never a status change.
+
+**The answer streams a grounded sentence at a time** (`orchestrator/answer_stream.py`).
+`SentenceGate` holds streamed model text until a whole sentence exists, checks
+that sentence with `grounding.ungrounded_figures` against the same corpus the
+whole-prose check uses, and only then releases it as an `answer_delta`. A figure
+contains no whitespace and a sentence boundary is always whitespace, so no
+figure is ever split across releases and nothing released could fail the
+merge's own check; the first failing sentence stops the stream and
+`answer_reset` withdraws the draft before `done` delivers the deterministic
+composition. Three seeded property tests (450 cases) pin those three
+properties. The stream is passed **only when `trace.active()`**, so the call
+`POST /api/query` and `make eval` make is byte-for-byte the unstreamed one —
+`test_merge_without_a_listener_never_streams` guards it. `answer_delta` is
+live-only: streamed and kept for a resume, never written to `chat_trace_event`,
+because the message row is the durable copy of the text.
+
+**Verified against real nginx on 2026-09-11**, with the production `location
+/api/` directives and `proxy_read_timeout` shortened to 20 s so the check could
+bite: a turn held quiet for 40 s survived on heartbeats at 15.05 s and 30.09 s
+and delivered `done` at 40.10 s; the control with heartbeats disabled was cut by
+nginx at 20.03 s (`upstream timed out … while reading upstream`). Resume by
+`after=`, resume by `Last-Event-ID`, the owner 404 and cancel were each driven
+by hand through the same proxy.
+
+**Cost, stated plainly.** No new table. One task per turn, a bounded in-process
+log (512 turns, ten-minute TTL after `done`), and an optional Redis stream per
+turn capped at 2,000 entries. A defect this exposed and fixed on the way: the
+`discuss` path awaited its model call to completion and flushed afterwards, so
+its sentences reached the wire in one burst just before `done`; both paths now
+share one pump.
+
+---
+
+## D13 — conversation state in Postgres, and a pre-routing clarification gate
+
+**Decided 2026-09-10, M2.**
+**Spec touched:** SRS 3.1.11, 3.4.6, 3.5.2, 3.10.
+
+One question answered once is not how anyone works. The answer to "now do the
+same for rubber" was to retype the whole question.
+
+**Classify before you re-run.** Most follow-ups do not need a five-agent fan-out.
+One cheap `turn_classify` call splits them: a `discuss` turn ("what does HHI
+mean?", "summarise that in three bullets") is answered from the turn's existing
+answer, evidence and figures with no graph re-run at all; an `analyse` turn is
+rewritten as a standalone query and streamed as normal. Measured on the 22-turn
+set (`EVALUATION.md` §10, 2026-09-11): a `discuss` turn is **8.5 SSE frames
+against 33, 2.7 s against 5.8, at a tenth of the cost**, with no fan-out — an
+earlier "3 frames against 22" was measured before discuss turns had a trace of
+their own. That one decision governs the cost and latency profile of the whole
+feature. Grounding still applies —
+`orchestrator/grounding.py::ungrounded_figures` runs against the conversation's
+own evidence, so a chat reply cannot introduce a figure the analysis never
+produced. The separate `condense` role is configured and unused: the classifier
+already returns the rewrite, and a second call to reword what the first just read
+would double the cost of every re-analysis for nothing.
+
+**A gate before routing, not LangGraph `interrupt()`.** Native HITL needs
+`.compile(checkpointer=...)`, a `thread_id` per invocation and a resume command.
+That is the right answer for pausing mid-graph, and we do not need mid-graph
+pausing: the ambiguity we can actually detect — two commodities named, a
+simulation with no resolvable destination — is knowable *before* routing, from
+`parse_intent` gaps and the `RouteDecision`. Three further reasons the
+checkpointer is the wrong tool here: `langgraph-checkpoint-postgres` is not
+installed; `build_graph()` compiles one graph once at startup and shares it across
+every request, so enabling checkpointing there makes *every* query write
+checkpoint rows after every superstep, the wrong cost shape for a feature required
+to be rare; and the natural call site would entangle clarification into
+`graph.py`, the one module whose docstring is most insistent about staying exactly
+`route → fan-out → merge → END`. The gate runs before `ainvoke()` is ever called,
+so `graph.py` is not touched at all.
+
+**The one-round cap is structural, not a counter.** Resume composes the answered
+query and runs it without the gate on that path, so it cannot drift out of sync
+across the two uvicorn workers the way an in-memory counter would. The single
+condition that would flip this decision is an agent discovering ambiguity *after*
+the graph has started, which genuinely cannot be a pre-check.
+
+**Conversations require authentication; `/api/query` does not.** SRS 3.1.11
+requires an account before query submission, and the frontend honours it on both
+surfaces. The backend's anonymous support on `/api/query` is a documented
+deferred-scope decision for that endpoint, not a UI affordance — a chat page
+offering an anonymous path was written and removed for exactly this reason. A
+conversation is stateful and has a `BIGSERIAL` id, so an anonymous caller
+supplying someone else's `conversation_id` would be a plain IDOR; every store
+function filters `WHERE id = %s AND user_email = %s` and returns 404 without
+distinguishing "not found" from "not yours", the same posture as
+`history.set_saved()`.
+
+**Rate limiting is not inherited.** `enforce_rate_limit` was wired to
+`/api/query` alone, and the streaming route invokes the identical fan-out, so
+omitting it would have been a bypass around the most expensive call in the
+system. `/api/chat/*` has its own `chat:`-namespaced allowance in
+`config/api.yaml`, applied in the same commit that created the route.
+
+**`query_history` is untouched.** Every chat turn that runs the graph writes its
+existing `query_history` row exactly as before, so `GET /api/history`, the saved
+star and the History panel need no change; `chat_message.query_history_id`
+cross-links a turn to its row so a chat "save" calls the existing endpoint. A
+`discuss` turn writes none — it is not a new analysis.
+
+**A real schema defect, found by a leaking test purge.** `chat_trace_event` was
+created without a foreign key, so deleting a conversation left every Cypher query,
+token count and timing behind for good — which is precisely what the delete
+endpoint's own docstring says it does not do. Fixed with an idempotent `DO $$`
+block, because `CREATE TABLE IF NOT EXISTS` is a no-op against a table that
+already exists and Postgres has no `ADD CONSTRAINT IF NOT EXISTS`; verified
+against a table that already existed without it. Cited here as **SRS 3.10's
+referential-integrity requirement** rather than as a data-subject erasure right —
+3.10 is Database Requirements and states no such right, and the promise being kept
+is the endpoint's own.
+
+**Cost, stated plainly.** Three tables, one cheap classifier call per follow-up
+turn, and one title call per conversation. Reversal is `CEYNEX_CHAT=off` for the
+surface and `CEYNEX_CLARIFY=off` for the gate alone — separable on purpose, so a
+demo can have conversation without ever being interrupted by a question, and a
+reviewer comparing answers against `queries.md` can turn the gate off without
+losing chat.
+
+### D13, amended 2026-09-12 — the card's choices deliver what they say
+
+Two defects, and the owner's call on one of them.
+
+**A chosen item was not the item analysed.** The resume path appends the
+reader's choice to their question: "How are tea and cinnamon exports doing —
+specifically: cinnamon". Every agent reads its item through
+`agents/common.py::parse_intent`, which takes the first item the text names, in
+`ITEM_KEYWORDS` order. So a reader who picked cinnamon got a tea analysis, said
+with full confidence. That was seen on the running API, USD 1.37 bn of tea for a
+cinnamon question. It went unnoticed because the Playwright spec picks the first
+chip and the multi-turn set answered "both". `parse_intent` now reads an item
+named after `CHOSEN_MARKER` ahead of the rest of the question. Only the
+clarifier writes that marker, so no other question parses differently. The
+30-question set carries none.
+
+**"both" is no longer offered (the owner's call).** For two items the template
+added "both". It composed a query the single-item agents answered for one item,
+noting the other was unavailable. That was honest, but it was a choice promising
+more than the analysis delivers. Running two analyses was the alternative, and
+it was declined: it doubles a turn's fan-out to serve a phrasing the gate exists
+to disambiguate. The template offers the items. Rule 5 of `CLARIFIER_SYSTEM`
+tells the model the same. `OFFERS_A_COMBINATION` replaces any phrasing that still
+promises "both" or "all of them" with the template's own question, so the
+wording never offers what the options do not hold.
+
+---
+
+## D14 — general web search as enrichment, never as an agent
+
+**Decided 2026-09-10, M2.**
+**Spec touched:** SRS 3.1.2, 3.1.9, 3.6.4; SAD §4.1.
+
+Everything CeyNex knows is Sri Lanka's own trade record plus a fixed policy
+corpus. A question whose answer moved last week has no grounding at all, and the
+news sidecar (D11) is deliberately not evidence and deliberately headline-only.
+
+**Not a sixth agent, and this is enforced by construction rather than by
+convention.** SRS 3.6.4 fixes the agent count at five and
+`test_five_agents_exactly` asserts it. The provider therefore lives on `Runtime`,
+never on `AgentDeps` — the same structural guarantee `Runtime` already applies to
+`gdelt`/`news`, whose comment says it outright: *"no agent may reach news, and the
+way to guarantee that is for it never to be handed to one."* No `AgentState` key
+is added and `ALL_AGENTS` is untouched.
+
+**Web evidence is appended after `merge()` has already returned.** That ordering
+is the whole safety argument, and it buys three guarantees without a single check
+having to be written:
+
+- it **never reaches the merge LLM**, so the prose cannot cite a web figure as
+  though it came from the graph;
+- it **never enters `grounding.py::ungrounded_figures()`**, which is a pure
+  digit-string presence test with no notion of source. Blending corpora would let
+  a number in a scraped page *launder* a KG-attributed claim — defeating the one
+  check the SRS cares most about;
+- it **cannot move `confidence.py::aggregate_confidence()`**, which only iterates
+  `Mapping[AgentName, AgentOutput]`, and web search is not an `AgentName`.
+
+This supersedes an earlier plan to apply a confidence *penalty* to WEB findings.
+Structural exclusion is strictly better: there is nothing to penalise if web
+figures never enter the arithmetic in the first place.
+
+**One hole this ordering does not close on its own.** `chat/turn.py::_corpus`
+builds a `discuss` turn's grounding corpus from the stored message's entire
+evidence list. Once a WEB entry is persisted on a message, a follow-up could
+ground a figure on a scraped page — laundering by the back door, one turn later.
+`_corpus` therefore filters `source_id == "WEB"` explicitly, and a test asserts a
+web figure in a discuss reply is rejected.
+
+**Recency is gated before any call is made.** `_wants_current_context()` is a
+cheap keyword test in the same shape as the existing `FORECAST_WORDS`, so a purely
+historical question makes no outbound request at all. That bounds cost and
+injection surface in one decision.
+
+**Untrusted content, contained by not feeding it to a model.** Web text reaches no
+LLM in v1 — snippets only, no full-page fetch, which also matches this project's
+recorded reason for not scraping news articles. The second layer is a frontend
+rule: `source_id="WEB"` text renders as plain text, never HTML, and is given a
+visually distinct chip, because teal means "verified source" everywhere else in
+this UI and an unvetted web result must not borrow it.
+
+**No keyless fallback, and the earlier note promising one is corrected.**
+`settings.web_search_enabled()`'s docstring said an absent key falls back to a
+keyless provider; the design note said an absent key means the system answers
+exactly as it does today. Both could not be true. A scraped keyless provider is
+fragile and widens the injection surface for little gain, so `from_settings()`
+returns `None` without a key — the same three-way `None` as
+`PolicyRetriever.from_settings()` and `NewsStore.from_settings()`.
+
+**Cost, stated plainly.** No new dependency — Tavily is reached over `httpx`,
+which is already required, rather than by adding `tavily-python`. One outbound
+call on recency-flavoured queries only, hard-capped by its own timeout and
+throttled through the Redis window the rate limiter already provides.
+
+**Reversal cost is zero.** `CEYNEX_WEB_SEARCH=off`, or simply no
+`TAVILY_API_KEY`. That the answers are then byte-identical to the pre-web-search
+system is a checkable claim, and it is checked.
+
+---
+
+## D15 — per-user token and cost metering in Postgres
+
+**Decided 2026-09-10, M2.**
+**Spec touched:** SRS 3.4.6, 3.4.7, 3.5.4.
+
+`LLMReasoningClient` has always read `prompt_tokens`/`completion_tokens` off every
+response to compute a cost, and has always thrown both away afterwards. What
+survived was a single process-global counter.
+
+**One row per LLM *call*, not per request.** It survives a mid-request crash —
+partial spend is still recorded, which is the thing a cost ledger exists for — and
+it makes every rollup a plain `GROUP BY` rather than a nested-JSON blob to parse.
+`llm_usage` carries role, model, provider, cache hit, fallback, failure, tokens in
+and out, cost and elapsed time.
+
+**The cap's real weakness, named rather than papered over.**
+`LLMReasoningClient._cap_reached()` reads the per-process `usage.cost_usd`, and
+`ceynex-infra/backend/Dockerfile` runs `uvicorn --workers 2` — each worker builds
+its own client. **True daily spend can therefore reach 2× `daily_spend_cap_usd`.**
+`ledger.spent_today()` is cross-worker accurate and is deliberately *reporting
+only*: wiring it into enforcement would put a database round trip in front of
+every LLM call. The real fix is a Redis-backed shared counter shaped exactly like
+`rate_limit.py::RedisWindow` — a clean follow-up, and its own delta entry when it
+lands. *It landed: see D16.*
+
+**A cache hit is two different numbers, and only one of them is a gap.** For
+*accounting*, a cache hit cost 0 tokens and $0, because no API call happened;
+recording that is correct, not a shortfall. For *display* — "what would this have
+cost" — the figure was genuinely absent, so `PromptCache.put()` now stores
+optional original token and cost counts. The TTL is 168 h, so entries written by
+the old `put()` are read by the new `get()` for a full week after any deploy;
+every such field is read with `.get()`, never `[]`, or the first deploy would
+`KeyError` on week-old cache entries.
+
+**`conversation_id` is `ON DELETE SET NULL`, not `CASCADE`** — deliberately the
+opposite choice from `chat_trace_event` (D13). A trace is *about* a conversation
+and dies with it; a spend record is about money, and should survive the deletion
+of the thing it was spent on. The link goes, the row stays.
+
+**This is where SRS 3.4.6's disclosure requirement lands.** The requirement is not
+merely that rate limits exist — it is that *"any usage restrictions … must be
+disclosed to the user within the application rather than enforced silently."* The
+usage page is that disclosure, so the feature closes a requirement rather than
+decorating one.
+
+**What it does not close.** SRS 3.4.7 wants an audit log of user queries *and
+administrative actions*. The persisted trace and this ledger deliver most of an
+actor/timestamp trail for query activity; admin actions are still unrecorded, and
+`DEFERRED.md` remains the honest statement of that. An audit log that misses some
+actions is worse than none, because it invites the reader to trust a record that
+is not complete.
+
+**Cost, stated plainly.** One table, one batched insert per request off the event
+loop, four indexes. No new dependency and no new service.
+
+---
+
+## D16 — daily spend limits shared across workers, and a per-reader budget
+
+**Decided 2026-09-10, M2, in the completion pass; written up 2026-09-11.**
+**Spec touched:** SRS 3.4.3, 3.4.6; R5 (LLM quota and cost exhaustion).
+
+D15 named the daily cap's weakness rather than papering over it: `_cap_reached()`
+read a per-process counter, `ceynex-infra/backend/Dockerfile` runs two uvicorn
+workers, so true spend could reach **2× `daily_spend_cap_usd`** — and the page said
+so. Reading the code for this entry found a second weakness D15 had not named:
+the counter was per process *lifetime*, not per day. A worker that ran for a
+week capped itself for good; a restarted one forgot everything it had spent.
+
+**One number, keyed by UTC day, in Redis** (`observability/spend.py`). The cap is
+counted with `INCRBYFLOAT` on a key that names the day (48-hour TTL, so nothing
+depends on the expiry being exact), incremented after every paid call and read
+before the next one, on either worker. It rolls over at 00:00 UTC, and the Usage
+page says when. `test_two_workers_stop_at_the_cap_not_at_twice_it` is the
+central assertion.
+
+**A per-reader budget beside the global cap.** A single account is the likeliest
+way to run up a bill, and the deployment cap alone lets one reader spend all of
+it. `config/llm.yaml` gains `per_user_daily_cap_usd` (1.00 — roughly a hundred
+gpt-4o merges, a long working day of analysis and far past a demo; 0 disables).
+A call with no reader, such as the evaluation harness, meets only the global cap.
+
+**What happens at a limit is the degraded path, not a refusal.** The free
+OpenRouter failsafe is tried first, because it costs nothing against either
+limit; if there is none, or it fails, the answer degrades to figures, evidence
+and confidence — what SRS 3.4.3 already requires — and a `budget` trace event
+says which limit, how much, and when it resets. That notice is shown beside the
+answer as well as on the Usage page, which is SRS 3.4.6's "disclosed rather than
+enforced silently" applied where the restriction actually bites.
+
+**Failing open, but never weaker than before.** A Redis error is logged and the
+check falls back to this worker's own count for the day — the old per-worker
+cap, never no cap at all. `GET /api/usage/limits` reports `cap_is_per_worker:
+false` only when Redis carries the count, and a ledger read that fails returns
+the counter's figure rather than a false zero.
+
+**Cost, stated plainly.** No new table, no new service: the same Redis the rate
+limiter and the turn mirror (D12, amended) already use, two keys per day. The
+deployed compose already sets `REDIS_URL`, so a deploy of this branch gets the
+shared count without an infrastructure change.
+
+---
+
+## D17 — a scenario workbench over the analysis's own formulas
+
+**Decided 2026-09-11, M2.**
+**Spec touched:** SRS 3.1.5 (simulation must state its assumptions); SAD §4.1
+(partial results and refusals).
+
+`trade_economics` has simulated a rupee depreciation, a tariff and the loss of a
+unilateral preference since Day 7, from a question. A policymaker's next question
+is always "and if the elasticity were different?", and the answer was to rephrase
+the question and wait for a five-agent fan-out. The workbench puts sliders on the
+same parameters and re-runs in place.
+
+**One formula, in one module, or two that drift.** The arithmetic was lifted out
+of the agent into `ceynex/models/shocks.py`; the agent's `_simulate_*` helpers
+are now one-line delegations returning the same `(delta, pct, detail)` tuples,
+so every evidence claim and assumption string it writes is byte-identical.
+`tests/models/test_shocks.py` pins that against golden values computed from the
+agent's code *before* the move (`git show d71083d:…`), so the guard is against
+the formulas as they were, not against the module checking itself. The
+baseline read moved the same way — `trade_economics.baseline_value(kg, item)` is
+public, and the route calls it rather than copying the query.
+
+**Deterministic, no model call, and it refuses like the agent.** `POST
+/api/scenario/run` is two bounded graph reads and arithmetic. No baseline in the
+graph, or no recorded preference coverage for an agreement shock, is
+`refused: true` with the reason and the assumptions still stated — the SAD §4.1
+posture the agent takes. Policy documents are not consulted (the agent's D10
+sourced rate is an override the reader can set by hand), and the assumptions say
+so on every run.
+
+**Every parameter comes back with its provenance, `TBD` included.** All seven
+`source:` fields in `config/elasticities.yaml` are still placeholders. The agent
+reads only the value; the workbench returns `value / default / basis / source /
+overridden` for each and the page prints the `TBD` sources in amber under a line
+saying what they are. A slider over a number nobody has sourced must not look
+like a fitted estimate, and hiding the column would be the quiet way to make it
+look like one.
+
+**Its own allowance and its own switch.** A sixth rate-limit block,
+`scenario_rate_limit` in `config/api.yaml`, under a `scenario:` identity prefix
+for the reason every other block has one: moving a slider must never spend the
+allowance for asking questions. `GET /api/usage/limits` discloses it with the
+rest (SRS 3.4.6). `CEYNEX_SCENARIO=off` removes the route and nothing else — the
+agent keeps simulating from questions either way, because the formulas live in
+the shared module regardless.
+
+**Cost, stated plainly.** No new table, no new dependency, no model spend. One
+route, one page, one shared module; the agent file is 46 lines shorter.
+
