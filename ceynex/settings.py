@@ -339,9 +339,10 @@ def grounding_direction_aware() -> bool:
     """Whether the grounding check (SRS 3.1.3) accepts an unsigned figure for a
     negative one when its sentence says the value fell (EVALUATION.md §13).
 
-    **Default off**, for `citations_enabled`'s reason: it changes the one guard
-    every answer passes through, so it goes on only if its pre-registered rule
-    holds. `CEYNEX_GROUNDING=direction` turns it on. `strict`, or unset, keeps
-    the check exactly as it has always been.
+    **Default on** since 2026-09-12, when its pre-registered rule held on six
+    cold runs: the strict check was discarding correct prose on every
+    simulation question with a negative impact. `CEYNEX_GROUNDING=strict` keeps
+    the check exactly as it was before, the one every earlier grounding figure
+    was measured with.
     """
-    return (_env("CEYNEX_GROUNDING", "strict") or "strict").lower() == "direction"
+    return (_env("CEYNEX_GROUNDING", "direction") or "direction").lower() != "strict"

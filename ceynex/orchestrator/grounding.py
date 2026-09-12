@@ -150,12 +150,12 @@ def ungrounded_figures(
     false alarm costs the reader plainer wording, a miss costs the claim. The
     same trade is why the harness over-reports rather than under-reports.
 
-    **Direction-aware**, when asked for (`CEYNEX_GROUNDING=direction`,
-    EVALUATION.md §13), it also accepts a figure stated without its sign for a
-    negative corpus figure, but only when the figure's own sentence says the
-    value fell (`FELL`). Sentence by sentence, so the one-sentence-at-a-time
-    gate reaches the verdict this does on the whole prose. Strict, the default,
-    is the check exactly as it always was.
+    **Direction-aware**, by default since EVALUATION.md §13, it also accepts a
+    figure stated without its sign for a negative corpus figure, but only when
+    the figure's own sentence says the value fell (`FELL`). Sentence by
+    sentence, so the one-sentence-at-a-time gate reaches the verdict this does
+    on the whole prose. `CEYNEX_GROUNDING=strict` is the check exactly as it
+    was before.
     """
     aware = grounding_direction_aware() if direction_aware is None else direction_aware
     grounded: set[str] = set()

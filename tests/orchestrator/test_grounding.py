@@ -237,12 +237,13 @@ def test_a_negative_figure_is_never_grounded_by_a_positive_one():
                               direction_aware=True) == ["-1,234,567"]
 
 
-def test_strict_is_the_default_and_the_switch_turns_the_rule_on(monkeypatch):
+def test_direction_is_the_default_and_strict_restores_the_old_check(monkeypatch):
+    """The default flipped when EVALUATION.md §13's rule held (2026-09-12)."""
     answer = "Export value would decrease by USD 161,815,198 a year."
     monkeypatch.delenv("CEYNEX_GROUNDING", raising=False)
-    assert ungrounded_figures(answer, SIGNED) == ["161,815,198"]
-    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
     assert ungrounded_figures(answer, SIGNED) == []
+    monkeypatch.setenv("CEYNEX_GROUNDING", "strict")
+    assert ungrounded_figures(answer, SIGNED) == ["161,815,198"]
 
 
 def test_the_words_that_say_a_value_fell_are_whole_words():
