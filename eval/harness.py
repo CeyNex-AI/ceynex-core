@@ -120,6 +120,13 @@ class Result:
     evidence_count: int
     answer: str
     ungrounded_figures: list[str] = field(default_factory=list)
+    #: The same answer under the direction-aware rule (EVALUATION.md §13).
+    #: `ungrounded_figures` stays strict, so the published series is continuous
+    #: whichever way `CEYNEX_GROUNDING` is set for the run itself.
+    ungrounded_figures_direction_aware: list[str] = field(default_factory=list)
+    #: What only the direction rule accepts, each with its sentence: the list
+    #: §13's rule has a person read, one by one.
+    direction_accepted: list[str] = field(default_factory=list)
     refused: bool = False
     error: str | None = None
     #: Inline citations (`CEYNEX_CITATIONS`). All zero when the flag is off.
@@ -186,13 +193,17 @@ async def run_question(question: dict[str, Any], *, use_llm: bool) -> Result:
         degraded=bool(result.get("degraded", False)),
         evidence_count=len(evidence),
         answer=text,
-        ungrounded_figures=ungrounded(text, evidence),
+        ungrounded_figures=ungrounded(text, evidence, direction_aware=False),
+        ungrounded_figures_direction_aware=ungrounded(text, evidence, direction_aware=True),
+        direction_accepted=direction_accepted(text, evidence),
         refused=is_refusal(text, result),
         **citation_counts(text, len(evidence)),
     )
 
 
-def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
+def ungrounded(
+    answer: str, evidence: list[dict[str, Any]], *, direction_aware: bool = False
+) -> list[str]:
     """Figures in the prose that appear in no evidence entry.
 
     Deliberately crude and deliberately generous: it compares digit strings, so a
@@ -214,7 +225,19 @@ def ungrounded(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
     return grounding.ungrounded_figures(
         answer,
         [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in evidence],
+        direction_aware=direction_aware,
     )
+
+
+def direction_accepted(answer: str, evidence: list[dict[str, Any]]) -> list[str]:
+    """Each figure the direction rule accepts and the strict one does not, as
+    `figure :: sentence` — so the audit reads the words that justified it."""
+    accepted = []
+    for sentence in grounding.split_sentences(answer or ""):
+        strict = ungrounded(sentence, evidence, direction_aware=False)
+        aware = set(ungrounded(sentence, evidence, direction_aware=True))
+        accepted += [f"{figure} :: {sentence.strip()}" for figure in strict if figure not in aware]
+    return accepted
 
 
 def strip_citations(text: str) -> str:
@@ -320,6 +343,13 @@ def report(results: list[Result]) -> dict[str, Any]:
         "evidence": {
             "answers_fully_grounded": _rate([not r.ungrounded_figures for r in answerable]),
             "ungrounded_figures_total": sum(len(r.ungrounded_figures) for r in answerable),
+            "answers_fully_grounded_direction_aware": _rate(
+                [not r.ungrounded_figures_direction_aware for r in answerable]
+            ),
+            "ungrounded_figures_total_direction_aware": sum(
+                len(r.ungrounded_figures_direction_aware) for r in answerable
+            ),
+            "figures_accepted_by_direction_rule": sum(len(r.direction_accepted) for r in answerable),
             "mean_evidence_per_answer": round(
                 statistics.fmean([r.evidence_count for r in answerable]), 2
             )

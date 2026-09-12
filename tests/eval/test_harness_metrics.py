@@ -214,3 +214,24 @@ def test_the_repeat_summary_is_written_beside_the_runs(tmp_path):
     out = write_repeat_summary(tmp_path, [_summary(0.6, 4, 8000.0)], [[]], degraded=False)
     payload = json.loads(out.read_text())
     assert payload["repeat"]["runs"] == 1 and payload["disagreements"] == []
+
+
+def test_both_grounding_definitions_are_reported_on_the_same_answer():
+    """EVALUATION.md §13: the published series stays strict, whichever rule the
+    runtime used, and what only the direction rule accepts is listed with its
+    sentence for the audit."""
+    from eval.harness import direction_accepted
+
+    evidence = [{"claim": "GSP+ loss changes export value by USD -161,815,198.", "detail": ""}]
+    answer = "Export value would decrease by USD 161,815,198 a year. It is a large share."
+    assert ungrounded(answer, evidence) == ["161,815,198"]
+    assert ungrounded(answer, evidence, direction_aware=True) == []
+    assert direction_accepted(answer, evidence) == [
+        "161,815,198 :: Export value would decrease by USD 161,815,198 a year."
+    ]
+
+
+def test_the_strict_metric_ignores_the_runtime_switch(monkeypatch):
+    monkeypatch.setenv("CEYNEX_GROUNDING", "direction")
+    evidence = [{"claim": "USD -161,815,198", "detail": ""}]
+    assert ungrounded("It would decrease by USD 161,815,198 a year.", evidence) == ["161,815,198"]

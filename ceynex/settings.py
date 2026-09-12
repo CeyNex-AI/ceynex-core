@@ -333,3 +333,15 @@ def citations_enabled() -> bool:
     """
     value = (_env("CEYNEX_CITATIONS", "off") or "off").lower()
     return value in ("on", "1", "true", "yes")
+
+
+def grounding_direction_aware() -> bool:
+    """Whether the grounding check (SRS 3.1.3) accepts an unsigned figure for a
+    negative one when its sentence says the value fell (EVALUATION.md §13).
+
+    **Default off**, for `citations_enabled`'s reason: it changes the one guard
+    every answer passes through, so it goes on only if its pre-registered rule
+    holds. `CEYNEX_GROUNDING=direction` turns it on. `strict`, or unset, keeps
+    the check exactly as it has always been.
+    """
+    return (_env("CEYNEX_GROUNDING", "strict") or "strict").lower() == "direction"

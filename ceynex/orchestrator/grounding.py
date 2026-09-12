@@ -41,6 +41,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from ceynex.settings import grounding_direction_aware
+
 # An integer or decimal, optional thousands separators, optional sign.
 NUMBER = re.compile(r"-?\d[\d,]*\.?\d*")
 
@@ -48,6 +50,38 @@ NUMBER = re.compile(r"-?\d[\d,]*\.?\d*")
 # 12 markets, a 10% shock. Requiring evidence for them would flag every answer
 # and the check would stop discriminating.
 STRUCTURAL_DIGIT_LIMIT = 2
+
+#: Terminal punctuation, any closing quotes or brackets, whitespace, then the
+#: start of another sentence. Whitespace is the whole point: no figure contains
+#: any, so a split here can never cut one. Missing a boundary only makes one
+#: release larger; it never makes one ungrounded. Here, not in `answer_stream`,
+#: because the direction rule below reads a figure's own sentence, and the gate
+#: that checks one sentence at a time must cut exactly where this does.
+SENTENCE_END = re.compile(r"(?<=[.!?])[\"')\]]*\s+(?=[\"'(\[]?[A-Z0-9])")
+
+#: Words that say a value went down. With one in its sentence, a figure stated
+#: without its sign may be grounded by the same figure carried negative:
+#: "a decrease of USD 161,815,198" states "USD -161,815,198". Without one it may
+#: not be, which is what keeps a sign flip ungrounded.
+FELL = re.compile(
+    r"\b(decreas\w*|declin\w*|fall\w*|fell|drop\w*|lower\w*|loss\w*|lose|loses|losing|lost"
+    r"|reduc\w*|contract\w*|shrink\w*|shrank|shrunk|down|negative|cut|cuts|weaken\w*"
+    r"|slump\w*|plung\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def split_sentences(text: str) -> list[str]:
+    """`text` cut exactly where `answer_stream.SentenceGate` cuts it, so a check
+    made one sentence at a time and one made on the whole agree."""
+    sentences: list[str] = []
+    start = 0
+    for boundary in SENTENCE_END.finditer(text):
+        sentences.append(text[start:boundary.end()])
+        start = boundary.end()
+    if start < len(text):
+        sentences.append(text[start:])
+    return sentences
 
 
 def _normalise(raw: str) -> str:
@@ -96,7 +130,13 @@ def corpus_texts(
     return texts
 
 
-def ungrounded_figures(answer: str, corpus: Iterable[str]) -> list[str]:
+def _grounded_by(value: str, pool: set[str]) -> bool:
+    return value in pool or any(g.startswith(value.split(".")[0]) for g in pool)
+
+
+def ungrounded_figures(
+    answer: str, corpus: Iterable[str], *, direction_aware: bool | None = None
+) -> list[str]:
     """Figures in `answer` that appear nowhere in `corpus`, in source order.
 
     Deliberately crude and deliberately generous, in that order:
@@ -109,22 +149,42 @@ def ungrounded_figures(answer: str, corpus: Iterable[str]) -> list[str]:
     Generosity is the right direction for a check that rejects an answer: a
     false alarm costs the reader plainer wording, a miss costs the claim. The
     same trade is why the harness over-reports rather than under-reports.
+
+    **Direction-aware**, when asked for (`CEYNEX_GROUNDING=direction`,
+    EVALUATION.md §13), it also accepts a figure stated without its sign for a
+    negative corpus figure, but only when the figure's own sentence says the
+    value fell (`FELL`). Sentence by sentence, so the one-sentence-at-a-time
+    gate reaches the verdict this does on the whole prose. Strict, the default,
+    is the check exactly as it always was.
     """
+    aware = grounding_direction_aware() if direction_aware is None else direction_aware
     grounded: set[str] = set()
     for text in corpus:
         grounded |= numbers_in(text)
+    # The negative figures without their sign, for the direction rule.
+    fallen = {value[1:] for value in grounded if value.startswith("-")}
 
     missing: list[str] = []
-    for raw in NUMBER.findall(answer or ""):
-        value = _normalise(raw)
-        if len(value.lstrip("-").replace(".", "")) <= STRUCTURAL_DIGIT_LIMIT:
-            continue
-        if value in grounded:
-            continue
-        if any(grounded_value.startswith(value.split(".")[0]) for grounded_value in grounded):
-            continue
-        missing.append(raw)
+    for sentence in split_sentences(answer or "") if aware else [answer or ""]:
+        says_it_fell = aware and FELL.search(sentence) is not None
+        for raw in NUMBER.findall(sentence):
+            value = _normalise(raw)
+            if len(value.lstrip("-").replace(".", "")) <= STRUCTURAL_DIGIT_LIMIT:
+                continue
+            if _grounded_by(value, grounded):
+                continue
+            if says_it_fell and not value.startswith("-") and _grounded_by(value, fallen):
+                continue
+            missing.append(raw)
     return missing
 
 
-__all__ = ["NUMBER", "corpus_texts", "numbers_in", "ungrounded_figures"]
+__all__ = [
+    "FELL",
+    "NUMBER",
+    "SENTENCE_END",
+    "corpus_texts",
+    "numbers_in",
+    "split_sentences",
+    "ungrounded_figures",
+]
