@@ -517,6 +517,79 @@ async def test_a_decline_nothing_else_covered_is_still_a_gap():
     assert "district" in result.answer.lower()
 
 
+async def test_a_volume_decline_answered_in_value_by_another_finding_is_not_a_gap():
+    """Regression, found live 2026-09-04: the Tea Board tea export-volume series
+    had zero usable observations on the host, so agriculture_commodity declined
+    ("no sourced export volume series"), but export_analytics still answered the
+    same question correctly in export *value*. The exact-word check in
+    `_covered_by_another_finding` can never see this as covered -- "volume"
+    never appears in a value-only answer -- which is exactly why this shape
+    (unlike the rubber/HHI case above, where both texts share "export" and the
+    named item is long enough to survive `_significant_words`' length filter)
+    needed `_same_item_already_answered`. 18/65 answers were affected.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Sri Lanka's tea exports grew to USD 1.4bn in 2025, up 6.2% from 2024.",
+            figures={"pct_change_export_value": 0.062},
+            evidence=[ev("KG", "Tea export value was USD 1,400,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are only 0 usable annual observations for tea export volume; a trend cannot be stated responsibly.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="How are Sri Lanka's tea exports performing?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "not covered" not in result.answer.lower()
+    assert "USD 1.4bn" in result.answer or "1,400,000,000" in result.answer
+
+
+async def test_a_price_decline_is_still_a_gap_even_when_value_is_answered():
+    """The other half of the volume/value fix: price is not substitutable by a
+    trade-value answer, so a missing cinnamon producer-price series must stay a
+    reported gap even when export_analytics answers the same question in export
+    value. Without the "volume"-only scope on `_same_item_already_answered`,
+    this would have been wrongly swallowed the same way the tea case above is
+    now correctly swallowed.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Cinnamon export value was USD 312m in 2025.",
+            figures={"export_value_usd": 312_000_000.0},
+            evidence=[ev("KG", "Cinnamon export value was USD 312,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are no usable annual observations for cinnamon producer prices in the FAOSTAT dataset.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="What is the producer price trend for Sri Lankan cinnamon?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert any("producer price" in gap.lower() for gap in result.unanswered)
+
+
 async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
     """`merge()` and this helper compute the same list by two paths, and the API
     route uses the helper. They diverged once already -- the bug this function's
@@ -545,6 +618,119 @@ async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
     result = await merge(final, FakeLLMClient(available=False))
 
     assert unanswered_from_outputs(final) == result.unanswered == []
+
+
+# --- a decline no longer leaks into confidence or evidence ------------
+
+
+def _tea_forecast_and_deferral():
+    """The bare "forecast tea export value" shape, traced live 2026-09-09: the
+    forecast agent serves the registry model at ~0.9, and agriculture_commodity
+    is routed too and defers (kind == "deferred_forecast" -> _unsupported_target,
+    a non-error output at confidence 0.20 carrying two `agriculture-agent/data-gap`
+    evidence claims).
+    """
+    return {
+        "forecast": output(
+            "forecast",
+            summary="Tea export value is projected at USD 1.40bn for 2026.",
+            figures={"forecast_next_export_value_usd": 1_401_518_520.92},
+            evidence=[ev("MODEL", "Forecast produced by registered model agriculture/tea/export_value_usd@v1.")],
+            confidence=0.9,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="This forecast is served by the export-value forecast agent; no M1 model target was requested.",
+            figures={},
+            evidence=[
+                ev(
+                    "MODEL",
+                    "This forecast is served by the export-value forecast agent; no M1 model target was requested.",
+                    "agriculture-agent/data-gap",
+                ),
+                ev(
+                    "MODEL",
+                    "No compatible price, volume, or export-value series was available to substitute for the requested target.",
+                    "agriculture-agent/data-gap",
+                ),
+            ],
+            confidence=0.20,
+        ),
+    }
+
+
+async def test_a_decline_does_not_dilute_the_confidence_of_a_real_finding():
+    """`_split_succeeded` kept the deferral out of the prose and
+    `detect_conflicts`, but `aggregate_confidence` was still handed the
+    unfiltered outputs and averaged its 0.20 in -- pulling a forecast the model
+    itself scored ~0.9 down to ~0.6 ("Moderate"). The decline now leaves the
+    score untouched whenever a real finding answered the question.
+    """
+    outputs = _tea_forecast_and_deferral()
+    forecast_only = {"forecast": outputs["forecast"]}
+
+    alone = await merge(
+        state(query="Forecast tea export value for 2026", outputs=forecast_only, route=["forecast"]),
+        FakeLLMClient(available=False),
+    )
+    both = await merge(
+        state(
+            query="Forecast tea export value for 2026",
+            outputs=outputs,
+            route=["forecast", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert both.confidence == pytest.approx(alone.confidence)
+    assert both.band == "High"
+
+
+async def test_a_decline_evidence_is_dropped_when_a_real_finding_answered():
+    """The same deferral also put two `agriculture-agent/data-gap` claims into
+    the public evidence panel next to the real model evidence, reading as if the
+    forecast had a data gap it did not have.
+    """
+    result = await merge(
+        state(
+            query="Forecast tea export value for 2026",
+            outputs=_tea_forecast_and_deferral(),
+            route=["forecast", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert "agriculture-agent/data-gap" not in [e.get("detail") for e in result.evidence]
+    assert any("registered model" in e["claim"] for e in result.evidence)
+
+
+async def test_a_lone_decline_still_scores_low_and_keeps_its_reason():
+    """The other half of the rule: when the decline is all there is, it *is* the
+    answer -- its reason must still reach the evidence panel and the score must
+    still be low. Only a decline standing next to a real finding is filtered.
+    """
+    outputs = {
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="No registered national tea export volume model is available.",
+            figures={},
+            evidence=[
+                ev("MODEL", "No registered national tea export volume model is available.", "registry/tea/export_volume"),
+            ],
+            confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Forecast tea export volume for 2026",
+            outputs=outputs,
+            route=["agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.confidence < 0.5
+    assert any(e.get("detail") == "registry/tea/export_volume" for e in result.evidence)
 
 
 # --- a scope difference is not a disagreement ---------------------------

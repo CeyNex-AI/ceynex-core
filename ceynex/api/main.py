@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ceynex.api.api_keys import ensure_table as ensure_api_keys_table
+from ceynex.api.audit import ensure_table as ensure_audit_table
 from ceynex.api.deps import Runtime, set_runtime
 from ceynex.api.history import ensure_table as ensure_history_table
 from ceynex.api.preferences import ensure_table as ensure_preferences_table
@@ -38,8 +39,11 @@ from ceynex.api.routes import (
     news,
     query,
     scenario,
+    site,
     usage,
 )
+from ceynex.api.site_settings import ensure_table as ensure_site_settings_table
+from ceynex.api.users import ensure_table as ensure_users_table
 from ceynex.chat.instructions import ensure_table as ensure_instruction_table
 from ceynex.chat.store import ensure_table as ensure_chat_tables
 from ceynex.news import refresh as news_refresh
@@ -69,9 +73,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     runtime = Runtime.build()
     set_runtime(runtime)
+    ensure_users_table()
     ensure_history_table()
     ensure_preferences_table()
     ensure_api_keys_table()
+    ensure_audit_table()
+    ensure_site_settings_table()
     news_snapshot.ensure_table()
     ensure_usage_table()
     ensure_chat_tables()
@@ -133,3 +140,4 @@ app.include_router(graph.router)
 app.include_router(usage.router)
 app.include_router(scenario.router)
 app.include_router(data.router)
+app.include_router(site.router)

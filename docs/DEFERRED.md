@@ -51,17 +51,51 @@ true. Retrain only works on an already-registered `sector/item/target` (404
 otherwise) — it refits the same model class on fresh data, it does not train
 something new from a bare request.
 
-**Login exists now; `POST /api/query` itself still does not require a token.**
-`require_user` (`ceynex/api/routes/auth.py`) is ready for any route that needs
-one, but wiring it onto `/api/query` was a deliberate choice left for later:
-the frontend's four demo roles don't currently gate *what* a query can see,
-only which UI pages render, so requiring a token there today would add a login
-wall without changing any behaviour behind it. `POST /api/query` instead takes
-an *optional* token (`get_optional_user`) — signed in or not, a query still
-answers; being signed in only additionally attributes it to that user for
-history. Revisit the hard requirement once a route actually needs to tell
-users apart to change *what* it returns (the admin routes above are the first
-candidate).
+**Real user accounts and RBAC are built; the four fixed demo accounts are
+gone.** `ceynex/api/users.py` is a real `users` table (bcrypt password hashes,
+a `role` column over the same four roles, a `disabled_at` flag), additive to
+the frozen contracts schema the same way `query_history` is. `POST
+/api/auth/signup` self-registers an account — at whichever of
+`users.SIGNUP_ROLES` (`researcher` / `exporter` / `policymaker`) the request
+names, `researcher` by default, **never `admin`** (403) — and logs it straight
+in; `POST /api/auth/login` checks the stored hash. A signed-in user manages their own account under `/api/account`:
+change password (`POST /api/account/password`), change email (`POST
+/api/account/email` — moves their history / keys / preferences to the new
+address), or delete it outright (`DELETE /api/account` — removes those rows
+too, refused for the last enabled admin). All three re-check the current
+password. Admin-only routes on the
+admin router provision an account at any role (`POST /api/admin/users`), list
+every account (`GET /api/admin/users`), move one between roles (`POST
+/api/admin/users/{id}/role`), disable or re-enable one (`POST
+/api/admin/users/{id}/{disable,enable}`), and reset a locked-out user's
+password (`POST /api/admin/users/{id}/password`, no current-password check) —
+each audited first, with a last-enabled-admin guard so a deployment can't lock
+itself out.
+A fresh deployment starts with zero users: seed the first admin with
+`CEYNEX_BOOTSTRAP_ADMIN=email:password` (read once by `ensure_table()` at
+startup) or `python -m ceynex.api.users create-admin <email> <password>`.
+
+A password change, role change or disable **cuts existing sessions
+immediately**, not at the 8 h token TTL: `users` has a `token_epoch` column
+bumped by those three operations, the login JWT carries the epoch it was
+issued against, and `auth.verify_token` makes one indexed lookup
+(`current_token_epoch`) per authed request and 401s a token whose epoch has
+moved on (or whose account is gone/disabled). The self-service password route
+returns a fresh token so the caller's own device is not logged out. The
+lookup fails open on a Postgres outage (token accepted on signature alone).
+API keys were already live — `auth.role_for_email` re-derives their role every
+request.
+
+**`POST /api/query` itself still does not require a token.** `require_user`
+(`ceynex/api/routes/auth.py`) gates every route that needs a signed-in user,
+but wiring it onto `/api/query` was a deliberate choice left for later: the
+four roles gate which UI pages render and the admin routes, not *what* a query
+can see, so requiring a token there today would add a login wall without
+changing any behaviour behind it. `POST /api/query` instead takes an *optional*
+token (`get_optional_user`) — signed in or not, a query still answers; being
+signed in only additionally attributes it to that user for history. Revisit
+the hard requirement once a route needs to tell users apart to change *what*
+it returns.
 
 **Query history (SRS 3.5.2, first half) is built**: `ceynex/api/history.py`
 records every authenticated query into a `query_history` table (additive to
@@ -155,11 +189,24 @@ Single-sector p95 came out at 14.6 s against a 10 s budget (SRS 3.4.1), where
 the keyless run had posted 2.7 s. That headroom was never real — it was the
 degraded path being reported as the system. See EVALUATION.md §1.
 
-**Throughput at 50 concurrent users (SRS 3.4.2) is still untested**, and is now
-the more important of the two: the single-user numbers no longer have headroom
-to spare.
+**Measured 2026-09-12** (`eval/load_test.py`, `docs/EVALUATION.md` §11): the
+system stays fully available at 50 concurrent users (50/50 succeeded, 0
+failures) and the wall-clock-vs-summed-latency gap confirms genuine concurrent
+handling, not one call blocking every other. Two things it surfaced instead:
+single-sector p95 breaches its 10 s SRS 3.4.1 budget under 50 concurrent
+callers (that budget was only ever a single-user number), and 44 of 50 answers
+degraded (SRS 3.4.3's contract, not a failure) because the two LLM providers
+behind the system could not serve 50 concurrent calls — the failsafe's own
+free-tier limit (20/minute) is well below 50, and the primary's exact failure
+mode under that load was not cleanly isolated from either run's log. **Both
+findings were re-checked same day against `--workers 2` + a real Redis** (the
+deployed topology, run against a standalone `redis:7` container rather than
+the deployed VM itself) and held: 43/50 degraded, single-sector p95 still over
+budget. Neither is a single-process artifact. Only the deployed VM itself
+remains unmeasured — see §8 for what's still open before this is quoted as the
+production number.
 
-One thing that *does* now exist between a load test and a real outage: the SRS
+One thing that *does* exist between a load test and a real outage: the SRS
 3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
 50-concurrent-user figure is about 50 distinct users, not one script.
 
@@ -176,47 +223,70 @@ prose the LLM never wrote would have measured the deterministic composer, which
 is not what SRS 3.1.2 is about. Everything else outstanding is a command; this
 one needs three people's calendars, so book it before writing anything else.
 
-## Audit logging (SRS 3.4.7) — not built
+## Audit logging (SRS 3.4.7) — administrative half now built
 
-**Found 2026-08-28 while implementing the rate limiter, and not previously
-recorded anywhere — which is the failure this file exists to prevent.**
+**Found 2026-08-28 while implementing the rate limiter, not previously
+recorded anywhere. The administrative half was built 2026-09-04.**
 
 SRS 3.4.7 requires "an audit log of all user queries and all administrative
 actions, such as changes to user accounts or manual interventions in the data
-pipeline". Half of that exists by accident rather than by design:
+pipeline". Two different mechanisms cover the two halves:
 
 - **User queries** are recorded, for signed-in callers only, by
   `ceynex/api/history.py`. That table was built for SRS 3.5.2 (the user's own
   history), so it is scoped to the caller and has no retention or tamper
   story. It is a feature that happens to leave a trail, not an audit log.
-- **Administrative actions are not recorded at all.** `POST /api/admin/retrain`,
-  `POST /api/admin/pipeline/ingest` and `POST /api/admin/dq-flags/{id}/resolve`
-  all mutate real state, all require the `admin` role — and none of them write
-  down who did it or when. After the fact there is no way to tell which admin
-  retrained a model or resolved a discrepancy flag.
+- **Administrative actions** are now recorded by `ceynex/api/audit.py`'s
+  `audit_log` table. `POST /api/admin/retrain`, `POST /api/admin/pipeline/ingest`
+  and `POST /api/admin/dq-flags/{id}/resolve` each write an `(actor_email,
+  action, target, logged_at)` row via `routes/admin.py`'s `_audit()` helper
+  **before** performing the mutation, and `GET /api/admin/audit-log` (also
+  behind `require_admin`) lists them back, newest first.
 
-The second half is the one that matters and the one to build: an append-only
-table written by `require_admin`'s callers, recording actor, action, target and
-timestamp. Left undone deliberately rather than half-built under time pressure,
-because an audit log that misses some actions is worse than none — it invites
-the reader to trust a record that is not complete.
+  This is deliberately not opportunistic the way `history.record()` is: a
+  lost history row costs nothing, but an admin mutation with no audit row is
+  exactly the failure this section used to warn about — "an audit log that
+  misses some actions is worse than none, it invites the reader to trust a
+  record that is not complete." So `audit.record()` lets `psycopg.Error`
+  propagate, and `_audit()` turns that into a 503 *before* the mutation runs —
+  a Postgres outage blocks the admin action rather than letting it through
+  unlogged. `tests/api/test_admin.py`'s
+  `test_an_unwritable_audit_log_blocks_retrain_rather_than_running_it_unlogged`
+  holds that line directly, spying on `_do_retrain` to prove it is never
+  called when the audit write fails.
+
+  Not covered by this table, deliberately out of scope for SRS 3.4.7's
+  "administrative actions" wording: login/logout, and the read-only admin
+  routes (`GET /models`, `/pipeline/status`, `/dq-flags`, `/llm/status`) —
+  none of them mutate state. No retention policy or export tooling exists yet
+  either; the table is append-only Postgres, nothing more.
 
 ## Rate limiting (SRS 3.4.6) — built, with one stated exposure
 
-`ceynex/api/rate_limit.py`, wired onto `POST /api/query` only. Redis-backed
-when `REDIS_URL` is set (the deployed image runs two uvicorn workers, so a
-per-process counter would permit double the configured limit), per-process
-otherwise.
+`ceynex/api/rate_limit.py`, wired onto `POST /api/query`, the news sidecar,
+`GET /api/graph/expand`, and — since RBAC — `POST /api/auth/login` and
+`/api/auth/signup`. Redis-backed when `REDIS_URL` is set (the deployed image
+runs two uvicorn workers, so a per-process counter would permit double the
+configured limit), per-process otherwise. Each surface has its own config
+block in `config/api.yaml` and its own identity-key prefix so one endpoint's
+traffic can't spend another's allowance.
+
+**Auth limiter shape** (`routes/auth.py`, `auth_rate_limit` config): every
+login/signup attempt is counted against **both** the client address
+(`auth:ip:<host>`) and the email in the body (`auth:email:<addr>`), so neither
+"one IP, many emails" nor "one email, many IPs" gets a free pass. 10/minute —
+generous for a person, tight for a script on top of bcrypt's own per-attempt
+cost.
 
 **It fails open.** If Redis is unreachable the request is allowed and a warning
 is logged, so a Redis outage means abuse is unthrottled until it is restored.
 That is the deliberate direction — the alternative is a rate-limit store outage
-taking down query submission entirely, which causes the unavailability the
-limiter exists to prevent — but it is an exposure and is recorded here rather
-than left to be discovered.
+taking down query submission (or login) entirely, which causes the
+unavailability the limiter exists to prevent — but it is an exposure and is
+recorded here rather than left to be discovered.
 
-Also unlimited by design, each needing its own justification before being
-throttled: login, a user reading their own history, and the admin routes.
+Still unlimited by design: a user reading their own history, and the admin
+routes (a valid admin token is already the gate there).
 
 ## Operational
 

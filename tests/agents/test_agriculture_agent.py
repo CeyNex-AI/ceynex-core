@@ -174,6 +174,35 @@ def test_cinnamon_forecast_uses_only_registered_price_model_with_80_percent_inte
     assert all("producer_price" in evidence["detail"] for evidence in out["evidence"])
 
 
+def test_undercovered_cinnamon_interval_reduces_confidence_and_is_explained_in_evidence():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        AnnualNaiveModel(
+            sector="agriculture", item="cinnamon", target="producer_price", unit="USD/kg"
+        ).fit(frame),
+        training_rows=len(frame),
+        training_window={"period_start": 2017, "period_end": 2025},
+        source="FAOSTAT annual Sri Lanka cinnamon producer price",
+        metrics={"mape": 0.12, "rmse": 1.0, "coverage": 1 / 3, "folds": 3.0},
+        git_sha="a" * 40,
+    )
+
+    out = run("Will cinnamon prices rise or fall over the next two quarters?")
+
+    metadata = registry.list_models(sector="agriculture", item="cinnamon")[0]
+    assert agriculture._interval_coverage_penalty(metadata.metrics) == pytest.approx(0.14)
+    assert out["confidence"] == pytest.approx(agriculture._model_confidence(metadata))
+    assert any("coverage was 33%" in assumption for assumption in out["assumptions"])
+    assert any("below nominal 80%" in evidence["claim"] for evidence in out["evidence"])
+
+
+def test_missing_interval_coverage_is_penalised_instead_of_assumed_calibrated():
+    assert agriculture._interval_coverage_penalty({"coverage": 0.8}) == 0.0
+    assert agriculture._interval_coverage_penalty({"coverage": 0.33}) == pytest.approx(0.141)
+    assert agriculture._interval_coverage_penalty({}) == pytest.approx(0.10)
+    assert agriculture._interval_coverage_penalty({"coverage": 1.2}) == pytest.approx(0.10)
+
+
 def test_cinnamon_district_question_refuses_to_invent_a_largest_share():
     out = run("Which district contributes the largest share of cinnamon exports?")
 

@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from ceynex.api import api_keys as api_keys_module
 from ceynex.api import preferences as preferences_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 
 
@@ -25,7 +25,7 @@ def client():
 
 
 def token_for(email="researcher@ceynex.dev", role="researcher"):
-    return issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    return issue_token(email, role)
 
 
 def auth_header(token=None):

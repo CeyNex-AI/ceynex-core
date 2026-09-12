@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ceynex.agents.common import ITEM_KEYWORDS
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.observability import trace
 from ceynex.orchestrator.answer_stream import SentenceGate
@@ -37,7 +38,7 @@ from ceynex.orchestrator.confidence import (
     aggregate_confidence_breakdown,
     confidence_band,
 )
-from ceynex.orchestrator.grounding import ungrounded_figures
+from ceynex.orchestrator.grounding import corpus_texts, ungrounded_figures
 from ceynex.settings import citations_enabled
 
 log = logging.getLogger(__name__)
@@ -239,20 +240,41 @@ async def merge(  # noqa: ANN001
         + _out_of_scope_gaps(state)
     )
     conflicts = detect_conflicts(contributing)
-    evidence = dedupe_evidence(succeeded)
+
+    # A decline (an honest SAD Section 4.1 refusal -- no error key, confidence
+    # <= DECLINE_CONFIDENCE_CEILING) is not a competing finding. _split_succeeded
+    # already keeps it out of the merge prose and detect_conflicts; it must also
+    # stay out of the merged evidence and the confidence aggregate whenever a
+    # real finding answered the question. Otherwise agriculture_commodity's
+    # bare-forecast deferral ("no M1 model target was requested", confidence
+    # 0.20, two agriculture-agent/data-gap evidence claims) both pollutes the
+    # evidence panel of an otherwise clean registry-model forecast and drags its
+    # aggregate confidence down from the forecast agent's own ~0.9 to ~0.6. When
+    # nothing contributed, the decline *is* the answer -- keep it, so the
+    # response still scores low and shows why. Declines are dropped from the
+    # confidence route too: a routed agent that chose not to answer is neither a
+    # contributor nor a coverage failure, so coverage_penalty must not fire for
+    # it.
+    scored_outputs, scored_route, evidence_outputs = outputs, route, succeeded
+    if contributing and declined:
+        scored_outputs = {n: o for n, o in outputs.items() if n not in declined}
+        scored_route = [n for n in route if n not in declined]
+        evidence_outputs = contributing
+
+    evidence = dedupe_evidence(evidence_outputs)
     forecast = _first_forecast(succeeded)
 
-    # aggregate_confidence(outputs=...) reads the *unfiltered* agent outputs,
-    # so it would otherwise score this on export_analytics's real (and often
-    # high) confidence in its own irrelevant-to-this-question answer -- a 90%
-    # -confidence "who is Euler" reply is worse than a wrong number, since it
-    # tells the reader to trust it.
+    # The aggregate reads the agent outputs unfiltered apart from the declines
+    # removed above, so it would otherwise score this on export_analytics's real
+    # (and often high) confidence in its own irrelevant-to-this-question answer
+    # -- a 90%-confidence "who is Euler" reply is worse than a wrong number,
+    # since it tells the reader to trust it.
     breakdown = (
         None
         if no_topic
         else aggregate_confidence_breakdown(
-            outputs,
-            route=route,
+            scored_outputs,
+            route=scored_route,
             relevance=relevance,
             months_since_latest_observation=_staleness_months(state),
             dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
@@ -377,25 +399,20 @@ def _grounding_corpus(
 ) -> list[str]:
     """Everything the merge LLM was shown, as text to draw figures from.
 
-    Mirrors `_merge_prompt` plus the evidence. The figures are rendered in
-    several forms on purpose: the prompt shows `f"{value:,.4g}"`, so a large
-    number reaches the model as `1.235e+09` and can honestly come back as
-    "1.235 billion", while the same value's plain `str()` is what a summary
-    sentence would contain. Only offering one spelling would reject correct
-    prose for restating a figure in the form it was given.
-    """
+    Mirrors `_merge_prompt` plus the evidence. Rendering itself lives in
+    `orchestrator.grounding.corpus_texts` — shared with `agents.common.finish`'s
+    equivalent per-agent check, so the two scopes can't drift on what counts
+    as "the same figure, restated"."""
     texts: list[str] = [query]
     for output in outputs.values():
-        texts.append(output.get("summary") or "")
-        for value in (output.get("figures") or {}).values():
-            texts.append(str(value))
-            if isinstance(value, int | float):
-                texts.append(f"{value:,.4g}")
-                texts.append(f"{value:,.2f}")
-        texts.extend(output.get("assumptions") or [])
-    for item in evidence:
-        texts.append(str(item.get("claim", "")))
-        texts.append(str(item.get("detail", "")))
+        texts.extend(
+            corpus_texts(
+                summary=output.get("summary"),
+                figures=output.get("figures"),
+                assumptions=output.get("assumptions"),
+            )
+        )
+    texts.extend(corpus_texts(evidence=evidence))
     return texts
 
 
@@ -621,20 +638,85 @@ def _covered_by_another_finding(
     subject -- so it matches on the subject alone, and requires all of it. A
     partial match is how "no district share is recorded for cinnamon" would get
     swallowed by a cinnamon market-share answer that never mentions districts.
+
+    Falls back to `_same_item_already_answered` when this fails, which covers
+    the shape the exact-word check structurally cannot: a decline refusing one
+    *metric* (agriculture_commodity has only a tea export-**volume** series) is
+    not itself a gap once a contributing finding reports the same **item** by a
+    different metric (export_analytics/forecast answering in export **value**).
+    "volume" then never appears in the covering finding's text at all, so no
+    literal subject word could ever satisfy the check above -- found live
+    2026-09-04, 18/65 answers, when the Tea Board volume and FAOSTAT price
+    series both had zero usable observations on the host and every other
+    tea/cinnamon question that a value- or model-based agent answered correctly
+    still carried this decline into `unanswered[]`.
     """
     subject = _significant_words(query) & _significant_words(decline)
-    if not subject:
+    if subject and any(
+        all(word in _covered_text(output) for word in subject) for output in contributing.values()
+    ):
+        return True
+    return _same_item_already_answered(query, decline, contributing)
+
+
+def _same_item_already_answered(
+    query: str, decline: str, contributing: dict[AgentName, AgentOutput]
+) -> bool:
+    """Narrower than the check above: item identity only, not full subject overlap.
+
+    Deliberately scoped to the one metric this is known to be safe for:
+    **export volume**. Export volume, export value, and export growth are
+    different measures of the same underlying "how is this item's trade
+    doing" question, so a volume series being empty does not mean that
+    question went unanswered once another finding reports it in value or
+    growth terms instead. Producer **price** and **production** are not
+    interchangeable with a trade-value answer the same way -- a missing price
+    or production series stays a real, reportable gap even when a value/volume
+    finding exists for the same item (e.g. a cinnamon producer-price question
+    genuinely has no answer when only export-value data exists), so those
+    decline shapes fall through to the exact-word check above unchanged.
+
+    A decline of this shape names exactly one commodity (`ITEM_KEYWORDS`'s
+    canonical items or one of their synonyms -- "tea", "ceylon tea", ...). If
+    the query names that same commodity and a contributing finding also names
+    it while reporting at least one real figure, the specific series this
+    decline refuses is not something the reader still needs to hear about --
+    the question about that commodity was answered, just not by this agent's
+    metric. Requires the decline to name exactly one item (`_named_item`
+    returns `None` on zero or several) so this never fires on a decline whose
+    subject is ambiguous.
+    """
+    if "volume" not in decline.lower():
         return False
-    for output in contributing.values():
-        covered = " ".join(
-            [
-                output.get("summary") or "",
-                *(str(item.get("claim", "")) for item in output.get("evidence") or []),
-            ]
-        ).lower()
-        if all(word in covered for word in subject):
-            return True
-    return False
+    item = _named_item(decline)
+    if item is None or item not in _named_items(query):
+        return False
+    return any(
+        output.get("figures") and item in _named_items(_covered_text(output))
+        for output in contributing.values()
+    )
+
+
+def _covered_text(output: AgentOutput) -> str:
+    return " ".join(
+        [
+            output.get("summary") or "",
+            *(str(item.get("claim", "")) for item in output.get("evidence") or []),
+        ]
+    ).lower()
+
+
+def _named_items(text: str) -> set[str]:
+    """Canonical `ITEM_KEYWORDS` items named in `text` via any of their
+    synonyms (so "ceylon tea" and "black tea" both resolve to "tea")."""
+    lowered = text.lower()
+    return {item for item, synonyms in ITEM_KEYWORDS.items() if any(s in lowered for s in synonyms)}
+
+
+def _named_item(text: str) -> str | None:
+    """The single item `text` names, or `None` if it names none or several."""
+    items = _named_items(text)
+    return next(iter(items)) if len(items) == 1 else None
 
 
 def _significant_words(text: str) -> set[str]:

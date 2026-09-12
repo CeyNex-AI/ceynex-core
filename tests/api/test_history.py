@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
 from ceynex.api import history as history_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 
 
@@ -75,7 +75,7 @@ def recorded(monkeypatch):
 
 
 def token_for(email="researcher@ceynex.dev", role="researcher"):
-    return issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    return issue_token(email, role)
 
 
 # --- recording via POST /api/query -----------------------------------------

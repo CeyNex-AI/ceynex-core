@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 from ceynex.api.routes import chat as chat_routes
 from ceynex.chat import store as real_store
@@ -123,7 +123,7 @@ def pending(monkeypatch):
 
 
 def auth():
-    return {"Authorization": f"Bearer {issue_token(DemoUser(email=OWNER, role='policymaker', password_hash=''))}"}
+    return {"Authorization": f"Bearer {issue_token(OWNER, 'policymaker')}"}
 
 
 def test_an_ambiguous_question_is_asked_about_rather_than_guessed(pending):
@@ -230,7 +230,7 @@ def test_answering_someone_elses_pending_question_is_a_404(pending):
     ).text
     pid = next(p for k, p in parse_frames(first) if k == "clarify")["pending_id"]
 
-    other = {"Authorization": f"Bearer {issue_token(DemoUser(email='someone@else.dev', role='policymaker', password_hash=''))}"}
+    other = {"Authorization": f"Bearer {issue_token('someone@else.dev', 'policymaker')}"}
     assert client.post(
         f"/api/chat/clarify/{pid}/answer", json={"answers": ["tea"]}, headers=other
     ).status_code == 404

@@ -55,3 +55,10 @@ Proposed decision for M1/M2/M3: add a nullable `production_volume NUMERIC` and
 `production_unit TEXT`, or add a separate `fact_production` table.  This is a
 schema-contract change and must be approved by all three members before any
 migration is written.
+
+## Final evaluation materials
+
+- [Agriculture demo runbook](AGRICULTURE_DEMO_RUNBOOK.md) — verified 90-second
+  direct-agent demonstration and presenter safeguards.
+- [Exporter feedback sheet](AGRICULTURE_EXPORTER_FEEDBACK.md) — consent-safe
+  discussion guide; it contains no claimed or fabricated user feedback.

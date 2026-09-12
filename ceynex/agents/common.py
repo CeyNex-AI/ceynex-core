@@ -14,6 +14,7 @@ touched.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,6 +29,9 @@ from ceynex.contracts import (
     LLMReasoningClientProtocol,
 )
 from ceynex.orchestrator.confidence import aggregate_confidence, clamp
+from ceynex.orchestrator.grounding import corpus_texts, ungrounded_figures
+
+log = logging.getLogger(__name__)
 
 # --- what the agents are given -------------------------------------------
 
@@ -357,6 +361,19 @@ async def finish(
     from a naive baseline because both produce figures and evidence. It must
     still come from `orchestrator/confidence.py`'s primitives; that module's
     docstring is the one place the formula is allowed to live.
+
+    The explanation LLM is told (`EXPLANATION_SYSTEM`) never to state a number
+    it wasn't given, but that's a prompt instruction, not a guarantee -- unlike
+    the merge LLM's prose, nothing downstream re-checked this agent's own
+    explanation against its own figures/evidence before this. That mattered
+    more than it looks: this `summary` is what `merger.compose_deterministic`
+    uses verbatim whenever the merge LLM is down *or its own prose gets
+    rejected as ungrounded* -- the exact fallback SRS 3.4.3 and the
+    evaluation report both describe as safe "because a deterministic composer
+    cannot invent a figure", when it can, one layer up, if this check didn't
+    exist. It also fed `merger._grounding_corpus` unfiltered, so a number this
+    step invented would launder into the corpus the merge-level check trusts,
+    and the merge LLM could repeat it without ever triggering rejection.
     """
     prose = ""
     if summary:
@@ -369,6 +386,18 @@ async def finish(
                 "evidence": [e["claim"] for e in evidence],
             }
         )
+        if prose:
+            corpus = [
+                state["query"],
+                *corpus_texts(summary=summary, figures=figures, evidence=evidence, assumptions=assumptions),
+            ]
+            if ungrounded_figures(prose, corpus):
+                log.warning(
+                    "%s: explanation prose discarded, states a figure not in its own "
+                    "findings; falling back to the deterministic summary",
+                    agent,
+                )
+                prose = ""
 
     degraded = not prose
     weight = relevance if relevance is not None else state.get("relevance", {}).get(agent, 1.0)

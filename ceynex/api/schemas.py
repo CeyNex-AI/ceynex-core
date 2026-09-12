@@ -197,6 +197,16 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class SignupRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    # 8 is `users.MIN_PASSWORD_LENGTH`; the domain layer re-checks so the CLI
+    # and tests can't slip a weak one past.
+    password: str = Field(min_length=8, max_length=200)
+    # Optional; omitted -> `users.DEFAULT_ROLE`. Must be one of
+    # `users.SIGNUP_ROLES` (everything except `admin`) — the route enforces it.
+    role: str | None = Field(default=None, max_length=40)
+
+
 class LoginResponse(BaseModel):
     token: str
     email: str
@@ -312,6 +322,55 @@ class ResolveDQFlagResponse(BaseModel):
     resolved: bool
 
 
+class AuditLogItem(BaseModel):
+    id: int
+    actor_email: str
+    action: str
+    target: str | None
+    logged_at: str
+
+
+class AuditLogResponse(BaseModel):
+    entries: list[AuditLogItem]
+
+
+# --- admin: user accounts + roles (SRS 3.5.4, RBAC) -----------------------
+
+
+class UserAdminItem(BaseModel):
+    id: int
+    email: str
+    role: str
+    created_at: str
+    disabled: bool
+
+
+class UsersResponse(BaseModel):
+    users: list[UserAdminItem]
+
+
+class CreateUserRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=8, max_length=200)
+    role: str = Field(min_length=1, max_length=40)
+
+
+class SetRoleRequest(BaseModel):
+    role: str = Field(min_length=1, max_length=40)
+
+
+class SetUserPasswordRequest(BaseModel):
+    # Admin reset — no current-password proof, unlike ChangePasswordRequest.
+    password: str = Field(min_length=8, max_length=200)
+
+
+class UserMutationResponse(BaseModel):
+    id: int
+    email: str
+    role: str
+    disabled: bool
+
+
 class ProviderStatusItem(BaseModel):
     configured: bool
     status: str  # "not_configured" | "cap_reached" | "unknown" | "ok" | "down"
@@ -325,6 +384,33 @@ class LLMStatusResponse(BaseModel):
 
 
 # --- account: notification preferences + API keys ---------------------------
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+class PasswordChangedResponse(BaseModel):
+    email: str
+    changed: bool = True
+    # A fresh token issued against the new epoch — the change invalidates every
+    # other session for this account, and would invalidate the caller's too
+    # without this. The client swaps it in and stays signed in.
+    token: str
+
+
+class ChangeEmailRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_email: str = Field(min_length=3, max_length=200)
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+
+
+class AccountDeletedResponse(BaseModel):
+    deleted: bool = True
 
 
 class NotificationPreferences(BaseModel):
@@ -361,6 +447,14 @@ class CreateApiKeyResponse(BaseModel):
 class RevokeApiKeyResponse(BaseModel):
     id: int
     revoked: bool
+
+
+class SiteThemeResponse(BaseModel):
+    theme: str
+
+
+class SetSiteThemeRequest(BaseModel):
+    theme: str
 
 
 # --- the conversational layer (deviation D13) --------------------------------

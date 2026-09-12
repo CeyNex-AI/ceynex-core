@@ -28,9 +28,17 @@ data/parquet/
 /models/
 !ceynex/data/reference/
 !tests/**/fixtures/
+# `*.txt` above still matches text fixtures inside the re-included dir — a
+# directory negation does not re-include a file the blanket rule names. GDELT
+# replies to a bad query with a plain-text body, so that fixture is a .txt.
+!tests/**/fixtures/*.txt
 
 # LLM prompt-hash cache
 .cache/
+
+# Local end-to-end evaluation records. The harness is tracked; each run's
+# data-dependent output is kept local and summarised in docs/EVALUATION.md.
+eval/results/
 
 # Frontend (M3)
 web/node_modules/

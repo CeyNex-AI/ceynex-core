@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from ceynex.api import deps as deps_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.chat import store as real_store
 from tests.api.test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM
 
@@ -171,7 +171,7 @@ class TracingGraph(FakeGraph):
 
 
 def auth(email=OWNER, role="policymaker"):
-    token = issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    token = issue_token(email, role)
     return {"authorization": f"Bearer {token}"}
 
 

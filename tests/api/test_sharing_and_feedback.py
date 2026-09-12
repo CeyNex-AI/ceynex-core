@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 from ceynex.api.routes import conversations as conv_routes
 
@@ -20,7 +20,7 @@ OTHER = "researcher@ceynex.dev"
 
 def auth(email: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {issue_token(DemoUser(email=email, role='policymaker', password_hash=b''))}"
+        "Authorization": f"Bearer {issue_token(email, 'policymaker')}"
     }
 
 

@@ -372,6 +372,39 @@ GBM is retained only when it improves MAPE by at least 5% relative to the best
 simple candidate. It does not meet that threshold, so the annual naïve baseline
 is selected for both targets.
 
+### Fold-level forecast-error analysis
+
+`python -m eval.agriculture_forecast_errors` writes the three held-out
+predictions behind each selected annual-naïve model to a local, git-ignored JSON
+record. The following values were reproduced from the dated M1 snapshots on
+2026-09-07. Each fold trains only through the stated prior year and predicts the
+next year; it is not a random split.
+
+| Target | Test year | Actual | Forecast | Absolute percentage error | Inside 80% interval? |
+|---|---:|---:|---:|---:|---|
+| Tea export volume (kg) | 2023 | 241,912,000 | 250,191,000 | 3.42% | yes |
+| Tea export volume (kg) | 2024 | 245,787,000 | 241,912,000 | 1.58% | yes |
+| Tea export volume (kg) | 2025 | 257,440,000 | 245,787,000 | 4.53% | yes |
+| Cinnamon producer price (USD/kg) | 2022 | 9.9371 | 11.2900 | 13.61% | no |
+| Cinnamon producer price (USD/kg) | 2023 | 8.9257 | 9.9400 | 11.36% | yes |
+| Cinnamon producer price (USD/kg) | 2024 | 10.0533 | 8.9300 | 11.17% | no |
+
+Tea's largest held-out miss was 11,653,000 kg in 2025 (4.53%); all three
+actuals were inside the model's 80% intervals. This is **not** evidence of a
+calibrated 100% coverage rate: with only three folds, it can only indicate that
+the intervals were wide enough for these three outcomes. Cinnamon's 2022 price
+fall and 2024 rebound were both outside the intervals, giving 1/3 coverage
+against the nominal 80%. This undercoverage is a reason to present the interval
+as a limitation, not a guarantee.
+
+Forecast confidence now includes an interval-coverage penalty in addition to
+the existing MAPE, training-observation, and staleness terms. For valid coverage
+`c < 0.80`, the penalty is `min(0.15, 0.30 * (0.80 - c))`; it is zero at or
+above nominal coverage. Thus cinnamon's 1/3 coverage reduces its self-reported
+forecast confidence by **0.14**. A model without a valid coverage metric is
+penalised by 0.10 rather than assumed calibrated. The forecast evidence and
+assumptions state this limitation whenever the penalty applies.
+
 ### Cinnamon benchmark limitation
 
 The Liyanage/Silva/Marasinghe purchasing-price panel is unavailable. Therefore
@@ -380,6 +413,74 @@ is **not a reproduction of the published benchmark**. Any comparison in the
 report must quote the paper's reported MAPE with this target, frequency, and
 source difference stated beside it; it must not imply the same train/test split
 or data were used.
+
+### Agriculture agent end-to-end smoke evaluation
+
+Measured on **2026-09-06** against the local PostgreSQL `fact_trade` records,
+Neo4j graph, and registered M1 models. `python -m eval.agriculture_agent_e2e`
+runs five representative questions directly through the Agriculture & Commodity
+agent and writes its full local JSON record under `eval/results/`. It forces the
+LLM unavailable to make the run repeatable and to exercise SRS 3.4.3; therefore
+these are agent-level deterministic/degraded results, **not** a substitute for
+the orchestrator's 30-question evaluation.
+
+| Check | Required behaviour | Result |
+|---|---|---|
+| Cinnamon trend | Source-backed price trend with figures and two evidence records | Pass: 10.05 USD/kg in 2024, up 382.8% from 1991 |
+| Cinnamon forecast | Registered producer-price forecast with an 80% interval | Pass: 2025 point forecast 10.05 USD/kg; 8.96-11.15 interval; annual-frequency caveat stated |
+| Cinnamon districts | Do not invent a largest district without a sourced share | Pass: lists Matara, Galle, and Ratnapura; explicitly refuses a largest-share claim |
+| Tea export trend | Tea Board export-volume trend with figures and two evidence records | Pass: 257,440,000 kg in 2025, down 20.3% from 2011 |
+| Tea-to-rubber substitution | Do not infer a relationship without evidence | Pass: explicitly reports that the effect cannot be estimated responsibly |
+
+All **5 of 5** checks passed, with a mean of **2.0 evidence records** per
+answer. Each answer was correctly marked `degraded=True`, because no LLM prose
+was requested. The two refusal cases are passes, not missing functionality:
+they show the agent preserves evidence boundaries instead of manufacturing a
+district share or substitution effect.
+
+### Agriculture cross-source validation
+
+`python -m eval.agriculture_validation --write-flags` validates only
+semantically equivalent, connector-normalised annual export-volume totals. It
+aggregates partner-level UN Comtrade rows to a national total, keeps an existing
+Tea Board or DEA/EAC world-total row as-is, and compares tea (`TEA_BOARD` vs
+`UN_COMTRADE`) and cinnamon (`CINNAMON` vs `UN_COMTRADE`) by item and year.
+The run is non-destructive: source facts are only read, and only material
+(5-20%) or severe (>20%) discrepancies are inserted into `dq_flag`. Exact
+existing flags are not inserted twice.
+
+The run measured on **2026-09-07**, after the documented 2015--2024 UN
+Comtrade import, found 121 FAOSTAT, 15 Tea Board, 5 Cinnamon, 2,413 UN
+Comtrade, and 0 EDB agriculture facts. It evaluated 12 overlapping annual
+commodity-source pairs: 11 were minor differences, one was material, and none
+were severe. The material finding was tea export volume for 2020: Tea Board
+reported 265,569,000 kg and the partner-aggregated UN Comtrade total was
+279,710,426.42 kg (5.32\% difference). The run inserted this one material
+finding as a `dq_flag`; source facts were not altered. Repeating the command
+does not insert the same flag again.
+
+FAOSTAT's current `fact_trade` rows are producer prices, so they are not
+compared with export volumes; Pink Sheet is an auction-price series and is
+likewise not an export-volume comparator. The configured EDB connector is
+apparel-only. WITS tariff ingestion remains deliberately deferred and is
+reported as unavailable rather than treated as validated agriculture data.
+
+### Agriculture testing and evaluation record
+
+The agriculture checks are intentionally separated by failure type so a passing
+unit test cannot be mistaken for a validated external figure:
+
+| Evidence | Reproducible command or scope | Outcome on 2026-09-07 |
+|---|---|---|
+| Forecast-error analysis | `python -m eval.agriculture_forecast_errors` | 6 held-out predictions recorded; no source or model artifact changed |
+| Model selection | `tests/models/agriculture/test_evaluation.py` and `tests/models/agriculture/test_baseline.py` | annual-naïve selected for tea and cinnamon; interval contains each point forecast |
+| Backtest rules | `tests/eval/test_backtest.py` | expanding windows, error metrics, and interval coverage checked |
+| Agent behaviour | `tests/eval/test_agriculture_agent_e2e.py` | five planned questions passed in deterministic degraded mode; see the smoke-evaluation table above |
+| Cross-source validation | `tests/eval/test_agriculture_validation.py` and `python -m eval.agriculture_validation --write-flags` | 12 comparable pairs; 11 minor, 1 material, 0 severe; one material flag retained without altering facts |
+
+These checks do not validate WITS or reproduce the unavailable published
+cinnamon purchasing-price benchmark. Those are explicit deferred/limitation
+states, rather than passing results.
 
 ### Registry release procedure
 
@@ -1033,3 +1134,120 @@ decline on those, so **per-answer confidence here is not comparable to
 host scored 0.09 here with the same figures, because two of three agents
 reported no data). That is why the harness scores "answered" as prose plus
 evidence and records confidence without judging it.
+
+## 11. Concurrency — 50 concurrent users (SRS 3.4.2)
+
+Measured **2026-09-12** with `eval/load_test.py`, the first measurement of this
+requirement — `docs/DEFERRED.md` had flagged it untested since the rate limiter
+shipped. Unlike §1's harness, which drives the orchestrator in-process, this
+sends real HTTP requests at a running server, because SRS 3.4.2 is a claim about
+serving capacity: the ASGI event loop, the Postgres/Neo4j connection pools, and
+the rate limiter, none of which an in-process call exercises.
+
+```bash
+make up
+.venv/Scripts/python -m uvicorn ceynex.api.main:app --host 127.0.0.1 --port 8000 &
+python -m eval.load_test --users 50 --timeout 45 --json load_results.json
+
+# to match the deployed --workers 2 + Redis topology instead of one process:
+docker run -d --name ceynex-redis-loadtest -p 6379:6379 redis:7
+REDIS_URL=redis://127.0.0.1:6379/0 .venv/Scripts/python -m uvicorn \
+  ceynex.api.main:app --host 127.0.0.1 --port 8000 --workers 2 &
+python -m eval.load_test --users 50 --timeout 45 --json load_results_2w.json
+```
+
+**First run's setup differed from the deployed image in two ways**: `REDIS_URL`
+unset (rate limiter running `InProcessWindow`), and a single `uvicorn` process,
+not the deployed `--workers 2`. Each virtual user still got its own rate-limit
+identity (a distinct `X-Real-IP` per user — `load_test.py`'s own docstring
+explains why), so the *50-distinct-callers* shape of the test held either way,
+but that first run measured one process's capacity, not the exact
+two-worker-behind-Redis topology running in production. **Re-run same day**
+against a standalone `redis:7` container (`REDIS_URL` pointed at it) and
+`uvicorn --workers 2` — the actual deployed shape — to check whether either
+finding below was a single-process artifact.
+
+### Headline
+
+| | Single process, no Redis | `--workers 2` + Redis (matches deployed) |
+|---|---|---|
+| Concurrent users | 50 | 50 |
+| Succeeded (HTTP 200) | **50 / 50** | **50 / 50** |
+| Failed / timed out | 0 | 0 |
+| Falsely rate-limited (429) | 0 | 0 |
+| Wall clock for all 50 | 13.3 s | 14.6 s |
+| Sum of the 50 individual latencies | 420.7 s | 329.2 s |
+| Degraded answers | 44 / 50 | 43 / 50 |
+
+Both runs land in the same place: full availability, a large wall-clock-vs-
+summed-latency gap either way (confirms genuine concurrent handling regardless
+of worker count — the negative check this section exists to run: PR #31/#32,
+2026-08-26, fixed two blocking-call bugs that each froze the *entire*
+single-threaded event loop for every concurrent caller, not just the one whose
+query triggered them; a regression of either would show a wall clock close to
+the summed figure, in either topology), and an almost identical degraded-answer
+rate. **The two-worker/Redis run does not fix what the single-process run
+found** — this was never a single-process artifact.
+
+| Category | Single process — p95 | 2 workers + Redis — p95 | budget (SRS 3.4.1) |
+|---|---|---|---|
+| single_sector | 13.1 s | 13.1 s | 10 s — **breached in both** |
+| cross_sector | 13.1 s | 14.6 s | 20 s — within budget in both |
+| simulation | 13.3 s | 7.9 s | 20 s — within budget in both |
+
+**Single-sector's own SRS 3.4.1 budget does not survive 50 concurrent callers,
+in either topology.** §1's single-user p95 for this category has headroom
+against 10 s; at 50 concurrent users that headroom is gone in both runs. This
+is the first evidence that the single-sector budget is a single-user number,
+not a serving-capacity one, and the two should not be quoted interchangeably —
+and adding a second worker plus the production rate-limit backend did not
+change that conclusion.
+
+### A second, real finding: LLM-provider capacity is the actual ceiling under load
+
+43-44 of the 50 answers came back **degraded** in both runs (SRS 3.4.3's
+contract: real figures and evidence, no prose) — the server itself never
+failed, but the two LLM providers behind it could not serve 50 concurrent
+callers, and adding a second worker plus Redis changed that by one answer, not
+by forty. The failsafe's own free-tier limit is visible directly in the server
+log, in both runs:
+
+```
+Rate limit exceeded: free-models-per-min. (X-RateLimit-Limit: 20)
+```
+
+20 requests/minute is well below 50 concurrent, so once several callers reached
+the failsafe together it was already exhausted for the rest. What is *not*
+cleanly established from either run is why the **primary** (OpenAI) call
+failed for nearly all of these before falling through to that failsafe at
+all — both server logs, one capturing ~50 coroutines in a single process and
+the other split across two, show plenty of failsafe-side warnings but
+essentially zero from the primary path's own `except` blocks, which is itself
+suspicious given the code guarantees one on every failed attempt
+(`ceynex/llm/client.py`) — and no `daily spend cap ... reached` warning
+appears in either log, which rules out the R5 spend cap as the cause. Getting
+the same near-total silence on the primary path in a topology with half the
+concurrency per process (2 workers, ~25 requests each vs. 50 in one) argues
+against this being a log-interleaving artifact of one process handling all 50
+at once, and toward a real capacity ceiling on the primary call itself
+(nothing in `docs/DEFERRED.md`'s Operational section suggests the deployed key
+has been checked against OpenAI's own rate limit tier) — but neither run's log
+is clean enough to say that with certainty, and re-measuring with
+per-request-tagged logging (or reading `provider_status()` directly through
+the admin LLM-status route mid-run, rather than grepping console output) is
+worth doing before this is treated as settled. Filed here rather than silently
+left out, per this document's own rule about a headline number hiding what
+produced it (§1's "Read the denominators" note).
+
+**Net for SRS 3.4.2**: the system stays available and answers all 50 concurrent
+users with real figures and evidence — nobody gets an error or a hang, and that
+holds under both the local single-process setup and the `--workers 2` + Redis
+topology that matches what's deployed. What degrades under load is answer
+*prose*, gracefully, exactly as SRS 3.4.3 specifies, and single-sector latency,
+which breaches its single-user budget — and neither finding is a topology
+artifact, since both runs land in the same place. Whether the LLM-provider
+ceiling found here is a deployed-key tier limit or something narrower is still
+open; re-running this against the deployed VM itself (with the cost and
+availability implications that implies) is the remaining step before this is
+called measured against production rather than against a production-shaped
+local stack.

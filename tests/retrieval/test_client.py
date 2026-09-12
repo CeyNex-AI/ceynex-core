@@ -7,6 +7,7 @@ reports "no policy evidence" forever without anyone seeing an error.
 """
 
 import asyncio
+import importlib.util
 
 import pytest
 
@@ -26,6 +27,18 @@ from ceynex.retrieval.schema import (
     RetrievalFilter,
 )
 
+# `_build_filter` constructs `qdrant_client.models.Filter` objects and
+# `PolicyRetriever.search` loads the fastembed encoders. Both live in the
+# optional `[policy]` extra (`qdrant-client[fastembed]`) that the backend image
+# installs but a plain dev checkout does not (see ceynex/retrieval/client.py's
+# "Imports are lazy" note). The cases that reach that code skip rather than fail
+# when the extra is absent; the rest of this module runs everywhere.
+_needs_policy_extra = pytest.mark.skipif(
+    importlib.util.find_spec("qdrant_client") is None
+    or importlib.util.find_spec("fastembed") is None,
+    reason="requires the optional [policy] extra (qdrant-client[fastembed])",
+)
+
 
 def keys_of(built) -> list[str]:
     return [condition.key for condition in built.must]
@@ -34,6 +47,7 @@ def keys_of(built) -> list[str]:
 # --- filter construction -------------------------------------------------
 
 
+@_needs_policy_extra
 def test_every_graph_resolved_constraint_becomes_a_filter_condition():
     built = _build_filter(
         RetrievalFilter(
@@ -47,6 +61,7 @@ def test_every_graph_resolved_constraint_becomes_a_filter_condition():
     assert set(keys_of(built)) == {ISO3, HS_PREFIX, MEASURE_TYPE, DOC_ID, "language"}
 
 
+@_needs_policy_extra
 def test_conditions_are_all_must_never_should():
     """`should` would let a chunk match on country alone.
 
@@ -60,6 +75,7 @@ def test_conditions_are_all_must_never_should():
     assert len(built.must) == 3  # iso3, hs_prefix, language
 
 
+@_needs_policy_extra
 def test_an_empty_filter_is_no_filter_rather_than_an_impossible_one():
     """A filter with zero conditions must be None, not `Filter(must=[])`.
 
@@ -69,6 +85,7 @@ def test_an_empty_filter_is_no_filter_rather_than_an_impossible_one():
     assert _build_filter(RetrievalFilter(language="")) is None
 
 
+@_needs_policy_extra
 def test_hs_prefixes_match_any_level_of_the_hierarchy():
     built = _build_filter(RetrievalFilter(hs_prefixes=("610910", "6109", "61")))
     condition = next(c for c in built.must if c.key == HS_PREFIX)
@@ -141,6 +158,7 @@ def test_the_floor_is_the_models_own_relevance_boundary():
 # --- degradation ---------------------------------------------------------
 
 
+@_needs_policy_extra
 def test_a_search_that_overruns_its_budget_raises_rather_than_hanging(monkeypatch):
     """The 2-second ceiling is a requirement, not a nicety.
 

@@ -144,7 +144,12 @@ class PolicyKG(KG):
 
     async def run(self, cypher, params=None):
         if "PolicyDocument" in cypher:
-            return [{"doc_id": doc_id} for doc_id in self._documents], cypher
+            # Model the doc as issued by whichever country was asked about (or
+            # nobody, for a bare topic query) — enough for the descriptive path,
+            # which now checks the allow-listed doc's own `iso3`.
+            iso3 = (params or {}).get("iso3")
+            issuer = [iso3] if iso3 else []
+            return [{"doc_id": doc_id, "iso3": issuer} for doc_id in self._documents], cypher
         return await super().run(cypher, params)
 
 
@@ -429,7 +434,22 @@ class PerCountryPolicyKG(PolicyKG):
     async def run(self, cypher, params=None):
         if "PolicyDocument" in cypher:
             iso3 = (params or {}).get("iso3")
-            return [{"doc_id": d} for d in self._held.get(iso3, ())], cypher
+            return [
+                {"doc_id": d, "iso3": [iso3] if iso3 else []}
+                for d in self._held.get(iso3, ())
+            ], cypher
+        return await KG.run(self, cypher, params)
+
+
+class HsMatchPolicyKG(PolicyKG):
+    """Reproduces the live E09 anchoring: `policy_documents_for` returns a
+    Sri-Lanka-issued document for *any* country's question, because that
+    document covers the item's HS code (the OR branch of the real cypher).
+    """
+
+    async def run(self, cypher, params=None):
+        if "PolicyDocument" in cypher:
+            return [{"doc_id": "LKA-EDB-NES-2018-2022", "iso3": ["LKA"]}], cypher
         return await KG.run(self, cypher, params)
 
 
@@ -517,3 +537,83 @@ def test_an_empty_corpus_for_a_country_is_stated_with_its_cypher():
     assert any(e["source_id"] == "KG" for e in out["evidence"]), (
         "the Cypher that found no document is the evidence for saying so"
     )
+
+
+def test_a_third_countrys_policy_question_does_not_borrow_sri_lankas_agreements():
+    """E09 live: "What does China's trade policy say about Sri Lankan tea?"
+    answered "China's trade policy includes ... APTA, GSP+, ISFTA". Those are
+    Sri Lanka's own arrangements (`agreement_coverage`), not China's policy;
+    with no China document the corpus holds nothing and none of them belongs
+    in the answer.
+    """
+    out = asyncio.run(
+        run_with(
+            "What does China's trade policy say about Sri Lankan tea?",
+            PolicyKG(coverage=GSP_PLUS, documents=()),
+            SpyRetriever([]),
+        )
+    )
+
+    assert out["figures"] == {}
+    assert "cannot be answered" in out["summary"]
+    names = {r["agreement"] for r in GSP_PLUS}
+    assert not any(n in out["summary"] for n in names), out["summary"]
+    blob = " ".join(e.get("claim", "") + e.get("detail", "") for e in out["evidence"])
+    assert not any(n in blob for n in names), blob
+
+
+def test_a_third_countrys_question_is_not_answered_from_a_sri_lankan_doc_that_covers_the_item():
+    """The live E09 path: `policy_documents_for(iso3="CHN")` still returns
+    Sri Lanka's National Export Strategy because it covers tea's HS code, so
+    passages came back — but from a document China did not issue. It must not
+    count as answering China's policy, and the `agreement_coverage` aside stays
+    withheld.
+    """
+    out = asyncio.run(
+        run_with(
+            "What does China's trade policy say about Sri Lankan tea?",
+            HsMatchPolicyKG(coverage=GSP_PLUS),
+            SpyRetriever([policy_chunk("Sri Lanka's NES targets value addition in tea exports.")]),
+        )
+    )
+
+    assert out["figures"] == {}
+    assert "cannot be answered" in out["summary"]
+    names = {r["agreement"] for r in GSP_PLUS}
+    assert not any(n in out["summary"] for n in names), out["summary"]
+    assert any("not issued" in a for a in out["assumptions"]) or any(
+        "not issued" in (e.get("claim") or "") for e in out["evidence"]
+    ), out
+
+
+def test_a_named_market_that_has_a_document_still_gets_the_coverage_aside():
+    """The suppression above is scoped: when the named market *does* have a
+    document, Sri Lanka's own coverage is still surfaced — as a labelled aside,
+    not as that market's policy.
+    """
+    out = asyncio.run(
+        run_with(
+            "What does India's trade policy say about Sri Lankan tea?",
+            PolicyKG(coverage=GSP_PLUS, documents=("IND-DGFT-FTP-2023",)),
+            SpyRetriever([policy_chunk("India's FTP addresses tea imports from neighbouring states.")]),
+        )
+    )
+
+    assert any(r["agreement"] in out["summary"] for r in GSP_PLUS)
+    assert "Sri Lanka" in out["summary"]
+    assert "not IND" in out["summary"], out["summary"]  # the "these are SL's, not IND's" caveat
+
+
+def test_a_bare_coverage_question_with_no_market_is_still_answered_from_the_graph():
+    """No specific foreign market named -> the `agreement_coverage` lookup is
+    the answer, graph-first, exactly as before."""
+    out = asyncio.run(
+        run_with(
+            "Which trade agreement gives Sri Lankan tea preferential access?",
+            PolicyKG(coverage=GSP_PLUS, documents=()),
+            SpyRetriever([]),
+        )
+    )
+
+    assert any(r["agreement"] in out["summary"] for r in GSP_PLUS)
+    assert not out["summary"].startswith("Separately"), out["summary"]

@@ -1,9 +1,13 @@
-"""GET/PUT notification preferences and API-key management — Account.tsx's
-two remaining "planned, not built yet" stub items, now built.
+"""Account self-service: notification preferences, API-key management, password
+change, email change, and account deletion.
 
-All routes require a signed-in user (`require_user`); preferences and keys
-are always scoped to the caller's own email, the same ownership pattern as
-`routes/history.py`.
+All routes require a signed-in user (`require_user`) and act only on the
+caller's own account — same ownership pattern as `routes/history.py`. The three
+identity-affecting routes (password, email, delete) each re-check the current
+password first: a valid token is not enough to change or destroy an account,
+in case the token was lifted. An admin changing *someone else's* password is a
+separate route on the admin router (`routes/admin.py`), behind `require_admin`
+and audited.
 """
 
 from __future__ import annotations
@@ -11,14 +15,21 @@ from __future__ import annotations
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 
-from ceynex.api import api_keys, preferences
+from ceynex.api import api_keys, preferences, users
+from ceynex.api.auth import authenticate, issue_token
 from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import (
+    AccountDeletedResponse,
     ApiKeyItem,
     ApiKeyListResponse,
+    ChangeEmailRequest,
+    ChangePasswordRequest,
     CreateApiKeyRequest,
     CreateApiKeyResponse,
+    DeleteAccountRequest,
+    LoginResponse,
     NotificationPreferences,
+    PasswordChangedResponse,
     RevokeApiKeyResponse,
     UserInstructionRequest,
     UserInstructionResponse,
@@ -26,6 +37,96 @@ from ceynex.api.schemas import (
 from ceynex.chat import instructions
 
 router = APIRouter(tags=["account"])
+
+
+def _require_current_password(email: str, password: str) -> users.User:
+    """Re-authenticate the caller by password. 403 on a wrong password or an
+    account that has since been disabled/deleted — one outcome, so a caller
+    can't tell those apart. 503 if Postgres is unreachable."""
+    try:
+        user = authenticate(email, password)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="account service unavailable") from exc
+    if user is None:
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    return user
+
+
+@router.post("/api/account/password", response_model=PasswordChangedResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> PasswordChangedResponse:
+    """Self-service password change. Requires the current password (proof the
+    session isn't just a stolen token); the new one goes through the same
+    8-char floor as signup.
+
+    `users.set_password` bumps the account's `token_epoch`, which invalidates
+    every session for it — including this request's own token — at the next
+    request. The response carries a fresh token so the caller's device stays
+    signed in while every *other* session is cut."""
+    if body.new_password == body.current_password:
+        raise HTTPException(status_code=422, detail="new password must be different")
+    current = _require_current_password(user.email, body.current_password)
+    try:
+        updated = users.set_password(current.id, body.new_password)
+    except users.WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not change password") from exc
+    if updated is None:
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    return PasswordChangedResponse(
+        email=updated.email,
+        token=issue_token(updated.email, updated.role, updated.token_epoch),
+    )
+
+
+@router.post("/api/account/email", response_model=LoginResponse)
+async def change_email(
+    body: ChangeEmailRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> LoginResponse:
+    """Change the caller's own email. Current password required. The new
+    address must be free (409 otherwise). `users.set_email` bumps
+    `token_epoch` and moves the caller's history / API keys / preferences to
+    the new address; the response carries a fresh token (the old one's `sub`
+    is the old email) so the caller stays signed in."""
+    current = _require_current_password(user.email, body.current_password)
+    try:
+        updated = users.set_email(current.id, body.new_email)
+    except users.EmailTakenError as exc:
+        raise HTTPException(status_code=409, detail="that email is already in use") from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not change email") from exc
+    if updated is None:
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    return LoginResponse(
+        token=issue_token(updated.email, updated.role, updated.token_epoch),
+        email=updated.email,
+        role=updated.role,
+    )
+
+
+@router.delete("/api/account", response_model=AccountDeletedResponse)
+async def delete_account(
+    body: DeleteAccountRequest,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> AccountDeletedResponse:
+    """Delete the caller's own account and everything keyed to its email
+    (history, API keys, preferences). Current password required. Refused (409)
+    if the caller is the last enabled admin — deleting your way to a
+    zero-admin deployment is the same lockout the admin routes guard against."""
+    current = _require_current_password(user.email, body.current_password)
+    try:
+        removed = users.delete_user(current.id)
+    except users.LastAdminError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="could not delete the account") from exc
+    if not removed:
+        raise HTTPException(status_code=403, detail="current password is incorrect")
+    return AccountDeletedResponse(deleted=True)
 
 
 @router.get("/api/account/preferences", response_model=NotificationPreferences)

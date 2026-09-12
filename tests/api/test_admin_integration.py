@@ -15,10 +15,11 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from ceynex.api import admin
+from ceynex.api import admin, audit
 from ceynex.settings import postgres_dsn
 
 TEST_SOURCE = "PYTEST_ADMIN"
+TEST_ACTOR = "pytest-admin@ceynex.dev"
 
 
 @pytest.fixture
@@ -96,3 +97,29 @@ def test_dq_flags_lists_unresolved_before_resolved_and_survives_a_resolve(clean_
 @pytest.mark.integration
 def test_resolving_a_nonexistent_flag_returns_false():
     assert admin.resolve_dq_flag(-1) is False
+
+
+@pytest.fixture
+def clean_audit_log():
+    def purge():
+        with psycopg.connect(postgres_dsn()) as conn:
+            conn.execute("DELETE FROM audit_log WHERE actor_email = %s", (TEST_ACTOR,))
+            conn.commit()
+
+    audit.ensure_table()
+    purge()
+    yield
+    purge()
+
+
+@pytest.mark.integration
+def test_a_recorded_admin_action_is_listed_back(clean_audit_log):
+    audit.record(actor_email=TEST_ACTOR, action="retrain", target="agriculture/cinnamon")
+
+    entries = audit.list_entries()
+
+    matching = [e for e in entries if e.actor_email == TEST_ACTOR]
+    assert len(matching) == 1
+    assert matching[0].action == "retrain"
+    assert matching[0].target == "agriculture/cinnamon"
+    assert matching[0].logged_at is not None

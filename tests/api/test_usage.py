@@ -13,7 +13,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 from ceynex.observability import spend
 from ceynex.observability.spend import InProcessSpendCounter, RedisSpendCounter
@@ -23,7 +23,7 @@ ADMIN = "admin@ceynex.dev"
 
 
 def auth(email: str, role: str) -> dict[str, str]:
-    token = issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    token = issue_token(email, role)
     return {"Authorization": f"Bearer {token}"}
 
 

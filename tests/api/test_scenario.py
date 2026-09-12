@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
-from ceynex.api.auth import DemoUser, issue_token
+from ceynex.api.auth import issue_token
 from ceynex.api.main import app
 from ceynex.api.routes import scenario as scenario_routes
 from ceynex.models import shocks
@@ -28,7 +28,7 @@ COVERAGE = [
 
 
 def auth(email: str = USER, role: str = "policymaker") -> dict[str, str]:
-    token = issue_token(DemoUser(email=email, role=role, password_hash=b""))
+    token = issue_token(email, role)
     return {"Authorization": f"Bearer {token}"}
 
 
