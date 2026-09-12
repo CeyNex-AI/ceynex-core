@@ -1286,3 +1286,38 @@ question once, same session, same endpoint.
    p95. Above 1.5× it reads as a material increase, even inside budget.
 4. A category whose single-user p95 already breaks its budget is reported as
    breached at one user, not blamed on concurrency.
+
+### Measured 2026-09-12 — run (a), degraded: both endpoints pass
+
+**Setup.**
+
+- The local stack, with uvicorn `--workers 2` and Redis (`redis:7.2`), on a
+  32-core machine that also ran the load generator.
+- The prompt cache off, through a copy of `config/` with `cache.enabled: false`,
+  so no answer was served from an earlier paid run. With the cache on, 4 of 30
+  baseline answers came back with cached prose despite there being no key.
+
+Every request came from a real signed-in account. Runs are in `eval_runs/load/`;
+the sustained runs keep their summary and every error, not all 3,600 rows.
+
+**The first sustained run failed rule 1, and the cause was the harness.** It met
+11 × 429, all on user 0. That account was the one the baseline had just used for
+30 queries in 4 s, so user 0 began the run with its window already full. The
+rule says a 429 means the limiter, or whose allowance a request was counted
+against, is wrong. This time it was the harness's accounting: two runs shared one
+account. Accounts are now named by mode (`eval/load_test.py`), and the run was
+repeated with the rule unchanged. Both runs are recorded.
+
+| endpoint | requests | succeeded | 429 | per minute | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---:|---|---|---:|
+| `/api/query` | 3,600 | 3,600 | 0 | 1,064 | 3.5 / 3.5 / 6.7 s | 65 / 67 / 5.7 | — |
+| `/api/chat/stream` | 3,600 | 3,600 | 0 | 837 | 4.5 / 4.8 / 6.8 s | 15 / 16 / 4.6 | 0.9 s (17 ms at one user) |
+
+**Both pass the rule.** There were no failures and no 429s at up to about 1,060
+questions a minute, and every category's p95 stayed inside its SRS 3.4.1 budget.
+Reading 3 calls the increase material. p95 grows from tens of milliseconds to
+several seconds, which is what two workers cost under this concurrency with no
+model in the path. That is CeyNex's own capacity. It leaves the budget room, but
+the room is the model's to spend: §1 measures the single-user p95 *with* the
+model at 6.2–11.6 s, before any concurrency. Run (b) is the one that says how
+the two add up.

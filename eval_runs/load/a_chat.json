@@ -1,0 +1,51 @@
+{
+  "summary": {
+    "mode": "sustained",
+    "endpoint": "chat",
+    "signed_in": true,
+    "users": 50,
+    "requests": 3600,
+    "wall_clock_s": 258.09,
+    "succeeded": 3600,
+    "failed": 0,
+    "rate_limited": 0,
+    "availability": 1.0,
+    "degraded_answers": 3600,
+    "sum_of_individual_latency_s": 11958.18,
+    "throughput_per_min": 836.9,
+    "latency_by_category": {
+      "cross_sector": {
+        "n": 1478,
+        "p50_ms": 3346.5,
+        "p95_ms": 4750.2,
+        "max_ms": 5978.9,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "simulation": {
+        "n": 699,
+        "p50_ms": 4111.3,
+        "p95_ms": 6816.8,
+        "max_ms": 8866.5,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "single_sector": {
+        "n": 1423,
+        "p50_ms": 3143.7,
+        "p95_ms": 4506.4,
+        "max_ms": 5860.6,
+        "budget_ms": 10000,
+        "within_budget": true
+      }
+    },
+    "errors": [],
+    "offered_max_per_min": 1200.0,
+    "first_frame_ms": {
+      "p50": 489.1,
+      "p95": 893.4,
+      "max": 2049.1
+    }
+  },
+  "note": "per-request results omitted (3,600 rows); the summary and every error are kept"
+}
