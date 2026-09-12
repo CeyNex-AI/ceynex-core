@@ -99,13 +99,29 @@ class Intent:
     pct_change: float | None = None
 
 
+#: What `chat/clarify.py::Clarification.compose` puts between a question and the
+#: reader's answer to the clarifying question about it: "How are tea and cinnamon
+#: exports doing — specifically: cinnamon". Defined here, below the chat layer,
+#: because this is where it is read.
+CHOSEN_MARKER = "— specifically:"
+
+
 def parse_intent(query: str) -> Intent:
     lowered = query.lower()
     intent = Intent()
 
-    for item, keywords in ITEM_KEYWORDS.items():
-        if any(keyword in lowered for keyword in keywords):
-            intent.item = item
+    # The reader's choice outranks the first item the question happens to name.
+    # The item loop below takes the first match in ITEM_KEYWORDS order, so
+    # "tea and cinnamon — specifically: cinnamon" answered tea until 2026-09-12:
+    # a reader who chose cinnamon on the clarification card got a tea analysis.
+    # A choice that names no item falls back to the whole question.
+    chosen = lowered.rsplit(CHOSEN_MARKER, 1)[1] if CHOSEN_MARKER in lowered else ""
+    for scope in (chosen, lowered):
+        for item, keywords in ITEM_KEYWORDS.items():
+            if any(keyword in scope for keyword in keywords):
+                intent.item = item
+                break
+        if intent.item is not None:
             break
     if intent.item is None:
         for word, item in SECTOR_FALLBACK_ITEMS.items():

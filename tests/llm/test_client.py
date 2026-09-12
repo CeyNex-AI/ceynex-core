@@ -665,3 +665,54 @@ async def test_regenerate_skips_the_cached_answer_for_its_role_only(tmp_path, mo
         context.reset(token)
     # The regenerated answer is what an identical request is served next.
     assert await llm.generate("merge", "sys", "user") == "Second wording."
+
+
+# --- what the router lets the cache keep (orchestrator/router.py::_distrust) ---
+
+
+async def test_a_route_that_fell_back_is_routed_afresh_and_a_good_one_is_replayed(
+    tmp_path, monkeypatch
+):
+    """End to end, with the real client and the real on-disk cache.
+
+    A router response that had to fall back must cost a routing call on every
+    ask rather than replay for 168 hours. A route the router could use must
+    still be a cache hit the second time, narrowed or not.
+    """
+    from ceynex.orchestrator.router import llm_route
+
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    question = "Which markets buy the most Sri Lankan knitted apparel?"
+    reply = {"route": "not json at all"}
+    calls = []
+
+    async def answer(*args, **kwargs):
+        calls.append(1)
+        return _CallOutcome(reply["route"], 0.0, 0, 0)
+
+    monkeypatch.setattr(llm, "_call", answer)
+
+    await llm_route(question, llm)
+    await llm_route(question, llm)
+    assert len(calls) == 2, "a response that fell back was replayed from the cache"
+
+    reply["route"] = '{"route": ["apparel_manufacturing"], "sectors": ["apparel"]}'
+    await llm_route(question, llm)
+    await llm_route(question, llm)
+    assert len(calls) == 3, "a usable route, even a narrowed one, should be replayed"
+    assert llm.usage.cache_hits == 1
+
+
+def test_forget_never_raises(tmp_path):
+    """A cache that cannot be cleaned must not fail the answer."""
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    llm.forget("no_such_role", "sys", "user")
+    llm.forget("router", "sys", "never cached")
+
+
+def test_deleting_a_cache_entry_that_is_not_there_is_a_no_op(tmp_path):
+    cache = PromptCache(tmp_path / "c", ttl_hours=1)
+    cache.put("k", "v")
+    cache.delete("k")
+    cache.delete("k")
+    assert cache.get("k") is None

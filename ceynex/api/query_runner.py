@@ -47,6 +47,7 @@ from ceynex.orchestrator.merger import (
     no_topic_recognized,
     unanswered_from_outputs,
 )
+from ceynex.orchestrator.router import distrust_route
 from ceynex.websearch import safe_search, wants_current_context
 
 log = logging.getLogger(__name__)
@@ -159,6 +160,14 @@ async def run_query(
                 log.warning("web search task failed", exc_info=True)
 
         response = await _assemble(runtime, query, final, started, web_results, observation)
+
+        # A route whose answer came back with no evidence is not kept in the
+        # prompt cache. Replayed, it would give every later ask of this question
+        # the same evidence-free answer for a week: the S07 case
+        # (`router.py::distrust_route`). Web results do not count; they are never
+        # evidence of the route having worked.
+        if not final.get("merged_evidence"):
+            distrust_route(runtime.llm, query, "its answer carried no evidence")
     finally:
         obs.reset(token)
 

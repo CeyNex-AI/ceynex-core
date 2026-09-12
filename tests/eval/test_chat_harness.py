@@ -108,7 +108,7 @@ def test_a_discussion_where_an_analysis_was_expected_is_a_miss():
 
 
 def test_the_gate_is_scored_both_ways():
-    asked = _frames(("clarify_gate", {"asked": True}), ("clarify", {"pending_id": 4, "options": ["tea", "cinnamon", "both"]}),
+    asked = _frames(("clarify_gate", {"asked": True}), ("clarify", {"pending_id": 4, "options": ["tea", "cinnamon"]}),
                     ("done", {"failed": False, "clarify": True}))
     result = score_turn("C05", 0, {"query": "tea and cinnamon", "expect": {"clarify": True}}, asked, 50.0)
     assert result.mode == "clarify" and result.checks == {"clarify": True}

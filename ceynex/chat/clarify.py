@@ -27,9 +27,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
-from ceynex.agents.common import ITEM_KEYWORDS, find_region, parse_intent
+from ceynex.agents.common import CHOSEN_MARKER, ITEM_KEYWORDS, find_region, parse_intent
 from ceynex.orchestrator.router import POLICY_WORDS, SIMULATION_WORDS, keyword_route
 
 log = logging.getLogger(__name__)
@@ -69,7 +70,18 @@ Rules:
    ambiguity and the check was too blunt. That is the one judgement you are asked for.
 2. Never invent an option. Use the ones given, in the same wording.
 3. One short question. No preamble, no explanation, no restating the user's question.
-4. Never ask about anything except the ambiguity you were given."""
+4. Never ask about anything except the ambiguity you were given.
+5. Offer the options one at a time. The platform answers one item per question, so never
+   offer "both", "all of them" or any combination."""
+
+#: A phrasing that promises a combination the analysis cannot deliver. The
+#: export agent's `parse_intent` takes one item, so "both" answered the first and
+#: said the other was unavailable (docs/DEFERRED.md, the 2026-09-11 live pass).
+#: The owner's call was to stop offering it rather than run two analyses.
+OFFERS_A_COMBINATION = re.compile(
+    r"\b(both|all of (them|these|those)|all (three|four|five)|each of (them|these))\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -109,11 +121,14 @@ class Clarification:
 
         Appended rather than substituted: rewriting the user's own words risks
         changing what they asked, and the router reads the whole string anyway.
+        The marker is what makes the choice count. `parse_intent` reads an item
+        after `CHOSEN_MARKER` ahead of the question's first-named one, so every
+        agent analyses what the reader picked.
         """
         chosen = ", ".join(a.strip() for a in answers if a and a.strip())
         if not chosen:
             return original_query
-        return f"{original_query.rstrip('?').strip()} — specifically: {chosen}"
+        return f"{original_query.rstrip('?').strip()} {CHOSEN_MARKER} {chosen}"
 
 
 def _matching_items(lowered: str) -> list[str]:
@@ -161,7 +176,12 @@ def clarification_needed(query: str) -> Trigger | None:
 
 
 def template_clarification(trigger: Trigger) -> Clarification:
-    """The deterministic phrasing. Also the fallback for every Stage B failure."""
+    """The deterministic phrasing. Also the fallback for every Stage B failure.
+
+    The options are the items and nothing else. "both" used to be offered for
+    two, and it promised an analysis of both that the single-item export agent
+    could not give (`OFFERS_A_COMBINATION`).
+    """
     if trigger.kind == "multi_item":
         readable = [item.replace("_", " ") for item in trigger.options]
         named = (
@@ -171,7 +191,7 @@ def template_clarification(trigger: Trigger) -> Clarification:
         )
         return Clarification(
             question=f"Your question mentions {named}. Which would you like?",
-            options=[*trigger.options, "both"] if len(trigger.options) == 2 else list(trigger.options),
+            options=list(trigger.options),
             original_query=trigger.original_query,
             kind=trigger.kind,
         )
@@ -227,12 +247,17 @@ async def llm_clarify(trigger: Trigger, llm) -> Clarification | None:
     question = str(parsed.get("question") or "").strip()
     if not question:
         return fallback
+    if OFFERS_A_COMBINATION.search(question):
+        # Rule 5 is a request; this is the guarantee. The question must not
+        # promise a choice the options do not contain.
+        log.info("clarifier offered a combination; using the deterministic phrasing")
+        return fallback
 
     # The options are the deterministic check's, always — the model phrases and
     # nothing else. It may not widen the choice (an invented option is one the
     # check never found) and it may not narrow it either: asked about tea and
-    # cinnamon it returned the question "tea, cinnamon, or both?" while dropping
-    # "both" from the list, offering the reader a choice they could not make.
+    # cinnamon it once returned the question "tea, cinnamon, or both?" while
+    # dropping "both" from the list, offering the reader a choice they could not make.
     return Clarification(
         question=question,
         options=fallback.options,
