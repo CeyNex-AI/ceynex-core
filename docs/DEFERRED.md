@@ -399,7 +399,7 @@ its reader (D12, amended) makes concurrent turns *more* likely to overlap, not
 less. It also has no degraded run to separate CeyNex's own capacity from the
 model provider's.
 
-**CI — built for this repo on 2026-09-12, not yet for `ceynex-web`.**
+**CI — built on 2026-09-12, for both repos.**
 `.github/workflows/ci.yml` (PR #78) runs `ruff`, the unit suite on Python 3.11
 and 3.12, and the integration suite against real Postgres, Neo4j and Qdrant, on
 every PR and push to `main`, with no secrets. Running its jobs before it existed
@@ -408,8 +408,10 @@ found three tests that passed only on a developer machine:
 - an RBAC integration test could never pass;
 - a web-search test depended on `.env` naming a Qdrant.
 
-All three are fixed. `ceynex-web`'s vitest and Playwright suites still run only
-on a developer machine.
+All three are fixed. `ceynex-web` has its own workflow: lint and the production
+build since its PR #21, plus the vitest suite from the conversational branch.
+Its Playwright suite still runs only on a developer machine, because it drives
+a running API over a loaded stack.
 
 **The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
 deployed. The nginx heartbeat, resume and cancel checks were made against a real
