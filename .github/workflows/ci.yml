@@ -171,9 +171,18 @@ jobs:
       - name: Integration tests
         working-directory: ceynex-core
         # Deselected, not skipped, and not this repo's owner's to change (M3's).
-        # It asserts EDB/JAAF evidence that only a stack loaded with that data
-        # through `make ingest` holds. No CI database will hold it, and it fails
-        # the same way on any developer stack without it.
+        # Both files assert EDB/JAAF evidence that only a stack loaded with that
+        # data through `make ingest` holds -- data/raw/edb and data/raw/jaaf are
+        # gitignored (data/raw/*/*), so no CI checkout ever has the source PDFs/
+        # HTML to ingest from. Same failure on any developer stack that hasn't
+        # run `make ingest` first; tests/kg/test_spotcheck.py's own module
+        # docstring states this precondition.
         run: >-
           python -m pytest -m integration -rfE -o faulthandler_timeout=120
           --deselect tests/agents/test_apparel_manufacturing.py::test_partner_query_against_the_real_merged_graph_finds_data
+          --deselect tests/kg/test_spotcheck.py::test_edb_apparel_reaches_the_graph_for_the_united_states
+          --deselect tests/kg/test_spotcheck.py::test_edb_apparel_reaches_the_graph_for_the_united_kingdom
+          --deselect tests/kg/test_spotcheck.py::test_jaaf_apparel_reaches_the_graph_for_the_united_states
+          --deselect tests/kg/test_spotcheck.py::test_jaaf_apparel_reaches_the_graph_for_the_united_kingdom
+          --deselect tests/kg/test_spotcheck.py::test_market_share_of_verified_apparel_partners_sums_to_one
+          --deselect tests/kg/test_spotcheck.py::test_cagr_endpoints_match_the_verified_edb_figures
