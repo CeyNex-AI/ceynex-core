@@ -1703,3 +1703,89 @@ Reported beside the criteria, and not one of them: the number of derived totals
 per run, whether they reached the prose or were rejected in a discard. A derived
 total is a figure that is the sum or difference of two stated ones, and it is
 the class the rewording is for.
+
+### Measured 2026-09-12 — all seven hold, and citations are on by default
+
+**The runs.** The off runs are §13's direction runs, since §13 adopted
+`direction`. The cited runs are three cold runs with `CEYNEX_CITATIONS=on` and
+`CEYNEX_GROUNDING=direction`. Runs 1 and 2 finished at 17:33 and 17:36. Run 3 is
+void and was replaced by run 4, which finished at 19:22.
+
+- **Same stack.** It was verified again before run 4: 4,625 `fact_trade` rows,
+  4,625 `EXPORTS_TO` edges and 901 policy chunks, as for §13.
+- **Runs 1 to 3 used the off runs' code:** the branch before its rebase onto
+  `f80a703`. The one addition made `direction` the grounding default, and every
+  cited run set that variable itself.
+- **Run 4 used the rebased branch.** Its code differs only by #80 and #81, and
+  §13 sets out why neither changes what the 30 questions do. #80's route
+  eviction also acts only after an answer, and a cold run asks each question
+  once.
+
+**The void run.** Run 3 recorded `provider_gave_up` = 34. The OpenAI account ran
+out of credits partway through, and from then on the provider refused calls.
+Under §13's void rule it is kept as `void-run-3.json`, and its figures are in no
+median here. The replacement ran after credits were added and recorded
+`provider_gave_up` = 0, as did runs 1 and 2. `summary.json` covers runs 1, 2
+and 4.
+
+| # | Criterion | off (§13's direction runs) | cited (runs 1, 2, 4) | holds? |
+|---|---|---:|---:|---|
+| 1 | routing exact match / recall | 0.5667 [0.5667–0.5667] / 0.925 [0.8917–0.925] | 0.5667 [0.5667–0.60] / 0.925 [0.8917–0.925] | **yes**. The medians are identical, so §9's wording holds too |
+| 2 | answers fully grounded (direction-aware) | 1.00 [1.00–1.00] | 1.00 [1.00–1.00] | **yes** |
+| 3 | ungrounded figures (direction-aware) | 0 [0–0] | 0 [0–0] | **yes** |
+| 4 | marker valid rate | — | 1.00 [1.00–1.00] | **yes** |
+| 5 | figure sentences cited | — | 0.869 [0.857–0.883] | **yes** |
+| 6 | crashed / answers with no evidence | 0 / 0 [0–1] | 0 / 0 [0–1] | **yes** |
+| 7 | answers served deterministic | 2 [1–3] | 2 [2–3] | **yes** |
+
+Criteria 5 and 7 both hold, so the overlap between them does not arise.
+
+**No derived totals in any counted cited run.** A derived total is a figure
+within 0.1% of the sum or difference of two figures the served answer states,
+where each part is at least 1% of the figure and neither is the figure itself.
+Every ungrounded figure and every figure a merge discard rejected was checked
+against that test. None qualified.
+
+§9's two cases are M03 (one run in three) and M05 (all three). In this set, both
+were served as model prose with markers, in all three runs, with no ungrounded
+figure. The guard did not hide them: criterion 7 is there to catch exactly that,
+and neither answer was discarded. Discarded prose is not kept, so a derived total
+inside a discard is caught only if its parts appear in the served answer.
+
+**What the guard discarded.** The same three questions as in the off runs:
+
+- **S05**, in all three runs: the years 2023 and 2024. In run 1 it also rejected
+  the forecast rounded to whole dollars, "1,310,610,516" for 1,310,610,515.97.
+  `grounding.py`'s docstring records this as known: a figure rounded differently
+  from its source counts as ungrounded, and a rounding up is not a prefix.
+- **S10**, in runs 1 and 4: 2024.
+- **X07**, in runs 1 and 2: "-2020", the hyphenated year recorded in
+  `DEFERRED.md`.
+
+**Beside the criteria:**
+
+- **The strict metrics** read 0.8148 fully grounded and 6 ungrounded in every
+  run, both cited and off. They are the six figures the direction rule accepts
+  in each run.
+- **Answers carrying markers:** 24, 24 and 25 of 27.
+- **Degraded answers and explanations discarded:** 0 [0–1] each, the same as
+  off. The one discarded explanation was M03's trade-economics explanation in
+  run 1. The off runs discarded M05's once.
+- **Single-sector p95** was 7.0 s [5.2–10.8] cited and 7.7 s [5.9–9.5] off. §8
+  says not to quote either.
+- **Questions that disagreed with themselves:** S07 and X11 on routing. S07 is
+  the known unreliable question.
+
+**Decision.** `CEYNEX_CITATIONS` now defaults to `on`, in `settings.py` and
+`.env.example`, and `off` restores the uncited prompt exactly. It is a prompt
+change, so it reaches production only when the backend is redeployed.
+
+- `make eval-repeat` now sets `CEYNEX_CITATIONS=off` itself, so `eval_runs/off`
+  still holds what its name says.
+- `make eval` measures the default, which is now cited.
+
+**Not covered by this rule.** The rule measured the 30 questions through
+`POST /api/query`'s path. §10's conversation set ran with citations off, and the
+flip reaches chat turns as well. That set has not been re-run with citations
+on. In a streamed turn the draft shows `[n]` as plain text until the finished
+answer replaces it with the rendered markers.
