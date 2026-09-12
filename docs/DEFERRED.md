@@ -189,11 +189,21 @@ Single-sector p95 came out at 14.6 s against a 10 s budget (SRS 3.4.1), where
 the keyless run had posted 2.7 s. That headroom was never real — it was the
 degraded path being reported as the system. See EVALUATION.md §1.
 
-**Throughput at 50 concurrent users (SRS 3.4.2) is still untested**, and is now
-the more important of the two: the single-user numbers no longer have headroom
-to spare.
+**Measured 2026-09-12** (`eval/load_test.py`, `docs/EVALUATION.md` §8): the
+system stays fully available at 50 concurrent users (50/50 succeeded, 0
+failures) and the wall-clock-vs-summed-latency gap confirms genuine concurrent
+handling, not one call blocking every other. Two things it surfaced instead:
+single-sector p95 breaches its 10 s SRS 3.4.1 budget under 50 concurrent
+callers (that budget was only ever a single-user number), and 44 of 50 answers
+degraded (SRS 3.4.3's contract, not a failure) because the two LLM providers
+behind the system could not serve 50 concurrent calls — the failsafe's own
+free-tier limit (20/minute) is well below 50, and the primary's exact failure
+mode under that load was not cleanly isolated from this run's log. This ran
+against one local `uvicorn` process with no Redis, not the deployed
+`--workers 2` + Redis topology — see §8 for that caveat before quoting this as
+the production number.
 
-One thing that *does* now exist between a load test and a real outage: the SRS
+One thing that *does* exist between a load test and a real outage: the SRS
 3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
 50-concurrent-user figure is about 50 distinct users, not one script.
 
