@@ -1,0 +1,46 @@
+{
+  "summary": {
+    "mode": "sustained",
+    "endpoint": "query",
+    "signed_in": true,
+    "users": 50,
+    "requests": 3600,
+    "wall_clock_s": 203.06,
+    "succeeded": 3600,
+    "failed": 0,
+    "rate_limited": 0,
+    "availability": 1.0,
+    "degraded_answers": 3600,
+    "sum_of_individual_latency_s": 8317.68,
+    "throughput_per_min": 1063.7,
+    "latency_by_category": {
+      "cross_sector": {
+        "n": 1478,
+        "p50_ms": 2181.7,
+        "p95_ms": 3549.5,
+        "max_ms": 4516.2,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "simulation": {
+        "n": 699,
+        "p50_ms": 2660.8,
+        "p95_ms": 6651.5,
+        "max_ms": 9387.6,
+        "budget_ms": 20000,
+        "within_budget": true
+      },
+      "single_sector": {
+        "n": 1423,
+        "p50_ms": 2230.7,
+        "p95_ms": 3540.6,
+        "max_ms": 4516.0,
+        "budget_ms": 10000,
+        "within_budget": true
+      }
+    },
+    "errors": [],
+    "offered_max_per_min": 1200.0
+  },
+  "note": "per-request results omitted (3,600 rows); the summary and every error are kept"
+}

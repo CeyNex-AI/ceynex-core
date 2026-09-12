@@ -1258,6 +1258,109 @@ availability implications that implies) is the remaining step before this is
 called measured against production rather than against a production-shaped
 local stack.
 
+### The sustained, signed-in run: the rule, written before it ran (2026-09-12)
+
+The burst above answers availability for one moment of 50 anonymous callers.
+SRS 3.4.2 names *authenticated* users, and a moment is not load. So there is a
+second measurement, and its rule is fixed here before any of it runs.
+
+**Shape.** 50 users, each signed in with a real account and token (`--signed-in`).
+Each one asks, waits for the answer, and asks again no sooner than 2.5 s after
+its last question (`--mode sustained`). They run against uvicorn `--workers 2`
+with Redis, the deployed topology, over the local stack. That offers up to 1,200
+questions a minute, with every user under its 30 a minute. Both endpoints are
+run: `/api/query`, and `/api/chat/stream`, where the time that counts is the time
+to its `done` frame. Each run's baseline is `--mode sequential`: one user, each
+question once, same session, same endpoint.
+
+**Two runs.**
+
+- **(a) Degraded, no model key, 180 s.** This measures CeyNex's own capacity.
+- **(b) With the model, the prompt cache off, 3 questions per user (150).** This
+  largely measures the provider's tier. A provider's 429 reaches the reader as a
+  degraded answer, which is reported, not scored.
+
+**The rule** (`eval/load_test.py::verdict`), applied to each run:
+
+1. No failures: no 5xx, timeouts, connection errors, or turns ending `failed`. No
+   429s: the pacing keeps every user under its allowance, so a 429 is a limiter
+   or identity bug.
+2. Each category's p95 within its SRS 3.4.1 budget: 10 s single-sector, 20 s
+   cross-sector and simulation. That is the literal reading of "no material
+   increase in the response times specified".
+3. Reported, not scored: p95 under load over the same session's single-user
+   p95. Above 1.5× it reads as a material increase, even inside budget.
+4. A category whose single-user p95 already breaks its budget is reported as
+   breached at one user, not blamed on concurrency.
+
+### Measured 2026-09-12 — run (a), degraded: both endpoints pass
+
+**Setup.**
+
+- The local stack, with uvicorn `--workers 2` and Redis (`redis:7.2`), on a
+  32-core machine that also ran the load generator.
+- The prompt cache off, through a copy of `config/` with `cache.enabled: false`,
+  so no answer was served from an earlier paid run. With the cache on, 4 of 30
+  baseline answers came back with cached prose despite there being no key.
+
+Every request came from a real signed-in account. Runs are in `eval_runs/load/`;
+the sustained runs keep their summary and every error, not all 3,600 rows.
+
+**The first sustained run failed rule 1, and the cause was the harness.** It met
+11 × 429, all on user 0. That account was the one the baseline had just used for
+30 queries in 4 s, so user 0 began the run with its window already full. The
+rule says a 429 means the limiter, or whose allowance a request was counted
+against, is wrong. This time it was the harness's accounting: two runs shared one
+account. Accounts are now named by mode (`eval/load_test.py`), and the run was
+repeated with the rule unchanged. Both runs are recorded.
+
+| endpoint | requests | succeeded | 429 | per minute | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---:|---|---|---:|
+| `/api/query` | 3,600 | 3,600 | 0 | 1,064 | 3.5 / 3.5 / 6.7 s | 65 / 67 / 5.7 | — |
+| `/api/chat/stream` | 3,600 | 3,600 | 0 | 837 | 4.5 / 4.8 / 6.8 s | 15 / 16 / 4.6 | 0.9 s (17 ms at one user) |
+
+**Both pass the rule.** There were no failures and no 429s at up to about 1,060
+questions a minute, and every category's p95 stayed inside its SRS 3.4.1 budget.
+Reading 3 calls the increase material. p95 grows from tens of milliseconds to
+several seconds, which is what two workers cost under this concurrency with no
+model in the path. That is CeyNex's own capacity. It leaves the budget room, but
+the room is the model's to spend: §1 measures the single-user p95 *with* the
+model at 6.2–11.6 s, before any concurrency. Run (b) is the one that says how
+the two add up.
+
+### Measured 2026-09-12 — run (b), with the model: single-sector breaks its budget, and the provider is why
+
+Same setup as (a), with the model key present (the prompt cache still off), 50
+signed-in users asking 3 questions each. No failover key was set, so a failed
+call went straight to a degraded answer.
+
+| endpoint | requests | succeeded | 429 from CeyNex | degraded (one user → load) | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---|---|---|---:|
+| `/api/query` | 150 | 150 | 0 | 5 of 30 → 14 of 150 | **11.6** / 14.9 / 14.0 s | 1.3 / 2.1 / 2.7 | — |
+| `/api/chat/stream` | 150 | 150 | 0 | 5 of 30 → 21 of 150 | **13.4** / 15.9 / 14.8 s | 2.2 / 2.0 / 2.3 | 79 ms |
+
+**Both fail rule 2, on single-sector only.** The breach is not there at one user:
+the same session's single-user p95 was 9.2 s on `/api/query` and 6.1 s on the
+stream. So it comes with concurrency. Cross-sector and simulation kept their
+20 s budgets, and nothing failed or met a 429 from CeyNex.
+
+**The cause, from the API's own log.** OpenAI answered 429, "Rate limit reached
+for gpt-4o in organization …", on 208 first attempts across the two runs. 176
+calls were still refused after their retry and degraded. That also answers what
+this section left open above: why the primary call fell through under load. It
+is the account's rate limit on `gpt-4o`, the model `config/llm.yaml` gives the
+merge role. The stream's first frame stayed under 0.1 s throughout, so a reader
+sees the trace start at once even when the answer is late.
+
+**What SRS 3.4.2 therefore gets.** CeyNex's own serving path holds 50
+authenticated users inside every budget, with no failures (run a). The system
+with this model account does not hold single-sector's 10 s. The ceiling is the
+provider's tier, not the server. SRS 3.6.5 treats the model as a purchased
+component, and 3.4.2 allows capacity to grow "through standard scaling": a higher
+tier, a failover key (unset here), or the merge role on the cheaper model. Each
+of those is a change to measure the same way, under this same rule, before it
+is claimed.
+
 ## 12. The owner's calls of 2026-09-12, measured
 
 **Measured 2026-09-12, M2**, on the stack §9 used, before either change was
