@@ -211,7 +211,7 @@ async def test_with_the_provider_off_the_answer_is_byte_identical():
     assert all(e.source_id != "WEB" for e in outcome.response.evidence)
 
 
-def test_web_search_is_not_reachable_from_an_agent():
+def test_web_search_is_not_reachable_from_an_agent(monkeypatch):
     """SRS 3.6.4 fixes the agent count at five, and D14 is not a sixth.
 
     `AgentDeps` is the only thing an agent is handed, so checking the declared
@@ -219,6 +219,13 @@ def test_web_search_is_not_reachable_from_an_agent():
     where a future convenience would put the provider. Both are checked, against
     a real `Runtime.build()` rather than a hand-made one, because the wiring site
     is the thing that could get this wrong.
+
+    The provider has to exist for the identity check to mean anything. With no
+    key it is `None`, and so is the policy retriever with no Qdrant configured,
+    so `None is not None` failed the test on a clean checkout while a developer
+    `.env` naming a Qdrant made it pass; a CI-like run with no `.env` found it.
+    Building the real provider (no network until `search()` is called) makes
+    the check the same on every machine.
     """
     import dataclasses
 
@@ -227,7 +234,10 @@ def test_web_search_is_not_reachable_from_an_agent():
 
     assert "websearch" not in {f.name for f in dataclasses.fields(AgentDeps)}
 
+    monkeypatch.setenv("CEYNEX_WEB_SEARCH", "on")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key-never-sent")
     runtime = Runtime.build()
+    assert runtime.websearch is not None, "no provider was built, so nothing below is checked"
     # Identity, not `isinstance`: `WebSearchProvider` is a runtime_checkable
     # Protocol, so `isinstance` is satisfied by anything with a `search` method —
     # `PolicyRetriever` included, which made the obvious form of this assertion
