@@ -198,10 +198,13 @@ callers (that budget was only ever a single-user number), and 44 of 50 answers
 degraded (SRS 3.4.3's contract, not a failure) because the two LLM providers
 behind the system could not serve 50 concurrent calls — the failsafe's own
 free-tier limit (20/minute) is well below 50, and the primary's exact failure
-mode under that load was not cleanly isolated from this run's log. This ran
-against one local `uvicorn` process with no Redis, not the deployed
-`--workers 2` + Redis topology — see §8 for that caveat before quoting this as
-the production number.
+mode under that load was not cleanly isolated from either run's log. **Both
+findings were re-checked same day against `--workers 2` + a real Redis** (the
+deployed topology, run against a standalone `redis:7` container rather than
+the deployed VM itself) and held: 43/50 degraded, single-sector p95 still over
+budget. Neither is a single-process artifact. Only the deployed VM itself
+remains unmeasured — see §8 for what's still open before this is quoted as the
+production number.
 
 One thing that *does* exist between a load test and a real outage: the SRS
 3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
