@@ -174,3 +174,10 @@ def test_the_verdict_reads_two_saved_runs(tmp_path, capsys):
     base.write_text(json.dumps({"summary": _summary(5_000, 10_000)}))
     assert load_test.main(["--verdict", str(load), str(base)]) == 0
     assert '"passed": true' in capsys.readouterr().out
+
+
+def test_a_baseline_never_shares_an_account_with_the_load_after_it():
+    """Found by the first sustained run: sharing one meant sharing a rate-limit window."""
+    names = {mode: load_test.LOAD_ACCOUNT.format(mode=mode, index=0)
+             for mode in ("burst", "sequential", "sustained")}
+    assert len(set(names.values())) == 3

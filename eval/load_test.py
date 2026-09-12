@@ -42,7 +42,7 @@ reports `degraded` per response rather than counting it as a failure.
     --endpoint chat    POST /api/chat/stream instead of /api/query, timing the
                        first frame as well as the `done` frame
     --signed-in        SRS 3.4.2 says *authenticated* users. Each virtual user
-                       gets a real account (`load-NNN@ceynex.dev`, created
+                       gets a real account (`load-<mode>-NNN@ceynex.dev`, created
                        through the user store, not the IP-limited signup route)
                        and a real token, and the accounts are deleted after.
     python -m eval.load_test --verdict load.json baseline.json
@@ -87,8 +87,12 @@ PACE_S = 2.5
 #: increase as material, even inside budget. Written down before any run.
 MATERIAL_RATIO = 1.5
 
-#: The accounts a signed-in run creates, and deletes when it is done.
-LOAD_ACCOUNT = "load-{:03d}@ceynex.dev"
+#: The accounts a signed-in run creates, and deletes when it is done. Named by
+#: mode, so a baseline run never shares an account, and so a rate-limit window,
+#: with the sustained run that follows it. The first sustained run on
+#: 2026-09-12 did share one: its user 0 began with the baseline's 30 queries
+#: already in its window and met 11 429s (EVALUATION.md §11).
+LOAD_ACCOUNT = "load-{mode}-{index:03d}@ceynex.dev"
 
 
 @dataclass
@@ -140,7 +144,7 @@ def _headers(user: int, token: str | None) -> dict[str, str]:
 # --- accounts, for a signed-in run -------------------------------------------
 
 
-def create_accounts(count: int) -> list[tuple[int, str]]:
+def create_accounts(count: int, mode: str = "burst") -> list[tuple[int, str]]:
     """`count` real accounts and a real token for each, as `(user id, token)`.
 
     Through the user store, in-process, rather than `POST /api/auth/signup`:
@@ -153,7 +157,7 @@ def create_accounts(count: int) -> list[tuple[int, str]]:
     users.ensure_table()
     accounts = []
     for index in range(count):
-        email = LOAD_ACCOUNT.format(index)
+        email = LOAD_ACCOUNT.format(mode=mode, index=index)
         user = users.get_by_email(email) or users.create_user(
             email, secrets.token_urlsafe(18), "researcher"
         )
@@ -497,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if outcome["passed"] else 1
 
     users = 1 if args.mode == "sequential" else args.users
-    accounts = create_accounts(users) if args.signed_in else []
+    accounts = create_accounts(users, args.mode) if args.signed_in else []
     tokens: list[str | None] = [token for _, token in accounts] or [None] * users
     try:
         if args.mode == "sequential":
