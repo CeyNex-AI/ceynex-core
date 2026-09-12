@@ -244,3 +244,151 @@ def test_delete_user_last_admin_guard(clean_users):
             users.delete_user(admin.id)
     else:
         assert users.delete_user(admin.id) is True
+
+
+# --- the conversational layer's rows follow the account ---------------------
+#
+# Found 2026-09-12: none of these tables were in `_EMAIL_OWNED_TABLES`, so a
+# deleted account's conversations stayed behind for the next signup with the
+# address. `tests/api/test_email_owned_tables.py` keeps the list complete; these
+# check that what it lists is actually deleted, moved, or unattributed.
+
+_CHAT_TABLES = (
+    "user_instruction", "chat_feedback", "chat_pending_clarification", "chat_conversation",
+)
+
+
+@pytest.fixture
+def chat_tables(clean_users):
+    from ceynex.chat import instructions, store
+    from ceynex.observability import ledger
+
+    store.ensure_table()
+    instructions.ensure_table()
+    ledger.ensure_table()
+
+    def purge():
+        with psycopg.connect(postgres_dsn()) as conn:
+            for table in _CHAT_TABLES:
+                conn.execute(f"DELETE FROM {table} WHERE user_email LIKE %s", (PREFIX + "%",))  # noqa: S608 - fixed list
+            conn.execute("DELETE FROM llm_usage WHERE request_id LIKE %s", (PREFIX + "%",))
+            conn.commit()
+
+    purge()
+    yield
+    purge()
+
+
+def _file_chat_rows(email: str) -> int:
+    """A conversation with a message, its feedback and a pending clarification,
+    an instruction and a spend record, all under `email`. Returns the
+    conversation id."""
+    with psycopg.connect(postgres_dsn()) as conn:
+        (conversation_id,) = conn.execute(
+            "INSERT INTO chat_conversation (user_email, title) VALUES (%s, 'tea') RETURNING id",
+            (email,),
+        ).fetchone()
+        (message_id,) = conn.execute(
+            "INSERT INTO chat_message (conversation_id, seq, role, content) "
+            "VALUES (%s, 1, 'assistant', 'Tea exports reached USD 1,431,567,471.') RETURNING id",
+            (conversation_id,),
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO chat_feedback (message_id, user_email, rating) VALUES (%s, %s, 1)",
+            (message_id, email),
+        )
+        conn.execute(
+            "INSERT INTO chat_pending_clarification "
+            "(conversation_id, user_email, original_query, payload, expires_at) "
+            "VALUES (%s, %s, 'tea or cinnamon?', '{}', now() + interval '1 hour')",
+            (conversation_id, email),
+        )
+        conn.execute(
+            "INSERT INTO user_instruction (user_email, content) VALUES (%s, 'Answer briefly.')",
+            (email,),
+        )
+        conn.execute(
+            "INSERT INTO llm_usage (request_id, user_email, role, model, provider, cost_usd) "
+            "VALUES (%s, %s, 'merge', 'gpt-4o', 'openai', 0.004)",
+            (PREFIX + email, email),
+        )
+        conn.commit()
+    return conversation_id
+
+
+def _chat_rows(email: str) -> dict[str, int]:
+    with psycopg.connect(postgres_dsn()) as conn:
+        counts = {
+            table: conn.execute(
+                f"SELECT count(*) FROM {table} WHERE user_email = %s", (email,)  # noqa: S608 - fixed list
+            ).fetchone()[0]
+            for table in (*_CHAT_TABLES, "llm_usage")
+        }
+    return counts
+
+
+@pytest.mark.integration
+def test_deleting_an_account_takes_its_conversations_and_keeps_its_spend_unattributed(chat_tables):
+    email = _email("chat-goner")
+    u = users.create_user(email, "chat-goner-password", "researcher")
+    conversation_id = _file_chat_rows(email)
+
+    assert users.delete_user(u.id) is True
+
+    assert _chat_rows(email) == dict.fromkeys((*_CHAT_TABLES, "llm_usage"), 0)
+    with psycopg.connect(postgres_dsn()) as conn:
+        (messages,) = conn.execute(
+            "SELECT count(*) FROM chat_message WHERE conversation_id = %s", (conversation_id,)
+        ).fetchone()
+        (spend,) = conn.execute(
+            "SELECT count(*) FROM llm_usage WHERE request_id = %s AND user_email IS NULL",
+            (PREFIX + email,),
+        ).fetchone()
+    assert messages == 0, "the conversation's messages go with it, by cascade"
+    assert spend == 1, "the spend record stays, with no one attached"
+
+
+@pytest.mark.integration
+def test_the_next_signup_with_a_freed_address_inherits_nothing(chat_tables):
+    """The defect itself, end to end: rows left under an address by a holder
+    who is gone, from before their table was listed, are not handed to the next
+    account that claims it."""
+    email = _email("chat-reused")
+    _file_chat_rows(email)  # a previous holder's leftovers, with no account
+
+    users.create_user(email, "chat-reused-password", "researcher")
+
+    assert _chat_rows(email) == dict.fromkeys((*_CHAT_TABLES, "llm_usage"), 0)
+
+
+@pytest.mark.integration
+def test_changing_an_email_moves_the_conversations_and_drops_a_previous_holders(chat_tables):
+    old, new = _email("chat-mover-old"), _email("chat-mover-new")
+    u = users.create_user(old, "chat-mover-password", "exporter")
+    mine = _file_chat_rows(old)
+    with psycopg.connect(postgres_dsn()) as conn:
+        # A previous holder of the new address left a conversation and an
+        # instruction behind. Neither may reach this account.
+        conn.execute(
+            "INSERT INTO chat_conversation (user_email, title) VALUES (%s, 'not yours')", (new,)
+        )
+        conn.execute(
+            "INSERT INTO user_instruction (user_email, content) VALUES (%s, 'someone else')", (new,)
+        )
+        conn.commit()
+
+    assert users.set_email(u.id, new) is not None
+
+    assert _chat_rows(old) == dict.fromkeys((*_CHAT_TABLES, "llm_usage"), 0)
+    assert _chat_rows(new) == dict.fromkeys((*_CHAT_TABLES, "llm_usage"), 1)
+    with psycopg.connect(postgres_dsn()) as conn:
+        titles = [row[0] for row in conn.execute(
+            "SELECT title FROM chat_conversation WHERE user_email = %s", (new,)
+        ).fetchall()]
+        (instruction,) = conn.execute(
+            "SELECT content FROM user_instruction WHERE user_email = %s", (new,)
+        ).fetchone()
+        (owner,) = conn.execute(
+            "SELECT user_email FROM chat_conversation WHERE id = %s", (mine,)
+        ).fetchone()
+    assert titles == ["tea"] and instruction == "Answer briefly." and owner == new

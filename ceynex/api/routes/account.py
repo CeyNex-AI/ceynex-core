@@ -114,7 +114,8 @@ async def delete_account(
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> AccountDeletedResponse:
     """Delete the caller's own account and everything keyed to its email
-    (history, API keys, preferences). Current password required. Refused (409)
+    (history, API keys, preferences, conversations, instructions; its spend
+    records stay, unattributed). Current password required. Refused (409)
     if the caller is the last enabled admin — deleting your way to a
     zero-admin deployment is the same lockout the admin routes guard against."""
     current = _require_current_password(user.email, body.current_password)
