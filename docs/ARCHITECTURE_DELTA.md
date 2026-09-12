@@ -590,6 +590,32 @@ demo can have conversation without ever being interrupted by a question, and a
 reviewer comparing answers against `queries.md` can turn the gate off without
 losing chat.
 
+### D13, amended 2026-09-12 — the card's choices deliver what they say
+
+Two defects, and the owner's call on one of them.
+
+**A chosen item was not the item analysed.** The resume path appends the
+reader's choice to their question: "How are tea and cinnamon exports doing —
+specifically: cinnamon". Every agent reads its item through
+`agents/common.py::parse_intent`, which takes the first item the text names, in
+`ITEM_KEYWORDS` order. So a reader who picked cinnamon got a tea analysis, said
+with full confidence. That was seen on the running API, USD 1.37 bn of tea for a
+cinnamon question. It went unnoticed because the Playwright spec picks the first
+chip and the multi-turn set answered "both". `parse_intent` now reads an item
+named after `CHOSEN_MARKER` ahead of the rest of the question. Only the
+clarifier writes that marker, so no other question parses differently. The
+30-question set carries none.
+
+**"both" is no longer offered (the owner's call).** For two items the template
+added "both". It composed a query the single-item agents answered for one item,
+noting the other was unavailable. That was honest, but it was a choice promising
+more than the analysis delivers. Running two analyses was the alternative, and
+it was declined: it doubles a turn's fan-out to serve a phrasing the gate exists
+to disambiguate. The template offers the items. Rule 5 of `CLARIFIER_SYSTEM`
+tells the model the same. `OFFERS_A_COMBINATION` replaces any phrasing that still
+promises "both" or "all of them" with the template's own question, so the
+wording never offers what the options do not hold.
+
 ---
 
 ## D14 — general web search as enrichment, never as an agent

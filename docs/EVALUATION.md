@@ -1070,6 +1070,12 @@ The one clarified turn was answered through the resume path with the template's
 last option ("both"), the composed query ran the graph, and the gate did not ask
 again — the one-round cap holding in a real turn, not a route test.
 
+*The set changed on 2026-09-12 and these figures predate it.* "both" is no longer
+offered (D13, amended), so C05's clarified turn now names its answer, cinnamon.
+That is also the case that was broken: a reader's second-named choice was
+answered with the first item. The run above has not been repeated on the
+changed set.
+
 ### Cost and shape, by mode — the number that replaces "3 frames against 22"
 
 That figure, quoted in D13 and in `IMPLEMENTED_FEATURES.md`, was measured before

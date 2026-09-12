@@ -362,25 +362,41 @@ remains only after every resume attempt has failed. The write-up is the amended
 D12 in [ARCHITECTURE_DELTA.md](ARCHITECTURE_DELTA.md); this heading stays so the
 earlier statement is not simply gone.
 
-## Two things the live pass found and left as they are
+## Two things the live pass found — decided and built 2026-09-12
 
-**A cached routing decision is sticky.** The prompt cache (168-hour TTL) keys on
-the prompt, so when the LLM router drops an agent on a question — S07's
+The 2026-09-11 live pass left both of these open, because the choice belonged
+to the owner. The owner decided both on 2026-09-12.
+
+**A cached routing decision was sticky.** The prompt cache (168-hour TTL) keys
+on the prompt. So when the LLM router dropped an agent on a question — S07's
 one-in-five case, `EVALUATION.md` §8 — every later ask of that exact question
-replays the same route from the cache, evidence-free, in 30 ms, until the entry
-expires. Seen on 2026-09-11: the knitted-apparel question answered with no
-evidence from a cached decision and correctly three times out of three once the
-cache was cleared. Not caching a `router` result that fell back, or that dropped
-an agent the keyword router would have kept, is the shape of a fix; it changes
-what `make eval` measures and needs its own run.
+replayed the same route from the cache, evidence-free, in 30 ms, until the entry
+expired. It was seen on 2026-09-11: the knitted-apparel question answered with no
+evidence from a cached decision, and correctly three times out of three once the
+cache was cleared.
 
-**"both" on the clarification card promises more than the agent delivers.** The
-gate asks "tea, cinnamon, or both?"; the composed query still passes through the
-export agent's single-item `parse_intent`, so "both" answers tea and states that
-cinnamon figures were not available. Honest, and better than the silent drop the
-gate was built to expose, but the option should either run two analyses or not
-be offered. Recorded here rather than removed, because the template's options
-are pinned by a test and the choice belongs to the owner.
+- **Decided: don't cache suspect routes.** `router.py::llm_route` now drops the
+  cache entry for a response it could not trust: unparseable, naming no valid
+  agent, or dropping an agent `keyword_route` selected (`LLMReasoningClient.forget`).
+  The distrusted route is still used for that ask. The next ask routes afresh.
+- **Pinned by an end-to-end test** over the real client and on-disk cache.
+- **Still owed: the measurement.** A cold run of `make eval` cannot see this
+  change, by construction. What it changes is the *warm* run, so the check is a
+  cold-then-warm pair, and it is owed.
+
+**"both" on the clarification card promised more than the agent delivered.**
+The gate asked "tea, cinnamon, or both?". The composed query still passed
+through the single-item `parse_intent`, so "both" answered tea and said cinnamon
+figures were not available.
+
+- **Decided: stop offering it.** Running two analyses was the alternative. The
+  template now offers the items only, and a model phrasing that promises a
+  combination is replaced by the template's question.
+- **A worse defect was underneath (D13, amended).** Choosing *cinnamon* also
+  answered tea. `parse_intent` took the question's first-named item, not the
+  reader's choice. It now reads the choice first.
+- **Still owed: `make eval-chat`.** The multi-turn set's clarified turn now picks
+  cinnamon rather than "both", and it needs re-running.
 
 ## Verification still owed by a human
 
