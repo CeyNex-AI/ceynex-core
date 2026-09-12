@@ -1251,3 +1251,38 @@ open; re-running this against the deployed VM itself (with the cost and
 availability implications that implies) is the remaining step before this is
 called measured against production rather than against a production-shaped
 local stack.
+
+### The sustained, signed-in run: the rule, written before it ran (2026-09-12)
+
+The burst above answers availability for one moment of 50 anonymous callers.
+SRS 3.4.2 names *authenticated* users, and a moment is not load. So there is a
+second measurement, and its rule is fixed here before any of it runs.
+
+**Shape.** 50 users, each signed in with a real account and token (`--signed-in`).
+Each one asks, waits for the answer, and asks again no sooner than 2.5 s after
+its last question (`--mode sustained`). They run against uvicorn `--workers 2`
+with Redis, the deployed topology, over the local stack. That offers up to 1,200
+questions a minute, with every user under its 30 a minute. Both endpoints are
+run: `/api/query`, and `/api/chat/stream`, where the time that counts is the time
+to its `done` frame. Each run's baseline is `--mode sequential`: one user, each
+question once, same session, same endpoint.
+
+**Two runs.**
+
+- **(a) Degraded, no model key, 180 s.** This measures CeyNex's own capacity.
+- **(b) With the model, the prompt cache off, 3 questions per user (150).** This
+  largely measures the provider's tier. A provider's 429 reaches the reader as a
+  degraded answer, which is reported, not scored.
+
+**The rule** (`eval/load_test.py::verdict`), applied to each run:
+
+1. No failures: no 5xx, timeouts, connection errors, or turns ending `failed`. No
+   429s: the pacing keeps every user under its allowance, so a 429 is a limiter
+   or identity bug.
+2. Each category's p95 within its SRS 3.4.1 budget: 10 s single-sector, 20 s
+   cross-sector and simulation. That is the literal reading of "no material
+   increase in the response times specified".
+3. Reported, not scored: p95 under load over the same session's single-user
+   p95. Above 1.5× it reads as a material increase, even inside budget.
+4. A category whose single-user p95 already breaks its budget is reported as
+   breached at one user, not blamed on concurrency.
