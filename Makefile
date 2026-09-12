@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence docs clean
+.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-policy eval-policy-baseline coherence load-test docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -88,6 +88,14 @@ eval-policy:
 # Blind merge-coherence sheets for three human raters. Needs `make eval` first.
 coherence:
 	$(PYTHON) -m eval.coherence sheet --results eval_results.json --out coherence_sheet.csv
+
+# SRS 3.4.2 — 50 concurrent users against a *running* server, not the in-process
+# harness above. Needs `make up` and a server already started separately
+# (`$(PYTHON) -m uvicorn ceynex.api.main:app --host 127.0.0.1 --port 8000`) --
+# unlike the eval targets above, this Makefile does not own that process, so it
+# is not started here.
+load-test:
+	$(PYTHON) -m eval.load_test --json load_results.json
 
 # Governing documents -> plain text under docs/_text/ so they are greppable.
 # Reads the .docx whenever one sits beside a .pdf.

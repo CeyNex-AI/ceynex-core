@@ -789,3 +789,97 @@ that unstable, and nothing in D10 targeted latency.
   stable across runs because routing does not depend on the switch; the evidence
   columns are not, and a second pair of runs would be worth taking before these
   land in the Testing and Evaluation Document.
+
+## 8. Concurrency — 50 concurrent users (SRS 3.4.2)
+
+Measured **2026-09-12** with `eval/load_test.py`, the first measurement of this
+requirement — `docs/DEFERRED.md` had flagged it untested since the rate limiter
+shipped. Unlike §1's harness, which drives the orchestrator in-process, this
+sends real HTTP requests at a running server, because SRS 3.4.2 is a claim about
+serving capacity: the ASGI event loop, the Postgres/Neo4j connection pools, and
+the rate limiter, none of which an in-process call exercises.
+
+```bash
+make up
+.venv/Scripts/python -m uvicorn ceynex.api.main:app --host 127.0.0.1 --port 8000 &
+python -m eval.load_test --users 50 --timeout 45 --json load_results.json
+```
+
+**Setup differs from the deployed image in two ways this section must flag
+rather than gloss over.** `REDIS_URL` is unset locally, so the rate limiter runs
+`InProcessWindow`, and the server ran as a single `uvicorn` process, not the
+deployed `--workers 2`. Each virtual user still gets its own rate-limit identity
+(a distinct `X-Real-IP` per user — `load_test.py`'s own docstring explains why),
+so the *50-distinct-callers* shape of the test holds either way, but this
+measures one process's capacity, not the exact two-worker-behind-Redis topology
+running in production. Re-run against the deployed VM (or a local `--workers 2`
++ a real `REDIS_URL`) before quoting this as the production number.
+
+### Headline
+
+| | |
+|---|---|
+| Concurrent users | 50 |
+| Succeeded (HTTP 200) | **50 / 50** |
+| Failed / timed out | 0 |
+| Falsely rate-limited (429) | 0 |
+| Wall clock for all 50 | **13.3 s** |
+| Sum of the 50 individual latencies | 420.7 s |
+
+The wall-clock-vs-summed-latency gap is the actual concurrency result: 50
+requests that would take 7 minutes run one after another came back in 13
+seconds, because they ran together. That is also the negative check this
+section exists to make: PR #31/#32 (2026-08-26) fixed two blocking-call bugs
+that each froze the *entire* single-threaded event loop for every concurrent
+caller, not just the one whose query triggered them. A regression of either
+would have shown up here as a wall clock close to 420.7 s, not 13.3 s.
+
+| Category | n | p50 | p95 | budget (SRS 3.4.1) | within budget |
+|---|---|---|---|---|---|
+| single_sector | 24 | 8.0 s | 13.1 s | 10 s | **no** |
+| cross_sector | 20 | 8.7 s | 13.1 s | 20 s | yes |
+| simulation | 6 | 10.5 s | 13.3 s | 20 s | yes |
+
+**Single-sector's own SRS 3.4.1 budget does not survive 50 concurrent callers**,
+even though the system stayed fully available. §1's single-user p95 for this
+category has headroom against 10 s; at 50 concurrent users that headroom is
+gone and several individual requests ran past it. This is the first evidence
+that the single-sector budget is a single-user number, not a serving-capacity
+one, and the two should not be quoted interchangeably.
+
+### A second, real finding: LLM-provider capacity is the actual ceiling under load
+
+44 of the 50 answers came back **degraded** (SRS 3.4.3's contract: real figures
+and evidence, no prose) — the server itself never failed, but the two LLM
+providers behind it could not serve 50 concurrent callers. The failsafe's own
+free-tier limit is visible directly in the server log:
+
+```
+Rate limit exceeded: free-models-per-min. (X-RateLimit-Limit: 20)
+```
+
+20 requests/minute is well below 50 concurrent, so once several callers reached
+the failsafe together it was already exhausted for the rest. What is *not*
+cleanly established from this run is why the **primary** (OpenAI) call failed
+for nearly all of these before falling through to that failsafe at all — the
+server's own log, capturing ~50 coroutines logging concurrently to one
+redirected file, shows plenty of failsafe-side warnings but essentially none
+from the primary path's own `except` blocks, which is itself suspicious given
+the code guarantees one on every failed attempt (`ceynex/llm/client.py`). The
+likeliest read is a real capacity ceiling on the primary call under 50
+concurrent requests (nothing in `docs/DEFERRED.md`'s Operational section
+suggests the deployed key has been checked against OpenAI's own rate limit
+tier), not a code defect — but this run's log is not clean enough to say which,
+and re-measuring with per-request-tagged logging is worth doing before this is
+treated as settled. Filed here rather than silently left out, per this
+document's own rule about a headline number hiding what produced it (§1's
+"Read the denominators" note).
+
+**Net for SRS 3.4.2**: the system stays available and answers all 50 concurrent
+users with real figures and evidence — nobody gets an error or a hang. What
+degrades under load is answer *prose*, gracefully, exactly as SRS 3.4.3
+specifies, and single-sector latency, which breaches its single-user budget.
+Whether the LLM-provider ceiling found here is a deployed-key tier limit or
+something narrower is open, and re-running this against `--workers 2` + Redis
+(or the deployed VM, with the cost and availability implications that implies)
+is the natural next step before this is called measured against production.
