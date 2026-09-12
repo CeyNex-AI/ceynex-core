@@ -275,8 +275,13 @@ def test_the_assumptions_say_which_rate_was_used():
         )
     )
 
-    assert any("USTR" in a for a in sourced["assumptions"])
-    assert any("literature constant" in a for a in fallback["assumptions"])
+    # Which rate was used, and its source, is the shock formula's own working --
+    # now a dedicated evidence entry (`evidence_from_model`), not an assumption:
+    # `_collect_assumptions` caps the merged answer at four sentences across
+    # every contributing agent, and this sentence was being silently dropped
+    # whenever another agent's own caveats filled that cap first.
+    assert any("USTR" in e["claim"] for e in sourced["evidence"])
+    assert any("literature constant" in e["claim"] for e in fallback["evidence"])
     assert sourced["figures"]["apparel_impact_usd"] != fallback["figures"]["apparel_impact_usd"]
 
 

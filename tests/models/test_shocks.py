@@ -101,10 +101,16 @@ def test_the_shared_formula_matches_the_agents_old_output_to_the_cent(
 
 @pytest.mark.parametrize(("shock", "sector", "magnitude"), sorted(GOLDEN))
 def test_the_agent_wrapper_returns_exactly_the_same_tuple(config, shock, sector, magnitude):
-    """The agent's `(delta, pct, detail)` shape survives, byte for byte."""
+    """The agent's `(delta, pct, detail)` shape survives, byte for byte.
+
+    The wrapper now returns the full `ShockOutcome` (trade_economics.py needs
+    `.parameters` for its own evidence entry, not just this tuple) -- `.as_tuple()`
+    is the same historical shape, called explicitly rather than by indexing a
+    dataclass that was never meant to support it.
+    """
     wrapper = te._simulate_fx if shock == "fx" else te._simulate_tariff
     delta, pct, detail = GOLDEN[(shock, sector, magnitude)]
-    got = wrapper(sector, BASELINE, magnitude, config)
+    got = wrapper(sector, BASELINE, magnitude, config).as_tuple()
     assert got[0] == pytest.approx(delta, abs=1e-9)
     assert got[1] == pytest.approx(pct, abs=1e-12)
     assert got[2] == detail
@@ -120,9 +126,10 @@ def test_agreement_loss_through_the_agent_matches_its_old_output(config, sector)
         kg = KG()
 
     item = "apparel_knit" if sector == "apparel" else "tea"
-    (delta, pct, detail), _cypher = asyncio.run(
+    outcome, _cypher = asyncio.run(
         te._simulate_agreement_loss(Deps(), sector, item, BASELINE, config)
     )
+    delta, pct, detail = outcome.as_tuple()
     want = GOLDEN_AGREEMENT[sector]
     assert delta == pytest.approx(want[0], abs=1e-9)
     assert pct == pytest.approx(want[1], abs=1e-12)
