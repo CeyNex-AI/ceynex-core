@@ -14,6 +14,8 @@
 #                        (an analyse follow-up only). Case-insensitive.
 #   route:               agents the re-run must include (an analyse turn only).
 #   clarify:             true when the gate should ask one question back.
+#   answer:              the option the harness then picks (default: the first).
+#                        "both" is not an option since 2026-09-12 (D13, amended).
 #   grounded:            true when a discuss reply must not be withdrawn.
 #   refused_ok:          true when a decline is an acceptable analyse outcome
 #                        (an out-of-scope or no-data question).
@@ -66,7 +68,7 @@ conversations:
     title: the clarification gate fires on two items and is silent after
     turns:
       - query: How are tea and cinnamon exports doing?
-        expect: {clarify: true}
+        expect: {clarify: true, answer: cinnamon}
       # A forecast cannot be discussed out of a market-share answer, so this
       # must re-run — and the gate, having asked once, must not ask again.
       - query: Forecast tea export earnings for the next three years.

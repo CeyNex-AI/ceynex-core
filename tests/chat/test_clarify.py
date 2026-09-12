@@ -148,19 +148,20 @@ def test_the_gate_is_silent_on_every_question_the_project_actually_asks():
 
 
 async def test_the_model_phrases_but_never_changes_the_choice():
-    """Asked about tea and cinnamon, the real provider returned the question
-    "tea, cinnamon, or both?" while dropping "both" from its option list —
-    offering the reader a choice they could not then make. The options are the
-    deterministic check's, always; the model supplies wording and nothing else.
+    """Asked about tea and cinnamon, the real provider once returned a question
+    while dropping an option from its list — offering the reader a choice they
+    could not then make. The options are the deterministic check's, always; the
+    model supplies wording and nothing else.
     """
     trigger = clarification_needed("How did tea and cinnamon exports do last year?")
     assert trigger is not None
     narrowed = FakeLLMClient(
-        '{"ask": true, "question": "tea, cinnamon, or both?", "options": ["tea"]}'
+        '{"ask": true, "question": "Tea or cinnamon?", "options": ["tea"]}'
     )
     result = await llm_clarify(trigger, narrowed)
     assert result is not None
     assert result.method == "llm"
+    assert result.question == "Tea or cinnamon?"
     assert result.options == template_clarification(trigger).options
 
     widened = FakeLLMClient(
@@ -169,3 +170,48 @@ async def test_the_model_phrases_but_never_changes_the_choice():
     result = await llm_clarify(trigger, widened)
     assert result is not None
     assert "sapphires" not in result.options
+
+
+# --- "both" is not offered (docs/DEFERRED.md, the owner's call of 2026-09-12) --
+#
+# "both" composed a query the single-item export agent answered for the first
+# item only, stating the other was unavailable: a choice that promised more than
+# the analysis delivers. The owner's call was to stop offering it.
+
+
+def test_the_template_offers_the_items_and_nothing_else():
+    for query, items in [
+        ("How did tea and cinnamon exports do last year?", ["tea", "cinnamon"]),
+        ("How are tea, cinnamon and rubber exports doing?", ["tea", "cinnamon", "rubber"]),
+    ]:
+        trigger = clarification_needed(query)
+        assert trigger is not None, query
+        options = template_clarification(trigger).options
+        assert sorted(options) == sorted(items), query
+        assert "both" not in options
+
+
+async def test_a_phrasing_that_offers_a_combination_is_replaced_by_the_template():
+    """The real provider's own wording, before rule 5: it promised "both"."""
+    trigger = clarification_needed("How did tea and cinnamon exports do last year?")
+    assert trigger is not None
+    for question in ("tea, cinnamon, or both?", "Would you like all of them?",
+                     "Tea, cinnamon or each of them?"):
+        llm = FakeLLMClient(f'{{"ask": true, "question": "{question}", "options": ["tea"]}}')
+        result = await llm_clarify(trigger, llm)
+        assert result is not None
+        assert result.question == template_clarification(trigger).question, question
+        assert result.method == "template"
+        assert "both" not in result.options
+
+
+async def test_a_phrasing_that_offers_one_item_at_a_time_is_kept():
+    """The guard is narrow: "either" and "which" are choices, not combinations."""
+    trigger = clarification_needed("How did tea and cinnamon exports do last year?")
+    assert trigger is not None
+    llm = FakeLLMClient('{"ask": true, "question": "Which, tea or cinnamon? Either is fine.", "options": ["tea", "cinnamon"]}')
+    result = await llm_clarify(trigger, llm)
+    assert result is not None
+    assert result.method == "llm"
+    assert result.question.startswith("Which, tea or cinnamon?")
+
