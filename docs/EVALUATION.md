@@ -1555,74 +1555,6 @@ suggested.
 Anything else and the default stays `strict`, with the failing criterion
 recorded here. The rule is not revised after the runs.
 
-## 14. Rule 6a reworded — §9's rule, run again
-
-**Rule written 2026-09-12, before any run with the reworded rule 6a.** §9 kept
-`CEYNEX_CITATIONS` off because criteria 2 and 3 failed. The extra ungrounded
-figures fell into two classes:
-
-- One was the metric's: the signs §13 takes up.
-- The other was the prompt's: totals the model worked out itself and wrote
-  beside a citation. Examples are M03's *"a new total of about USD
-  1,318,528,338"* and M05's *"USD 2,872,929,484"*. Rule 2 already forbade such
-  figures, and rule 6a ("every figure a SOURCE states is cited") seemed to pull
-  against it.
-
-Rule 6a now ends:
-
-> Cite a figure only as a SOURCE states it: never add, subtract or combine
-> figures into a total, a difference or a new level, even beside a citation. If
-> a sentence would need a figure no SOURCE states, leave that figure out.
-
-Rule 6a exists only in the cited prompt, so it cannot move an off run.
-
-**#58 hides the derived-total class from §9's metrics, just as it hides §13's
-class.** A total like M03's appears in no finding. On today's code the merge
-guard discards the prose that states it and serves the deterministic
-composition, so the ungrounded metric never sees the figure. §9's six criteria
-alone would therefore pass a prompt that made the model write *more* such
-totals, as long as the guard kept throwing them away. So this rule adds
-criterion 7, on what the guard discards. That makes the rule harder to pass.
-
-Criterion 1 moves the other way, as in §13 and for the same reason. It is
-reported both ways, identical medians and within one question, so a reader can
-apply §9's rule verbatim.
-
-The runs: three cold runs with `CEYNEX_CITATIONS=on` (the cited runs) against
-three off runs, both under whichever grounding §13 adopts.
-
-- **If §13 adopts `direction`,** its direction runs serve as the off runs.
-  Criteria 2 and 3 then read the direction-aware metrics
-  (`answers_fully_grounded_direction_aware`,
-  `ungrounded_figures_total_direction_aware`).
-- **If it does not,** its strict runs serve as the off runs, and the criteria
-  read the strict metrics, exactly as §9 did.
-
-Both definitions are reported either way, and §13's void rule applies.
-
-| # | Criterion |
-|---|---|
-| 1 | Routing exact match and recall: the medians are at most one question (≤ 0.034) from the off runs'. §9's "identical" is reported beside it |
-| 2 | `answers_fully_grounded` median ≥ off median − 0.037 |
-| 3 | `ungrounded_figures_total` median ≤ off median + 1 |
-| 4 | `citations.marker_valid_rate` median ≥ 0.98 |
-| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 |
-| 6 | `crashed` = 0, and `answers_with_no_evidence` no higher than the off median |
-| 7 | `guards.answers_served_deterministic` median ≤ off median + 1 |
-
-Criteria 5 and 7 are not independent. A deterministic answer carries no
-markers, so every discard also lowers the cited-sentence rate. If both fail on
-the same answers, that is one failure counted twice, and the write-up says so.
-
-If all seven hold, `CEYNEX_CITATIONS` defaults to on. That is a prompt change,
-so it is redeployed. Otherwise the flag stays off, with the failing criterion
-recorded here.
-
-Reported beside the criteria, and not one of them: the number of derived totals
-per run, whether they reached the prose or were rejected in a discard. A derived
-total is a figure that is the sum or difference of two stated ones, and it is
-the class the rewording is for.
-
 ### Measured 2026-09-12 — all seven hold, and `direction` is the default
 
 Six cold runs, three each way, from 16:58 to 17:12, on the stack §9 used. It was
@@ -1703,3 +1635,71 @@ is unchanged by the flip: `answers_fully_grounded` and
 `ungrounded_figures_total` stay strict whichever way the flag is set. §14's off
 runs are therefore the direction runs above, and its criteria 2 and 3 read the
 direction-aware metrics.
+
+## 14. Rule 6a reworded — §9's rule, run again
+
+**Rule written 2026-09-12, before any run with the reworded rule 6a.** §9 kept
+`CEYNEX_CITATIONS` off because criteria 2 and 3 failed. The extra ungrounded
+figures fell into two classes:
+
+- One was the metric's: the signs §13 takes up.
+- The other was the prompt's: totals the model worked out itself and wrote
+  beside a citation. Examples are M03's *"a new total of about USD
+  1,318,528,338"* and M05's *"USD 2,872,929,484"*. Rule 2 already forbade such
+  figures, and rule 6a ("every figure a SOURCE states is cited") seemed to pull
+  against it.
+
+Rule 6a now ends:
+
+> Cite a figure only as a SOURCE states it: never add, subtract or combine
+> figures into a total, a difference or a new level, even beside a citation. If
+> a sentence would need a figure no SOURCE states, leave that figure out.
+
+Rule 6a exists only in the cited prompt, so it cannot move an off run.
+
+**#58 hides the derived-total class from §9's metrics, just as it hides §13's
+class.** A total like M03's appears in no finding. On today's code the merge
+guard discards the prose that states it and serves the deterministic
+composition, so the ungrounded metric never sees the figure. §9's six criteria
+alone would therefore pass a prompt that made the model write *more* such
+totals, as long as the guard kept throwing them away. So this rule adds
+criterion 7, on what the guard discards. That makes the rule harder to pass.
+
+Criterion 1 moves the other way, as in §13 and for the same reason. It is
+reported both ways, identical medians and within one question, so a reader can
+apply §9's rule verbatim.
+
+The runs: three cold runs with `CEYNEX_CITATIONS=on` (the cited runs) against
+three off runs, both under whichever grounding §13 adopts.
+
+- **If §13 adopts `direction`,** its direction runs serve as the off runs.
+  Criteria 2 and 3 then read the direction-aware metrics
+  (`answers_fully_grounded_direction_aware`,
+  `ungrounded_figures_total_direction_aware`).
+- **If it does not,** its strict runs serve as the off runs, and the criteria
+  read the strict metrics, exactly as §9 did.
+
+Both definitions are reported either way, and §13's void rule applies.
+
+| # | Criterion |
+|---|---|
+| 1 | Routing exact match and recall: the medians are at most one question (≤ 0.034) from the off runs'. §9's "identical" is reported beside it |
+| 2 | `answers_fully_grounded` median ≥ off median − 0.037 |
+| 3 | `ungrounded_figures_total` median ≤ off median + 1 |
+| 4 | `citations.marker_valid_rate` median ≥ 0.98 |
+| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 |
+| 6 | `crashed` = 0, and `answers_with_no_evidence` no higher than the off median |
+| 7 | `guards.answers_served_deterministic` median ≤ off median + 1 |
+
+Criteria 5 and 7 are not independent. A deterministic answer carries no
+markers, so every discard also lowers the cited-sentence rate. If both fail on
+the same answers, that is one failure counted twice, and the write-up says so.
+
+If all seven hold, `CEYNEX_CITATIONS` defaults to on. That is a prompt change,
+so it is redeployed. Otherwise the flag stays off, with the failing criterion
+recorded here.
+
+Reported beside the criteria, and not one of them: the number of derived totals
+per run, whether they reached the prose or were rejected in a discard. A derived
+total is a figure that is the sum or difference of two stated ones, and it is
+the class the rewording is for.
