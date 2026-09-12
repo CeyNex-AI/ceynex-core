@@ -1625,9 +1625,14 @@ the class the rewording is for.
 
 ### Measured 2026-09-12 — all seven hold, and `direction` is the default
 
-Six cold runs, three each way, from 16:58 to 17:12 at `3675cb7`, on the stack §9
-used. It was verified before the first run: 4,625 `fact_trade` rows, 4,625
-`EXPORTS_TO` edges and 901 policy chunks. No run was void: `provider_gave_up`
+Six cold runs, three each way, from 16:58 to 17:12, on the stack §9 used. It was
+verified before the first run: 4,625 `fact_trade` rows, 4,625 `EXPORTS_TO` edges
+and 901 policy chunks. The runs were taken on this branch before it was rebased
+onto `main` at `f80a703`. That rebase added only #80 and #81, and neither
+changes what the 30 questions do. #81 is the load test's own code. #80's two
+changes on this path act only on a clarified choice, marked by text none of
+the 30 contains, or on a route the router failed to produce, which is evicted
+from the cache afterwards rather than answered differently. No run was void: `provider_gave_up`
 was 0 in all six. The per-run files are in `eval_runs/grounding/`.
 
 | # | Criterion | strict (3 runs) | direction (3 runs) | holds? |
