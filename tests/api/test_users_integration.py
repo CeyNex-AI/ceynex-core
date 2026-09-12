@@ -16,6 +16,16 @@ from ceynex.settings import postgres_dsn
 
 PREFIX = "pytest-rbac-"
 
+# Captured at import, before `conftest.py::stub_token_epoch` swaps the lookup for
+# a constant 0 on every test in the package. That stub serves the route tests;
+# this module exists to exercise the real lookup, so it puts the real one back.
+_REAL_CURRENT_TOKEN_EPOCH = users.current_token_epoch
+
+
+@pytest.fixture(autouse=True)
+def real_token_epoch(stub_token_epoch, monkeypatch):
+    monkeypatch.setattr(users, "current_token_epoch", _REAL_CURRENT_TOKEN_EPOCH)
+
 
 @pytest.fixture
 def clean_users():
