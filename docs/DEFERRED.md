@@ -178,7 +178,8 @@ their loads add to mine rather than colliding with them. M2 seeds only
 
 ## Measured but not measured under load
 
-**SRS 3.4.2 wants 50 concurrent users. Nothing has tested that.** The latency
+**SRS 3.4.2 wants 50 concurrent users. Nothing tested that until 2026-09-12**
+(below). The latency
 figures in [EVALUATION.md](EVALUATION.md) are single-user, sequential by design
 so the numbers mean something per query. They pass their budgets with 5–15x
 headroom, and that headroom is partly because no LLM key was configured when
@@ -203,7 +204,7 @@ findings were re-checked same day against `--workers 2` + a real Redis** (the
 deployed topology, run against a standalone `redis:7` container rather than
 the deployed VM itself) and held: 43/50 degraded, single-sector p95 still over
 budget. Neither is a single-process artifact. Only the deployed VM itself
-remains unmeasured — see §8 for what's still open before this is quoted as the
+remains unmeasured — see §11 for what's still open before this is quoted as the
 production number.
 
 One thing that *does* exist between a load test and a real outage: the SRS
@@ -390,19 +391,30 @@ the clarification card, the workbench's sliders — are driven by pressing keys.
 None of it has been used with NVDA, JAWS or VoiceOver. Implementation and an
 automated scan are not that verification, and it is still owed.
 
-**A load test.** See "Measured but not measured under load" above; nothing in
-the conversational layer changes that, and a turn that outlives its reader (D12,
-amended) makes concurrent turns *more* likely to overlap, not less.
+**A load test of the conversational layer.** The one-shot endpoint now has one
+(`eval/load_test.py`, EVALUATION.md §11, above). It sends one burst of 50
+anonymous requests to `POST /api/query`. It does not cover signed-in readers,
+load held over time, or `POST /api/chat/stream`. There, a turn that outlives
+its reader (D12, amended) makes concurrent turns *more* likely to overlap, not
+less. It also has no degraded run to separate CeyNex's own capacity from the
+model provider's.
 
-**CI.** `.github/workflows/` still does not exist in either repo. Both suites —
-1,984 unit tests here, vitest and the Playwright suite in `ceynex-web` — run only
-on a developer machine. The unit suite needing Postgres for one test went
-unnoticed for a day for exactly this reason (fixed 2026-09-11).
+**CI — built for this repo on 2026-09-12, not yet for `ceynex-web`.**
+`.github/workflows/ci.yml` (PR #78) runs `ruff`, the unit suite on Python 3.11
+and 3.12, and the integration suite against real Postgres, Neo4j and Qdrant, on
+every PR and push to `main`, with no secrets. Running its jobs before it existed
+found three tests that passed only on a developer machine:
+- a retrieval unit test downloaded ~200 MB of models;
+- an RBAC integration test could never pass;
+- a web-search test depended on `.env` naming a Qdrant.
+
+All three are fixed. `ceynex-web`'s vitest and Playwright suites still run only
+on a developer machine.
 
 **The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
 deployed. The nginx heartbeat, resume and cancel checks were made against a real
 nginx container running the production `location /api/` directives, not against
-the frontend VM with TLS and the real network in play.
+the deployed host with TLS and the real network in play.
 
 ## Web-search results reaching an LLM — deliberately not built (D14)
 
