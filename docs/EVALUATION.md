@@ -1415,3 +1415,210 @@ The two LLM misses are §10's own, read the same way: C07's derived band width
 withheld by the grounding guard, and C08's defensible `analyse`. §10's two S07
 misses on C03 did not recur, which is that question's usual nondeterminism, not
 a fix. The degraded misses are §10's rewrite limit.
+
+## 13. Direction-aware grounding — the pre-registered rule
+
+**Rule written 2026-09-12, before any run with `CEYNEX_GROUNDING=direction`.**
+
+### Why the check needs changing
+
+§9 counted *"decrease by approximately USD 161,815,198"* as an ungrounded
+figure. The trade-economics agent writes every impact signed ("USD
+-161,815,198"). The model restates it unsigned, beside the word "decrease", and
+`grounding.ungrounded_figures` keeps the sign. So the prose counts as
+ungrounded. M01–M04 carried one such figure in every off run.
+
+**On today's code that class costs prose, not grounding.** Since §9 ran, main's
+#58 (`70513bb`) arrived with the merge. It grounds each agent's own explanation
+before the merge sees it. That closed a real hole: an unchecked explanation
+used to launder its figures into the corpus the merge guard trusts. It also
+moved this class out of the metric and into the guard. The strict guard now
+does two things:
+
+- It discards the trade-economics explanation ("states a figure not in its own
+  findings").
+- It then discards the merge prose.
+
+The reader gets the deterministic composition, marked degraded. The cold run
+§12 took on this code (`eval_runs/router-cache/cold.json`, plus its console log,
+which is not committed; the harness did not record discards until now) shows it:
+
+- **4 answers degraded** (M01–M04). There were none in any of §9's six runs.
+- **7 answers served as the deterministic composition.** 5 of them (X09, M01,
+  M02, M03, M04) are this class. The other 2 cite years the evidence does not
+  state.
+- The strict ungrounded count **fell from §9's 4 to 2**, because the prose
+  that carried those figures was never served.
+
+`tests/agents/test_common.py` pins the mechanism, at no cost:
+
+- the same explanation is discarded under `strict` and kept under `direction`;
+- a rise stated for a fall is discarded under both.
+
+The plan approved on 2026-09-12 judged this change on
+`ungrounded_figures_total` (median ≤ baseline − 1). The guard now hides the
+class from that metric, so that criterion would have failed a change that
+works. It is replaced below, before any run, by what the change is for: prose
+restored. The plan's routing criterion is replaced too, for the reason given
+in criterion 1.
+
+### The change
+
+It sits behind `CEYNEX_GROUNDING=direction` and is off by default.
+
+- An unsigned figure in the prose is grounded by the same figure carried
+  negative, **but only when the figure's own sentence says the value fell**
+  (`grounding.FELL`: decrease, decline, fall, drop, lower, reduce, loss and the
+  like).
+- A signed figure still matches only its own sign.
+- A figure with no fall word in its sentence is judged exactly as before.
+
+The check reads one sentence at a time, so the whole-prose guard and the
+streaming `SentenceGate` still reach the same verdict. The 450 seeded property
+cases in `tests/orchestrator/test_answer_stream.py` pass unchanged, and 100 more
+exercise the direction rule.
+
+Two properties are inherited from strict:
+
+- **The prefix rule.** Strict accepts a prose figure when a corpus figure
+  starts with its integer part. The same generosity now reaches negative
+  figures: "USD 161.8 million" is accepted for "USD -161,815,198", just as it
+  is for "161,815,198".
+- **No check on a positive figure's direction.** "Fell by 11,355,453" is
+  grounded by "USD +11,355,453" under both rules, as it always was.
+
+### What each run records
+
+Every run file carries all of the following:
+
+- **`answers_fully_grounded` and `ungrounded_figures_total`** stay strict
+  whichever way the flag is set, so the series above stays continuous.
+- **The `…_direction_aware` versions** sit beside them.
+- **`figures_accepted_by_direction_rule`** lists what only the new rule
+  accepts. Each entry carries its sentence and the evidence entry that
+  carries it negative.
+- **`guards.answers_served_deterministic`** counts answers whose composed
+  prose the merge guard discarded. The merge runs once per question, so each
+  discard is one answer. Each `prose_discarded` entry names the figures it
+  rejected.
+- **`guards.explanations_discarded`** counts agent explanations discarded,
+  one per agent, so it can exceed the number of answers.
+- **`provider_gave_up`** counts calls on which the primary provider gave up.
+
+### The rule
+
+Two conditions, three cold runs each, all with `CEYNEX_CITATIONS=off`:
+
+- `CEYNEX_GROUNDING=strict` (the strict runs)
+- `CEYNEX_GROUNDING=direction` (the direction runs)
+
+Same stack, same day, and the stack is verified before the first run as in §9.
+Medians decide. All seven criteria must hold for `direction` to become the
+default:
+
+| # | Criterion | Why |
+|---|---|---|
+| 1 | Routing exact match and recall: the direction runs' medians are at most one question (≤ 0.034) from the strict runs' | The flag is read only after routing, so routing cannot move. This checks that the two sets of runs are comparable. It is not "identical", as in §9. Routing exact match was 0.60 in 3 of the 10 cold runs in §8 and §9, and 0.5667 in the other 7. With that spread, two medians of three would differ about one time in three by chance alone. |
+| 2 | The direction runs' `guards.answers_served_deterministic` median ≤ the strict runs' median − 1 | The change exists to stop discarding correct prose. A change to a guard that restores nothing is not worth making. |
+| 3 | **Every** figure the direction rule accepts, in all six runs, is read against its sentence and its evidence entry. Each must state that the same quantity fell, by the same amount up to the stated rounding. If even one does not, the change fails outright. That includes a figure stated as a rise, as a level, as another quantity's change, or as a different amount | Two things let a figure through that should not pass. One is sentence scope: a fall word elsewhere in the sentence vouches for the figure. The other is the prefix rule: a rounded form shares only the leading digits. Only reading catches either. The list is computed against evidence, as the metric is. The guard checks a wider corpus: the question, summaries, figures and assumptions. A figure it accepts from that corpus which evidence does not ground shows up in both ungrounded lists instead, and criterion 4 counts it. |
+| 4 | The direction runs' `ungrounded_figures_total_direction_aware` median ≤ the strict runs' `ungrounded_figures_total` median + 1 | Prose the guard now keeps may bring in no figure except the ones the rule accepts. The +1 is §8's floor. |
+| 5 | The direction runs' `answers_fully_grounded_direction_aware` median ≥ the strict runs' `answers_fully_grounded` median − 0.037 | One question of 27, as in §9's criterion 2. |
+| 6 | `crashed` = 0 in every run, and the direction runs' `answers_with_no_evidence` median ≤ the strict runs' | Table stakes. |
+| 7 | `make eval-degraded` under each setting: every answer is byte-identical | The deterministic path writes no prose to check, so the flag must not reach it. This check is free and has no noise. |
+
+**Reported beside the criteria, not criteria themselves:**
+
+- `degraded_answers` and `guards.explanations_discarded`, the explanation
+  half of the same effect.
+- The strict metric on the direction runs. It will rise: the prose that comes
+  back states its impacts unsigned, which is exactly what the change accepts.
+- Latency.
+
+**Void runs.** A run with `provider_gave_up` > 0 is void. On some call the free
+failsafe answered, or nothing did, and that says nothing about CeyNex. A first
+attempt that fails followed by a retry that answers does not count.
+`degraded_answers` is not a void condition, because under `strict` it is part
+of the effect being measured.
+
+A void run is renamed `void-run-N.json` and kept. Its replacement is written as
+the next free `run-N.json` in the same directory. The summary is recomputed
+over the three counted runs, and both are reported.
+
+**The expected result, stated now.** It comes from the §12 cold run. That was a
+single run taken for another purpose, so it is a prior, not a baseline; the
+strict runs supply the baseline. The strict runs should serve about five
+answers deterministic for this class and two for other reasons. The direction
+runs should serve about two. Criterion 2 should therefore clear by about five,
+not one. A pass by exactly one would mean the class is smaller than one run
+suggested.
+
+Anything else and the default stays `strict`, with the failing criterion
+recorded here. The rule is not revised after the runs.
+
+## 14. Rule 6a reworded — §9's rule, run again
+
+**Rule written 2026-09-12, before any run with the reworded rule 6a.** §9 kept
+`CEYNEX_CITATIONS` off because criteria 2 and 3 failed. The extra ungrounded
+figures fell into two classes:
+
+- One was the metric's: the signs §13 takes up.
+- The other was the prompt's: totals the model worked out itself and wrote
+  beside a citation. Examples are M03's *"a new total of about USD
+  1,318,528,338"* and M05's *"USD 2,872,929,484"*. Rule 2 already forbade such
+  figures, and rule 6a ("every figure a SOURCE states is cited") seemed to pull
+  against it.
+
+Rule 6a now ends:
+
+> Cite a figure only as a SOURCE states it: never add, subtract or combine
+> figures into a total, a difference or a new level, even beside a citation. If
+> a sentence would need a figure no SOURCE states, leave that figure out.
+
+Rule 6a exists only in the cited prompt, so it cannot move an off run.
+
+**#58 hides the derived-total class from §9's metrics, just as it hides §13's
+class.** A total like M03's appears in no finding. On today's code the merge
+guard discards the prose that states it and serves the deterministic
+composition, so the ungrounded metric never sees the figure. §9's six criteria
+alone would therefore pass a prompt that made the model write *more* such
+totals, as long as the guard kept throwing them away. So this rule adds
+criterion 7, on what the guard discards. That makes the rule harder to pass.
+
+Criterion 1 moves the other way, as in §13 and for the same reason. It is
+reported both ways, identical medians and within one question, so a reader can
+apply §9's rule verbatim.
+
+The runs: three cold runs with `CEYNEX_CITATIONS=on` (the cited runs) against
+three off runs, both under whichever grounding §13 adopts.
+
+- **If §13 adopts `direction`,** its direction runs serve as the off runs.
+  Criteria 2 and 3 then read the direction-aware metrics
+  (`answers_fully_grounded_direction_aware`,
+  `ungrounded_figures_total_direction_aware`).
+- **If it does not,** its strict runs serve as the off runs, and the criteria
+  read the strict metrics, exactly as §9 did.
+
+Both definitions are reported either way, and §13's void rule applies.
+
+| # | Criterion |
+|---|---|
+| 1 | Routing exact match and recall: the medians are at most one question (≤ 0.034) from the off runs'. §9's "identical" is reported beside it |
+| 2 | `answers_fully_grounded` median ≥ off median − 0.037 |
+| 3 | `ungrounded_figures_total` median ≤ off median + 1 |
+| 4 | `citations.marker_valid_rate` median ≥ 0.98 |
+| 5 | `citations.figure_sentences_cited_rate` median ≥ 0.80 |
+| 6 | `crashed` = 0, and `answers_with_no_evidence` no higher than the off median |
+| 7 | `guards.answers_served_deterministic` median ≤ off median + 1 |
+
+Criteria 5 and 7 are not independent. A deterministic answer carries no
+markers, so every discard also lowers the cited-sentence rate. If both fail on
+the same answers, that is one failure counted twice, and the write-up says so.
+
+If all seven hold, `CEYNEX_CITATIONS` defaults to on. That is a prompt change,
+so it is redeployed. Otherwise the flag stays off, with the failing criterion
+recorded here.
+
+Reported beside the criteria, and not one of them: the number of derived totals
+per run, whether they reached the prose or were rejected in a discard. A derived
+total is a figure that is the sum or difference of two stated ones, and it is
+the class the rewording is for.
