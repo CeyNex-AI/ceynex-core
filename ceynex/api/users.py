@@ -195,6 +195,10 @@ def create_user(email: str, password: str, role: str) -> User:
         except psycopg.errors.UniqueViolation as exc:
             raise EmailTakenError(f"an account already exists for {email}") from exc
         row = cur.fetchone()
+        # A new account starts with nothing. Rows already filed under this
+        # address belong to a previous holder, left behind by a delete or an
+        # email change from before `_EMAIL_OWNED_TABLES` listed their table.
+        _delete_owned_rows(cur, email)
         conn.commit()
     return _row_to_user(row)
 
@@ -351,15 +355,52 @@ def set_disabled(user_id: int, *, disabled: bool) -> User | None:
 #: Tables that key rows to a user by email string rather than by `users.id`
 #: (they predate `users`). An email change reassigns them, a delete removes
 #: them, so history / keys / preferences don't outlive or misattribute the
-#: account. All three are `ensure_table`d in `main.py`'s lifespan, so they
-#: always exist by the time a request runs. `audit_log.actor_email` is
-#: deliberately NOT here — it is a historical record of who did a thing, not
-#: owned data.
-_EMAIL_OWNED_TABLES = ("query_history", "api_keys", "notification_preferences")
+#: account. `audit_log.actor_email` is deliberately NOT here — it is a
+#: historical record of who did a thing, not owned data.
+#:
+#: The conversational layer's tables are owned in the same sense: a reader's
+#: questions, the answers to them, and how they asked to be answered. Before
+#: they were listed here they outlived the account, and whoever next signed up
+#: with the address inherited them. `chat_message` and `chat_trace_event` carry
+#: no email; they go with their `chat_conversation` by `ON DELETE CASCADE`.
+#: `tests/api/test_email_owned_tables.py` fails when a table that keys rows by
+#: email is in neither this list nor `_EMAIL_ATTRIBUTED_TABLES`.
+_EMAIL_OWNED_TABLES = (
+    "query_history",
+    "api_keys",
+    "notification_preferences",
+    "user_instruction",
+    "chat_feedback",
+    "chat_pending_clarification",
+    "chat_conversation",
+)
+
+#: Kept when the account goes, but no longer attributed to it. A spend record is
+#: about money and outlives what it was spent on, exactly as it outlives a
+#: deleted conversation (`observability/ledger.py`: "the link goes, the row
+#: stays"). A delete clears the email; a change moves it with the account.
+_EMAIL_ATTRIBUTED_TABLES = ("llm_usage",)
+
+
+def _existing(cur: psycopg.Cursor, tables: tuple[str, ...]) -> list[str]:
+    """The tables that exist. Each is `ensure_table`d in `main.py`'s lifespan,
+    but this module is also used without the app (tests, scripts, a database
+    only `make db-init` has touched), and a signup must not fail because a
+    feature it never used has no table yet."""
+    cur.execute(
+        "SELECT t FROM unnest(%s::text[]) WITH ORDINALITY AS u(t, n) "
+        "WHERE to_regclass(t) IS NOT NULL ORDER BY n",
+        (list(tables),),
+    )
+    return [row[0] for row in cur.fetchall()]
 
 
 def _reassign_owned_rows(cur: psycopg.Cursor, old_email: str, new_email: str) -> None:
-    for table in _EMAIL_OWNED_TABLES:
+    # Whatever is already filed under the new address belongs to no live
+    # account (`set_email` has just claimed it), so it is a previous holder's,
+    # and must not be merged into this account's.
+    _delete_owned_rows(cur, new_email)
+    for table in _existing(cur, (*_EMAIL_OWNED_TABLES, *_EMAIL_ATTRIBUTED_TABLES)):
         cur.execute(
             f"UPDATE {table} SET user_email = %s WHERE user_email = %s",  # noqa: S608 - fixed table list
             (new_email, old_email),
@@ -367,9 +408,15 @@ def _reassign_owned_rows(cur: psycopg.Cursor, old_email: str, new_email: str) ->
 
 
 def _delete_owned_rows(cur: psycopg.Cursor, email: str) -> None:
-    for table in _EMAIL_OWNED_TABLES:
+    """Delete what `email` owns and unattribute what it spent."""
+    for table in _existing(cur, _EMAIL_OWNED_TABLES):
         cur.execute(
             f"DELETE FROM {table} WHERE user_email = %s",  # noqa: S608 - fixed table list
+            (email,),
+        )
+    for table in _existing(cur, _EMAIL_ATTRIBUTED_TABLES):
+        cur.execute(
+            f"UPDATE {table} SET user_email = NULL WHERE user_email = %s",  # noqa: S608 - fixed table list
             (email,),
         )
 
@@ -378,8 +425,8 @@ def set_email(user_id: int, new_email: str) -> User | None:
     """Change an account's email. New `User` on success, None if `user_id` is
     unknown. Raises `EmailTakenError` if `new_email` already belongs to another
     account. Bumps `token_epoch` (the JWT's `sub` is the old email, so every
-    existing session is invalid anyway) and reassigns the caller's
-    history / API keys / preferences to the new address."""
+    existing session is invalid anyway) and reassigns everything the caller
+    owns, conversations included, to the new address."""
     new_email = _norm_email(new_email)
     with psycopg.connect(postgres_dsn(), connect_timeout=3) as conn, conn.cursor() as cur:
         cur.execute(f"SELECT {_COLS} FROM users WHERE id = %s", (user_id,))  # noqa: S608 - _COLS is fixed
