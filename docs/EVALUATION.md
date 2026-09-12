@@ -1321,3 +1321,36 @@ model in the path. That is CeyNex's own capacity. It leaves the budget room, but
 the room is the model's to spend: §1 measures the single-user p95 *with* the
 model at 6.2–11.6 s, before any concurrency. Run (b) is the one that says how
 the two add up.
+
+### Measured 2026-09-12 — run (b), with the model: single-sector breaks its budget, and the provider is why
+
+Same setup as (a), with the model key present (the prompt cache still off), 50
+signed-in users asking 3 questions each. No failover key was set, so a failed
+call went straight to a degraded answer.
+
+| endpoint | requests | succeeded | 429 from CeyNex | degraded (one user → load) | p95 single / cross / simulation | × one user | first frame p95 |
+|---|---:|---:|---:|---|---|---|---:|
+| `/api/query` | 150 | 150 | 0 | 5 of 30 → 14 of 150 | **11.6** / 14.9 / 14.0 s | 1.3 / 2.1 / 2.7 | — |
+| `/api/chat/stream` | 150 | 150 | 0 | 5 of 30 → 21 of 150 | **13.4** / 15.9 / 14.8 s | 2.2 / 2.0 / 2.3 | 79 ms |
+
+**Both fail rule 2, on single-sector only.** The breach is not there at one user:
+the same session's single-user p95 was 9.2 s on `/api/query` and 6.1 s on the
+stream. So it comes with concurrency. Cross-sector and simulation kept their
+20 s budgets, and nothing failed or met a 429 from CeyNex.
+
+**The cause, from the API's own log.** OpenAI answered 429, "Rate limit reached
+for gpt-4o in organization …", on 208 first attempts across the two runs. 176
+calls were still refused after their retry and degraded. That also answers what
+this section left open above: why the primary call fell through under load. It
+is the account's rate limit on `gpt-4o`, the model `config/llm.yaml` gives the
+merge role. The stream's first frame stayed under 0.1 s throughout, so a reader
+sees the trace start at once even when the answer is late.
+
+**What SRS 3.4.2 therefore gets.** CeyNex's own serving path holds 50
+authenticated users inside every budget, with no failures (run a). The system
+with this model account does not hold single-sector's 10 s. The ceiling is the
+provider's tier, not the server. SRS 3.6.5 treats the model as a purchased
+component, and 3.4.2 allows capacity to grow "through standard scaling": a higher
+tier, a failover key (unset here), or the merge role on the cheaper model. Each
+of those is a change to measure the same way, under this same rule, before it
+is claimed.
