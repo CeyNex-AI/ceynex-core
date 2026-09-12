@@ -408,10 +408,10 @@ found three tests that passed only on a developer machine:
 - an RBAC integration test could never pass;
 - a web-search test depended on `.env` naming a Qdrant.
 
-All three are fixed. `ceynex-web` has its own workflow: lint and the production
-build since its PR #21, plus the vitest suite from the conversational branch.
-Its Playwright suite still runs only on a developer machine, because it drives
-a running API over a loaded stack.
+All three are fixed. `ceynex-web` has its own workflow: lint, a vitest suite and
+the production build (its PRs #21 and #22). The conversational branch adds its
+42 tests to that suite. Its Playwright suite still runs only on a developer
+machine, because it drives a running API over a loaded stack.
 
 **The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
 deployed. The nginx heartbeat, resume and cancel checks were made against a real
