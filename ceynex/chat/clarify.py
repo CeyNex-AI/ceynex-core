@@ -30,7 +30,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from ceynex.agents.common import ITEM_KEYWORDS, find_region, parse_intent
+from ceynex.agents.common import CHOSEN_MARKER, ITEM_KEYWORDS, find_region, parse_intent
 from ceynex.orchestrator.router import POLICY_WORDS, SIMULATION_WORDS, keyword_route
 
 log = logging.getLogger(__name__)
@@ -121,11 +121,14 @@ class Clarification:
 
         Appended rather than substituted: rewriting the user's own words risks
         changing what they asked, and the router reads the whole string anyway.
+        The marker is what makes the choice count. `parse_intent` reads an item
+        after `CHOSEN_MARKER` ahead of the question's first-named one, so every
+        agent analyses what the reader picked.
         """
         chosen = ", ".join(a.strip() for a in answers if a and a.strip())
         if not chosen:
             return original_query
-        return f"{original_query.rstrip('?').strip()} — specifically: {chosen}"
+        return f"{original_query.rstrip('?').strip()} {CHOSEN_MARKER} {chosen}"
 
 
 def _matching_items(lowered: str) -> list[str]:

@@ -215,3 +215,17 @@ async def test_a_phrasing_that_offers_one_item_at_a_time_is_kept():
     assert result.method == "llm"
     assert result.question.startswith("Which, tea or cinnamon?")
 
+
+def test_the_readers_choice_is_the_item_every_agent_analyses():
+    """Found 2026-09-12 on the running API: choosing cinnamon on the card for "How
+    are tea and cinnamon exports doing?" returned a tea analysis. `parse_intent`
+    took the first item the question named, and every agent reads its item there.
+    """
+    from ceynex.agents.common import parse_intent
+
+    trigger = clarification_needed("How are tea and cinnamon exports doing?")
+    assert trigger is not None
+    assert len(trigger.options) == 2
+    for choice in trigger.options:
+        composed = Clarification.compose(trigger.original_query, [choice])
+        assert parse_intent(composed).item == choice, composed
