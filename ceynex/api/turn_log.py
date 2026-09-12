@@ -126,11 +126,14 @@ class LocalTurn:
         """
         async with self._changed:
             if self.last_seq <= seq and not self.done:
+                # `asyncio.timeout`, not `asyncio.wait_for`, for the reason in
+                # `turn_runner._pump`: on 3.11, wait_for can swallow a
+                # cancellation, and it runs the wait in a separate task, so the
+                # Condition's lock is released in one task and re-taken in
+                # another. This keeps both in this task, as 3.12's wait_for does.
                 try:
-                    await asyncio.wait_for(
-                        self._changed.wait_for(lambda: self.last_seq > seq or self.done),
-                        timeout=timeout_s,
-                    )
+                    async with asyncio.timeout(timeout_s):
+                        await self._changed.wait_for(lambda: self.last_seq > seq or self.done)
                 except TimeoutError:
                     return []
             return self.after(seq)

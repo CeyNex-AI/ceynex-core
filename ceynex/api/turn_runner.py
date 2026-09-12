@@ -519,7 +519,14 @@ async def _pump(task: asyncio.Task, sink: trace.TraceSink, publish, *,
     try:
         while not task.done():
             try:
-                event = await asyncio.wait_for(sink.queue.get(), timeout=POLL_INTERVAL_S)
+                # `asyncio.timeout`, not `asyncio.wait_for`. On Python 3.11,
+                # wait_for returns the inner result, and swallows the
+                # cancellation, when the two land together (CPython gh-86296,
+                # fixed in 3.12 by rebuilding wait_for on asyncio.timeout). Here
+                # that is an event arriving as Stop does, and the turn then polls
+                # forever with its cancel lost. CI's 3.11 leg caught it.
+                async with asyncio.timeout(POLL_INTERVAL_S):
+                    event = await sink.queue.get()
             except TimeoutError:
                 if (replica is not None and user_email is not None
                         and await replica.cancel_requested(request_id)):
