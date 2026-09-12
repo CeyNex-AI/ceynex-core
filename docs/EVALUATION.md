@@ -803,56 +803,69 @@ the rate limiter, none of which an in-process call exercises.
 make up
 .venv/Scripts/python -m uvicorn ceynex.api.main:app --host 127.0.0.1 --port 8000 &
 python -m eval.load_test --users 50 --timeout 45 --json load_results.json
+
+# to match the deployed --workers 2 + Redis topology instead of one process:
+docker run -d --name ceynex-redis-loadtest -p 6379:6379 redis:7
+REDIS_URL=redis://127.0.0.1:6379/0 .venv/Scripts/python -m uvicorn \
+  ceynex.api.main:app --host 127.0.0.1 --port 8000 --workers 2 &
+python -m eval.load_test --users 50 --timeout 45 --json load_results_2w.json
 ```
 
-**Setup differs from the deployed image in two ways this section must flag
-rather than gloss over.** `REDIS_URL` is unset locally, so the rate limiter runs
-`InProcessWindow`, and the server ran as a single `uvicorn` process, not the
-deployed `--workers 2`. Each virtual user still gets its own rate-limit identity
-(a distinct `X-Real-IP` per user — `load_test.py`'s own docstring explains why),
-so the *50-distinct-callers* shape of the test holds either way, but this
-measures one process's capacity, not the exact two-worker-behind-Redis topology
-running in production. Re-run against the deployed VM (or a local `--workers 2`
-+ a real `REDIS_URL`) before quoting this as the production number.
+**First run's setup differed from the deployed image in two ways**: `REDIS_URL`
+unset (rate limiter running `InProcessWindow`), and a single `uvicorn` process,
+not the deployed `--workers 2`. Each virtual user still got its own rate-limit
+identity (a distinct `X-Real-IP` per user — `load_test.py`'s own docstring
+explains why), so the *50-distinct-callers* shape of the test held either way,
+but that first run measured one process's capacity, not the exact
+two-worker-behind-Redis topology running in production. **Re-run same day**
+against a standalone `redis:7` container (`REDIS_URL` pointed at it) and
+`uvicorn --workers 2` — the actual deployed shape — to check whether either
+finding below was a single-process artifact.
 
 ### Headline
 
-| | |
-|---|---|
-| Concurrent users | 50 |
-| Succeeded (HTTP 200) | **50 / 50** |
-| Failed / timed out | 0 |
-| Falsely rate-limited (429) | 0 |
-| Wall clock for all 50 | **13.3 s** |
-| Sum of the 50 individual latencies | 420.7 s |
+| | Single process, no Redis | `--workers 2` + Redis (matches deployed) |
+|---|---|---|
+| Concurrent users | 50 | 50 |
+| Succeeded (HTTP 200) | **50 / 50** | **50 / 50** |
+| Failed / timed out | 0 | 0 |
+| Falsely rate-limited (429) | 0 | 0 |
+| Wall clock for all 50 | 13.3 s | 14.6 s |
+| Sum of the 50 individual latencies | 420.7 s | 329.2 s |
+| Degraded answers | 44 / 50 | 43 / 50 |
 
-The wall-clock-vs-summed-latency gap is the actual concurrency result: 50
-requests that would take 7 minutes run one after another came back in 13
-seconds, because they ran together. That is also the negative check this
-section exists to make: PR #31/#32 (2026-08-26) fixed two blocking-call bugs
-that each froze the *entire* single-threaded event loop for every concurrent
-caller, not just the one whose query triggered them. A regression of either
-would have shown up here as a wall clock close to 420.7 s, not 13.3 s.
+Both runs land in the same place: full availability, a large wall-clock-vs-
+summed-latency gap either way (confirms genuine concurrent handling regardless
+of worker count — the negative check this section exists to run: PR #31/#32,
+2026-08-26, fixed two blocking-call bugs that each froze the *entire*
+single-threaded event loop for every concurrent caller, not just the one whose
+query triggered them; a regression of either would show a wall clock close to
+the summed figure, in either topology), and an almost identical degraded-answer
+rate. **The two-worker/Redis run does not fix what the single-process run
+found** — this was never a single-process artifact.
 
-| Category | n | p50 | p95 | budget (SRS 3.4.1) | within budget |
-|---|---|---|---|---|---|
-| single_sector | 24 | 8.0 s | 13.1 s | 10 s | **no** |
-| cross_sector | 20 | 8.7 s | 13.1 s | 20 s | yes |
-| simulation | 6 | 10.5 s | 13.3 s | 20 s | yes |
+| Category | Single process — p95 | 2 workers + Redis — p95 | budget (SRS 3.4.1) |
+|---|---|---|---|
+| single_sector | 13.1 s | 13.1 s | 10 s — **breached in both** |
+| cross_sector | 13.1 s | 14.6 s | 20 s — within budget in both |
+| simulation | 13.3 s | 7.9 s | 20 s — within budget in both |
 
-**Single-sector's own SRS 3.4.1 budget does not survive 50 concurrent callers**,
-even though the system stayed fully available. §1's single-user p95 for this
-category has headroom against 10 s; at 50 concurrent users that headroom is
-gone and several individual requests ran past it. This is the first evidence
-that the single-sector budget is a single-user number, not a serving-capacity
-one, and the two should not be quoted interchangeably.
+**Single-sector's own SRS 3.4.1 budget does not survive 50 concurrent callers,
+in either topology.** §1's single-user p95 for this category has headroom
+against 10 s; at 50 concurrent users that headroom is gone in both runs. This
+is the first evidence that the single-sector budget is a single-user number,
+not a serving-capacity one, and the two should not be quoted interchangeably —
+and adding a second worker plus the production rate-limit backend did not
+change that conclusion.
 
 ### A second, real finding: LLM-provider capacity is the actual ceiling under load
 
-44 of the 50 answers came back **degraded** (SRS 3.4.3's contract: real figures
-and evidence, no prose) — the server itself never failed, but the two LLM
-providers behind it could not serve 50 concurrent callers. The failsafe's own
-free-tier limit is visible directly in the server log:
+43-44 of the 50 answers came back **degraded** in both runs (SRS 3.4.3's
+contract: real figures and evidence, no prose) — the server itself never
+failed, but the two LLM providers behind it could not serve 50 concurrent
+callers, and adding a second worker plus Redis changed that by one answer, not
+by forty. The failsafe's own free-tier limit is visible directly in the server
+log, in both runs:
 
 ```
 Rate limit exceeded: free-models-per-min. (X-RateLimit-Limit: 20)
@@ -860,26 +873,36 @@ Rate limit exceeded: free-models-per-min. (X-RateLimit-Limit: 20)
 
 20 requests/minute is well below 50 concurrent, so once several callers reached
 the failsafe together it was already exhausted for the rest. What is *not*
-cleanly established from this run is why the **primary** (OpenAI) call failed
-for nearly all of these before falling through to that failsafe at all — the
-server's own log, capturing ~50 coroutines logging concurrently to one
-redirected file, shows plenty of failsafe-side warnings but essentially none
-from the primary path's own `except` blocks, which is itself suspicious given
-the code guarantees one on every failed attempt (`ceynex/llm/client.py`). The
-likeliest read is a real capacity ceiling on the primary call under 50
-concurrent requests (nothing in `docs/DEFERRED.md`'s Operational section
-suggests the deployed key has been checked against OpenAI's own rate limit
-tier), not a code defect — but this run's log is not clean enough to say which,
-and re-measuring with per-request-tagged logging is worth doing before this is
-treated as settled. Filed here rather than silently left out, per this
-document's own rule about a headline number hiding what produced it (§1's
-"Read the denominators" note).
+cleanly established from either run is why the **primary** (OpenAI) call
+failed for nearly all of these before falling through to that failsafe at
+all — both server logs, one capturing ~50 coroutines in a single process and
+the other split across two, show plenty of failsafe-side warnings but
+essentially zero from the primary path's own `except` blocks, which is itself
+suspicious given the code guarantees one on every failed attempt
+(`ceynex/llm/client.py`) — and no `daily spend cap ... reached` warning
+appears in either log, which rules out the R5 spend cap as the cause. Getting
+the same near-total silence on the primary path in a topology with half the
+concurrency per process (2 workers, ~25 requests each vs. 50 in one) argues
+against this being a log-interleaving artifact of one process handling all 50
+at once, and toward a real capacity ceiling on the primary call itself
+(nothing in `docs/DEFERRED.md`'s Operational section suggests the deployed key
+has been checked against OpenAI's own rate limit tier) — but neither run's log
+is clean enough to say that with certainty, and re-measuring with
+per-request-tagged logging (or reading `provider_status()` directly through
+the admin LLM-status route mid-run, rather than grepping console output) is
+worth doing before this is treated as settled. Filed here rather than silently
+left out, per this document's own rule about a headline number hiding what
+produced it (§1's "Read the denominators" note).
 
 **Net for SRS 3.4.2**: the system stays available and answers all 50 concurrent
-users with real figures and evidence — nobody gets an error or a hang. What
-degrades under load is answer *prose*, gracefully, exactly as SRS 3.4.3
-specifies, and single-sector latency, which breaches its single-user budget.
-Whether the LLM-provider ceiling found here is a deployed-key tier limit or
-something narrower is open, and re-running this against `--workers 2` + Redis
-(or the deployed VM, with the cost and availability implications that implies)
-is the natural next step before this is called measured against production.
+users with real figures and evidence — nobody gets an error or a hang, and that
+holds under both the local single-process setup and the `--workers 2` + Redis
+topology that matches what's deployed. What degrades under load is answer
+*prose*, gracefully, exactly as SRS 3.4.3 specifies, and single-sector latency,
+which breaches its single-user budget — and neither finding is a topology
+artifact, since both runs land in the same place. Whether the LLM-provider
+ceiling found here is a deployed-key tier limit or something narrower is still
+open; re-running this against the deployed VM itself (with the cost and
+availability implications that implies) is the remaining step before this is
+called measured against production rather than against a production-shaped
+local stack.
