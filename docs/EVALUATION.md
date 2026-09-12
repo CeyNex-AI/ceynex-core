@@ -1622,3 +1622,79 @@ Reported beside the criteria, and not one of them: the number of derived totals
 per run, whether they reached the prose or were rejected in a discard. A derived
 total is a figure that is the sum or difference of two stated ones, and it is
 the class the rewording is for.
+
+### Measured 2026-09-12 — all seven hold, and `direction` is the default
+
+Six cold runs, three each way, from 16:58 to 17:12 at `3675cb7`, on the stack §9
+used. It was verified before the first run: 4,625 `fact_trade` rows, 4,625
+`EXPORTS_TO` edges and 901 policy chunks. No run was void: `provider_gave_up`
+was 0 in all six. The per-run files are in `eval_runs/grounding/`.
+
+| # | Criterion | strict (3 runs) | direction (3 runs) | holds? |
+|---|---|---:|---:|---|
+| 1 | routing exact match / recall | 0.5667 [0.5667–0.60] / 0.8917 [0.8917–0.925] | 0.5667 [0.5667–0.5667] / 0.925 [0.8917–0.925] | **yes** — 0 and 0.033 apart |
+| 2 | answers served deterministic | 7 [6–7] | 2 [1–3] | **yes**, by five |
+| 3 | accepted figures, read one by one | — | 18 of 18 correct | **yes** |
+| 4 | ungrounded figures, each by its own definition | 2 [2–2] | 0 [0–0] | **yes** |
+| 5 | answers fully grounded, each by its own definition | 0.9259 [0.9259–0.9259] | 1.00 [1.00–1.00] | **yes** |
+| 6 | crashed / answers with no evidence | 0 / 1 [0–1] | 0 / 0 [0–1] | **yes** |
+| 7 | degraded run, answers byte-identical | 30 of 30 | 30 of 30 | **yes** |
+
+**Criterion 2 cleared by five, as predicted.** Five answers carry the sign
+class: X09 and M01–M04. The strict guard served every one of them as the
+deterministic composition, in every strict run. Every direction run served them
+as model prose.
+
+**The audit (criterion 3).** The direction rule accepted 18 figures: X09's two
+impacts and one each for M01–M04, in each of the three direction runs. The
+strict runs accepted none, because their prose for those questions was
+discarded before scoring.
+
+- Each sentence says that the quantity its evidence entry names fell, by the
+  same amount. 16 state the amount exactly. Two state it to the stated
+  rounding: "USD 8.24 million" for USD -8,240,802, and "USD 161.8 million" for
+  USD -161,815,198.
+- None states a rise, a level, another quantity or another amount.
+- The closest call is M04 in the second run: *"a decrease in overall
+  agriculture export revenue by approximately USD 2,573,111 … from a baseline
+  of USD 214,425,881"*. It is judged the same quantity because the figure, its
+  direction and its baseline are exactly the evidence entry's. That entry
+  itself labels cinnamon's revenue "Agriculture export revenue". "Overall" is
+  the model's word, added on top of the agent's own label. The label predates
+  this change (§9's served prose used it too) and is recorded in `DEFERRED.md`
+  as a wording defect in its own right.
+
+**Beside the criteria:**
+
+- **Degraded answers** fell from 5 [4–6] to 0 [0–1], and **explanations
+  discarded** from 5 [4–6] to 0 [0–1]. The simulation questions' own
+  explanations now survive too.
+- **The strict metric on the direction runs** reads 6 ungrounded [6–6] and
+  0.8148 fully grounded. That is exactly the six accepted figures per run, as
+  stated beforehand.
+- **Single-sector p95** was 5.1 s [5.1–5.8] strict and 7.7 s [5.9–9.5]
+  direction. Each is a p95 of 12 samples per run, which §8 says not to quote.
+
+**What `direction` still discards.** Three questions:
+
+- **S05:** a year the evidence does not state (2023/2024, or the forecast
+  horizon 2027).
+- **S10:** 2024.
+- **X07:** "-2020", in all three direction runs.
+
+X07 is not the rule's doing. Both rules judge a signed figure identically, and
+X07 recorded no explanation discard in either condition. So both conditions fed
+the merge the same inputs, and the 3-to-0 split is the merge model's own
+sampling. The figure is almost certainly a hyphenated year, "post-2020" or
+"2016-2020", which `grounding.NUMBER` reads as a negative number. The discarded
+prose is not kept, so which one cannot be shown. The strict guard discarded
+prose for the same "-2020" three times during §11's model-backed load run
+(its server log, not committed). It is recorded in `DEFERRED.md`.
+
+**Decision.** `CEYNEX_GROUNDING` now defaults to `direction`, in `settings.py`
+and `.env.example`. `strict` remains available, and it is the check every
+grounding figure before this section was measured with. The published series
+is unchanged by the flip: `answers_fully_grounded` and
+`ungrounded_figures_total` stay strict whichever way the flag is set. §14's off
+runs are therefore the direction runs above, and its criteria 2 and 3 read the
+direction-aware metrics.
