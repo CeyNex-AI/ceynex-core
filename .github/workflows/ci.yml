@@ -170,10 +170,14 @@ jobs:
         run: python -m ceynex.kg.load --schema --agreements
       - name: Integration tests
         working-directory: ceynex-core
-        # Deselected, not skipped, and not this repo's owner's to change (M3's).
-        # It asserts EDB/JAAF evidence that only a stack loaded with that data
-        # through `make ingest` holds. No CI database will hold it, and it fails
-        # the same way on any developer stack without it.
+        # Deselected, not skipped, and not this repo's owner's to change (both
+        # M3's). Each asserts EDB/JAAF apparel figures that exist only in a graph
+        # loaded from raw snapshots through `make ingest` and `make kg-load`, and
+        # those snapshots are not in git (only data/raw/*/PROFILE.md is). No CI
+        # database will hold them; both fail the same way on any developer stack
+        # without the data. The spot-check file's one test that passes here does
+        # so only because the graph is empty, so the whole file goes.
         run: >-
           python -m pytest -m integration -rfE -o faulthandler_timeout=120
           --deselect tests/agents/test_apparel_manufacturing.py::test_partner_query_against_the_real_merged_graph_finds_data
+          --deselect tests/kg/test_spotcheck.py
