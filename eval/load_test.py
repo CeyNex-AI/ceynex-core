@@ -329,16 +329,26 @@ async def run_sustained(base_url: str, users: int, timeout_s: float, *, endpoint
             out: list[Result] = []
             offset = user * pace_s / users
             k = 0
+            # `due` tracks the *actual* previous send, not a fixed offset+k*pace_s
+            # grid: a request that lands late (a slow response, scheduler jitter)
+            # would otherwise let the next one's absolute slot arrive less than
+            # `pace_s` after it actually went out, breaking the one guarantee this
+            # function makes — a user never sends sooner than pace_s after its last.
+            due = wall_start + offset
             while per_user is None or k < per_user:
-                due = wall_start + offset + k * pace_s
                 if duration_s is not None and due - wall_start >= duration_s:
                     break
                 wait = due - time.perf_counter()
                 if wait > 0:
                     await asyncio.sleep(wait)
+                # The next due date is pace_s after this dispatch, not after the
+                # response comes back - otherwise a slow reply would push every
+                # later send out by its own round-trip time on top of the pace.
+                dispatched_at = time.perf_counter()
                 q = questions[(user + k) % len(questions)]
                 out.append(await _ask(client, user, q, endpoint=endpoint, token=tokens[user],
                                       run_start=wall_start))
+                due = dispatched_at + pace_s
                 k += 1
             return out
 
