@@ -336,11 +336,16 @@ async def run_sustained(base_url: str, users: int, timeout_s: float, *, endpoint
             # function makes — a user never sends sooner than pace_s after its last.
             due = wall_start + offset
             while per_user is None or k < per_user:
-                if duration_s is not None and due - wall_start >= duration_s:
-                    break
                 wait = due - time.perf_counter()
                 if wait > 0:
                     await asyncio.sleep(wait)
+                # Checked against the real clock *after* waking, not against the
+                # pre-sleep `due` estimate: asyncio.sleep only guarantees waking
+                # at or after its target, and that overshoot (worse on Windows'
+                # coarser timer resolution) can carry a dispatch past duration_s
+                # even when `due` itself looked safely under the boundary.
+                if duration_s is not None and time.perf_counter() - wall_start >= duration_s:
+                    break
                 # The next due date is pace_s after this dispatch, not after the
                 # response comes back - otherwise a slow reply would push every
                 # later send out by its own round-trip time on top of the pace.
