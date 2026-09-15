@@ -4,6 +4,13 @@ Deliberately reports each dependency separately rather than a single boolean. Th
 system is *designed* to run degraded when the LLM is unavailable (SRS 3.4.3), so
 an LLM outage must not mark the container unhealthy and trigger a restart loop.
 Neo4j and Postgres being down is a different matter, and shows as `degraded`.
+
+This endpoint is public and unauthenticated (nginx proxies it with no auth check,
+for load-balancer/container-healthcheck probes), so `detail` must never carry
+anything past a boolean and a business metric -- it used to include
+`settings.redacted_dsn()` (host/port/username, password only, of Postgres), a
+utility meant for logs and error messages, not a public HTTP response. A ZAP
+active scan (2026-09-15) flagged the resulting internal-IP disclosure.
 """
 
 from __future__ import annotations
@@ -15,7 +22,7 @@ from fastapi import APIRouter, Depends
 
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.schemas import HealthResponse
-from ceynex.settings import postgres_dsn, redacted_dsn
+from ceynex.settings import postgres_dsn
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +48,6 @@ async def health(
         llm=llm_ok,
         detail={
             "fact_trade_rows": row_count,
-            "postgres": redacted_dsn(),
             "reasoning": "available" if llm_ok else "degraded: no API key, figures only",
         },
     )
