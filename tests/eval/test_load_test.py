@@ -82,10 +82,18 @@ async def test_a_sustained_user_never_asks_sooner_than_the_pace(monkeypatch):
 
 async def test_a_sustained_run_ends_at_its_duration(monkeypatch):
     _serve(monkeypatch, lambda request: httpx.Response(200, json={"degraded": False}))
-    results, wall = await load_test.run_sustained("http://api", 2, 5.0, duration_s=0.12,
-                                                  pace_s=0.05, questions=QUESTIONS)
+    duration_s, pace_s = 0.12, 0.05
+    results, wall = await load_test.run_sustained("http://api", 2, 5.0, duration_s=duration_s,
+                                                  pace_s=pace_s, questions=QUESTIONS)
     assert 2 <= len(results) <= 6
-    assert all(r.sent_at_s < 0.12 for r in results)
+    # A tight `< duration_s` bound is over-precise: the boundary check runs
+    # against the real clock, but real dispatch still follows a few Python
+    # statements later, and asyncio.sleep's own wake-up overshoot (worse on
+    # Windows' coarser timer resolution) occasionally carries that past the
+    # boundary by a few ms. Bound it by one full pace interval instead --
+    # generous against that jitter, while still catching a real bug (duration_s
+    # ignored outright would send every per_user request, not stop early).
+    assert all(r.sent_at_s < duration_s + pace_s for r in results)
 
 
 async def test_a_sustained_run_needs_a_bound():
