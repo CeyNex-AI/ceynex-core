@@ -34,6 +34,7 @@ _STORE_SEAMS = {
     "append": "append",
     "save_trace": "save_trace",
     "trace_for": "trace_for",
+    "set_title_if_unset": "set_title_if_unset",
 }
 
 
@@ -138,6 +139,15 @@ class FakeStore:
 
     async def save_trace(self, request_id, conversation_id, events):
         self.traces[request_id] = list(events)
+
+    async def set_title_if_unset(self, conversation_id, user_email, title):
+        """Mirrors the real `title IS NULL` guard: never overwrite a name
+        the user (or an earlier turn) already gave the conversation."""
+        c = self.conversations.get(conversation_id)
+        if c is None or c["user_email"] != user_email or c["title"] is not None:
+            return False
+        c["title"] = title[:80]
+        return True
 
     async def trace_for(self, request_id):
         return [
