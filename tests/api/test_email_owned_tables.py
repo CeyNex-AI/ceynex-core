@@ -24,7 +24,7 @@ EMAIL_COLUMN = re.compile(r"^\s*user_email\s", re.M)
 def _email_keyed_tables() -> set[str]:
     found: set[str] = set()
     for path in PACKAGE.rglob("*.py"):
-        for name, body in TABLE.findall(path.read_text()):
+        for name, body in TABLE.findall(path.read_text(encoding="utf-8")):
             if EMAIL_COLUMN.search(body):
                 found.add(name)
     return found
