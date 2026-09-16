@@ -401,12 +401,19 @@ figures were not available.
 
 ## Verification still owed by a human
 
-**A screen-reader pass.** WCAG 2.1 AA is implemented throughout the
-conversational layer and asserted by axe-core over every page state
-(`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths — the trace toggle,
-the clarification card, the workbench's sliders — are driven by pressing keys.
-None of it has been used with NVDA, JAWS or VoiceOver. Implementation and an
-automated scan are not that verification, and it is still owed.
+**A screen-reader pass — partially done 2026-09-16.** WCAG 2.1 AA is implemented
+throughout the conversational layer and asserted by axe-core over every page
+state (`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths — the trace
+toggle, the clarification card, the workbench's sliders — are driven by
+pressing keys, but neither is a person hearing the page. Ran the real script
+(`ceynex-web/e2e/SCREEN_READER.md`) for the first time, NVDA 2026.2 + Chrome
+against production (`https://34.47.150.194`): steps 1, 2 and 5 pass cleanly;
+step 4 mostly passes; steps 3 and 6 each found a real bug (`ceynex-web` #27 —
+sign-in doesn't move focus into the new page, #28 — the trace step list has
+blank/duplicated/placeholder entries, confirmed visually, not just by ear).
+Steps 7-13 (forecast chart, clarifying-question flow, Stop, Regenerate,
+network interruption, Account, Admin/scenario workbench) not yet run — still
+owed. Still untested with JAWS or VoiceOver on any platform.
 
 **A load test — measured on 2026-09-12, with one budget broken by the provider.**
 `eval/load_test.py` now also runs 50 *signed-in* users, sustained and paced
