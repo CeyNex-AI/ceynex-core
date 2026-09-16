@@ -401,19 +401,34 @@ figures were not available.
 
 ## Verification still owed by a human
 
-**A screen-reader pass — partially done 2026-09-16.** WCAG 2.1 AA is implemented
-throughout the conversational layer and asserted by axe-core over every page
-state (`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths — the trace
-toggle, the clarification card, the workbench's sliders — are driven by
-pressing keys, but neither is a person hearing the page. Ran the real script
-(`ceynex-web/e2e/SCREEN_READER.md`) for the first time, NVDA 2026.2 + Chrome
-against production (`https://34.47.150.194`): steps 1, 2 and 5 pass cleanly;
-step 4 mostly passes; steps 3 and 6 each found a real bug (`ceynex-web` #27 —
-sign-in doesn't move focus into the new page, #28 — the trace step list has
-blank/duplicated/placeholder entries, confirmed visually, not just by ear).
-Steps 7-13 (forecast chart, clarifying-question flow, Stop, Regenerate,
-network interruption, Account, Admin/scenario workbench) not yet run — still
-owed. Still untested with JAWS or VoiceOver on any platform.
+**A screen-reader pass — effectively done 2026-09-16.** WCAG 2.1 AA is
+implemented throughout the conversational layer and asserted by axe-core over
+every page state (`ceynex-web/e2e/`, run 2026-09-11), and the keyboard paths —
+the trace toggle, the clarification card, the workbench's sliders — are driven
+by pressing keys, but neither is a person hearing the page. Ran the real
+script (`ceynex-web/e2e/SCREEN_READER.md`) for the first time, NVDA 2026.2 +
+Chrome against production (`https://34.47.150.194`), in two sessions the same
+day. 12 of 13 steps now have a real verdict — only step 8's clarify-card live
+capture is still genuinely untested (the clarify gate didn't trigger for the
+script's exact question live; a routing/gate-tuning question, not chased this
+pass). Three real bugs found and fixed the same day, redeployed and
+re-verified live: `ceynex-web` **#27** (sign-in didn't move focus into the new
+page after a client-side route change — fixed by moving focus to
+`#main-content` on every route change past the first, mirroring
+`ClarifyCard.tsx`'s own pattern), **#28** (the trace step list had
+blank/duplicated/placeholder entries, confirmed visually not just by ear —
+frontend now falls back to readable text instead of silence/"(?)"; the
+underlying duplicate-events root cause is still open on the issue, traced to
+somewhere in the D12-D17 event emission path, not to any `.generate()` call
+site — all nine checked pass an explicit `role`), and a bug **found via
+step 8** rather than being about it: "Answer ready." stopped announcing after
+a conversation's first turn — a classic same-string aria-live no-op — fixed
+in `Chat.tsx` and re-verified live with two consecutive questions. One new
+bug found and filed, **not** fixed this session: `ceynex-web` **#29** (the
+forecast chart is exposed as an unhidden `role="application"` landmark that
+goes silent under single-step Down-arrow browsing, unlike the KG-viz panel's
+and reasoning-trace's own correctly-hidden canvases). Still untested with
+JAWS or VoiceOver on any platform.
 
 **A load test — measured on 2026-09-12, with one budget broken by the provider.**
 `eval/load_test.py` now also runs 50 *signed-in* users, sustained and paced
