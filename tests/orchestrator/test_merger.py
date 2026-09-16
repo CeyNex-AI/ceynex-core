@@ -590,6 +590,159 @@ async def test_a_price_decline_is_still_a_gap_even_when_value_is_answered():
     assert any("producer price" in gap.lower() for gap in result.unanswered)
 
 
+async def test_a_generic_sector_word_in_the_query_still_matches_an_item_decline():
+    """Regression, found live 2026-09-16: X02 asked "which sector... agriculture
+    or apparel?" -- generic sector wording, no item name -- while
+    apparel_manufacturing's decline named the specific item, "apparel_knit".
+    `_named_items(query)` saw no item at all (the query never says "knit" or
+    "woven"), so the item-identity match in `_same_item_already_answered`
+    always failed here, and a real, fully-answered EU-dependence comparison
+    kept a "cannot be determined" note attached.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Apparel knit exports to the European Union were USD 1.37bn in 2025, 42% of total apparel exports.",
+            figures={"share": 0.42},
+            evidence=[ev("KG", "Apparel knit export value to the EU was USD 1,370,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "apparel_manufacturing": output(
+            "apparel_manufacturing",
+            summary="There is no sourced export volume series available for apparel, specifically for knit items.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Which sector is more dependent on the European Union, agriculture or apparel?",
+            outputs=outputs,
+            route=["export_analytics", "apparel_manufacturing"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "USD 1.37bn" in result.answer or "1,370,000,000" in result.answer
+
+
+async def test_a_comparison_declines_second_item_does_not_block_the_match():
+    """Regression, found live 2026-09-16: X10 asked to compare rubber and woven
+    apparel; export_analytics answered rubber concentration correctly, but
+    agriculture_commodity's decline read "no sourced export volume series for
+    rubber, so a comparison... with woven apparel cannot be made" -- naming
+    *two* items. `_named_item`'s "exactly one item" rule returned `None` for
+    a decline shaped like this, so `_same_item_already_answered` could never
+    match it even though rubber, the decline's real subject, was answered.
+    """
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Rubber export destinations are diversified: Pakistan takes 24%, HHI 0.11 across 35 markets in 2025.",
+            figures={"hhi": 0.11},
+            evidence=[ev("KG", "Rubber export value to Pakistan was USD 40,000,000 in 2025.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary=(
+                "There is no sourced export volume series available for rubber, so a "
+                "comparison of destination concentration with woven apparel cannot be made."
+            ),
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Compare the destination concentration of rubber and woven apparel.",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "Pakistan takes 24%" in result.answer
+
+
+async def test_a_sectorless_comparison_still_suppresses_an_answered_items_decline():
+    """Regression, found live 2026-09-16: X09 ("which sector would be hurt more
+    by losing access to the United States market?") names no item and no
+    sector word at all -- both `_named_items(query)` and a literal
+    "agriculture"/"apparel" check come back empty -- so the old "item must be
+    named in the query" gate always refused to match, even though
+    trade_economics fully answered the comparison (and named "agriculture" in
+    its own summary) while agriculture_commodity's stale tea-volume decline
+    rode along.
+    """
+    outputs = {
+        "trade_economics": output(
+            "trade_economics",
+            summary=(
+                "Losing US market access would cut apparel export revenue by 9.4%, "
+                "compared to a 2.1% cut to agriculture export revenue -- apparel is hurt more."
+            ),
+            figures={"apparel_pct_change": -0.094, "agriculture_pct_change": -0.021},
+            evidence=[ev("KG", "US share of apparel exports was 34% in 2025.")],
+            confidence=0.81,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are no usable annual observations for tea export volume in the unified dataset.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Which sector would be hurt more by losing access to the United States market?",
+            outputs=outputs,
+            route=["trade_economics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "apparel is hurt more" in result.answer.lower() or "9.4%" in result.answer
+
+
+async def test_a_price_decline_is_not_a_gap_when_the_question_is_not_about_price():
+    """Regression, found live 2026-09-16: P01 asked which trade agreement
+    covers cinnamon -- nothing to do with price -- but agriculture_commodity's
+    cinnamon producer-price decline still surfaced, because the pre-2026-09-16
+    version of `_same_item_already_answered` only ever matched "volume"
+    declines. trade_economics' agreement_coverage answer has no `figures`
+    (it's a categorical GSP+ coverage fact, not a number), only `evidence` --
+    contrast `test_a_price_decline_is_still_a_gap_even_when_value_is_answered`
+    above, where the query genuinely does ask about price and the decline must
+    stay.
+    """
+    outputs = {
+        "trade_economics": output(
+            "trade_economics",
+            summary="Sri Lankan cinnamon exports to the European Union receive preferential access under the GSP+ agreement.",
+            figures={},
+            evidence=[ev("KG", "Cinnamon (HS 0906) is covered by the EU's GSP+ scheme.")],
+            confidence=0.7,
+        ),
+        "agriculture_commodity": output(
+            "agriculture_commodity",
+            summary="There are no usable annual observations for cinnamon producer prices in the FAOSTAT dataset.",
+            figures={}, confidence=0.20,
+        ),
+    }
+    result = await merge(
+        state(
+            query="Which trade agreement gives Sri Lankan cinnamon preferential access to the European Union?",
+            outputs=outputs,
+            route=["trade_economics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+
+    assert result.unanswered == []
+    assert "gsp+" in result.answer.lower()
+
+
 async def test_unanswered_from_outputs_suppresses_the_same_declines_as_merge():
     """`merge()` and this helper compute the same list by two paths, and the API
     route uses the helper. They diverged once already -- the bug this function's

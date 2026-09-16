@@ -30,7 +30,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ceynex.agents.common import ITEM_KEYWORDS
+from ceynex.agents.common import ITEM_KEYWORDS, SECTOR_FALLBACK_ITEMS
+from ceynex.agents.trade_economics import SECTOR_OF_ITEM
 from ceynex.contracts import AgentName, AgentOutput, AgentState, Evidence
 from ceynex.observability import trace
 from ceynex.orchestrator.answer_stream import SentenceGate
@@ -667,42 +668,102 @@ def _covered_by_another_finding(
     return _same_item_already_answered(query, decline, contributing)
 
 
+_METRIC_WORDS = ("volume", "price", "prices", "production")
+
+# Neither "agriculture" nor "apparel" is an `ITEM_KEYWORDS` entry -- agriculture
+# spans four items (tea/cinnamon/rubber/coconut) and apparel spans two
+# (apparel_knit/apparel_woven) -- so a sector-level question ("which sector,
+# agriculture or apparel...") or a generically-worded one ("apparel exports",
+# with no "knit"/"woven") never has an item to compare a decline against.
+_SECTOR_WORDS = frozenset(SECTOR_OF_ITEM.values())
+
+
 def _same_item_already_answered(
     query: str, decline: str, contributing: dict[AgentName, AgentOutput]
 ) -> bool:
-    """Narrower than the check above: item identity only, not full subject overlap.
+    """Narrower than the check above: item/sector identity, not full subject
+    overlap -- and metric-aware, so it only fires when the missing metric
+    is not itself what the question asked for.
 
-    Deliberately scoped to the one metric this is known to be safe for:
-    **export volume**. Export volume, export value, and export growth are
-    different measures of the same underlying "how is this item's trade
-    doing" question, so a volume series being empty does not mean that
-    question went unanswered once another finding reports it in value or
-    growth terms instead. Producer **price** and **production** are not
-    interchangeable with a trade-value answer the same way -- a missing price
-    or production series stays a real, reportable gap even when a value/volume
-    finding exists for the same item (e.g. a cinnamon producer-price question
-    genuinely has no answer when only export-value data exists), so those
-    decline shapes fall through to the exact-word check above unchanged.
+    Export volume, export value, and export growth are different measures of
+    the same underlying "how is this item's trade doing" question, so a
+    volume (or price, or production) series being empty does not mean the
+    question went unanswered once another finding reports it by a different
+    metric instead -- *unless the query itself asks for that exact metric*
+    ("what is the producer price trend for cinnamon?"), in which case the gap
+    is real and reportable regardless of what else was answered.
 
-    A decline of this shape names exactly one commodity (`ITEM_KEYWORDS`'s
-    canonical items or one of their synonyms -- "tea", "ceylon tea", ...). If
-    the query names that same commodity and a contributing finding also names
-    it while reporting at least one real figure, the specific series this
-    decline refuses is not something the reader still needs to hear about --
-    the question about that commodity was answered, just not by this agent's
-    metric. Requires the decline to name exactly one item (`_named_item`
-    returns `None` on zero or several) so this never fires on a decline whose
-    subject is ambiguous.
+    A decline of this shape names one commodity primarily (`ITEM_KEYWORDS`'s
+    canonical items or one of their synonyms -- "tea", "ceylon tea", ...),
+    even when it also names a second item purely as a comparison partner
+    ("no sourced export volume series for rubber, so a comparison with woven
+    apparel cannot be made" -- rubber is the actual gap; woven apparel is
+    just what it was being compared against). `_primary_item` reads the
+    decline in order and takes the first match for exactly this reason --
+    found live 2026-09-16 (X10), where requiring the decline to name exactly
+    one item left a two-item comparison decline unrecognisable.
+
+    The query side has to clear the same generic-wording gap. A cross-sector
+    question routinely says "apparel" or "agriculture exports" without ever
+    naming a specific item ("How would a 5% depreciation... affect apparel
+    exports compared to agriculture?"), so matching on item name alone missed
+    every one of these live (X02, X09, M01, M04, P01) -- the decline names a
+    specific item (e.g. apparel_knit) or commodity (cinnamon) while the query
+    only names its sector, or names nothing at all because the question is a
+    fully abstract "which sector..." comparison. `_named_sectors` and the
+    sector fallback below close that gap; when the query names neither an
+    item nor a sector, there is nothing to disambiguate against, so this
+    falls through to checking contributing coverage directly rather than
+    refusing to match.
     """
-    if "volume" not in decline.lower():
+    metrics_named = [m for m in _METRIC_WORDS if m in decline.lower()]
+    if not metrics_named:
         return False
-    item = _named_item(decline)
-    if item is None or item not in _named_items(query):
+    item = _primary_item(decline)
+    if item is None:
+        return False
+    sector = SECTOR_OF_ITEM.get(item)
+    query_items, query_sectors = _named_items(query), _named_sectors(query)
+    if (query_items or query_sectors) and item not in query_items and sector not in query_sectors:
+        return False
+    if any(metric.rstrip("s") in query.lower() for metric in metrics_named):
         return False
     return any(
-        output.get("figures") and item in _named_items(_covered_text(output))
+        (output.get("figures") or output.get("evidence"))
+        and (item in _named_items(_covered_text(output)) or sector in _named_sectors(_covered_text(output)))
         for output in contributing.values()
     )
+
+
+def _primary_item(text: str) -> str | None:
+    """The item a decline is actually *about* -- the earliest `ITEM_KEYWORDS`
+    match in reading order, falling back to a generic sector word
+    (`SECTOR_FALLBACK_ITEMS`, e.g. "apparel" -> apparel_knit) only when no
+    specific item is named at all. Deliberately "first match", not "the only
+    match" (contrast the stricter `_named_item`, still used by the exact-word
+    check above) -- see `_same_item_already_answered`'s docstring for why a
+    second, comparison-only item must not block this.
+    """
+    lowered = text.lower()
+    best_item, best_pos = None, None
+    for item, synonyms in ITEM_KEYWORDS.items():
+        for synonym in synonyms:
+            pos = lowered.find(synonym)
+            if pos != -1 and (best_pos is None or pos < best_pos):
+                best_item, best_pos = item, pos
+    if best_item is not None:
+        return best_item
+    for word, item in SECTOR_FALLBACK_ITEMS.items():
+        if word in lowered:
+            return item
+    return None
+
+
+def _named_sectors(text: str) -> set[str]:
+    """Literal sector words ("agriculture"/"apparel") named in `text` -- see
+    `_SECTOR_WORDS` for why these can't be resolved via `_named_items`."""
+    lowered = text.lower()
+    return {sector for sector in _SECTOR_WORDS if sector in lowered}
 
 
 def _covered_text(output: AgentOutput) -> str:
