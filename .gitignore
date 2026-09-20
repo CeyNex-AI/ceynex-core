@@ -80,3 +80,9 @@ coherence_sheet.rubric.txt
 /EDB_Permission_Letter.txt
 /CeyNex - EDB Permission Email.docx
 /CeyNex - EDB Permission Request Letter.docx
+
+# coverage artifacts (make coverage / CI --cov)
+.coverage
+.coverage.*
+coverage.json
+htmlcov/

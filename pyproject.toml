@@ -119,6 +119,17 @@ ignore = ["E501"]
 # code cares which wheel a module came from.
 known-first-party = ["ceynex", "eval"]
 
+[tool.coverage.run]
+source = ["ceynex"]
+# demo.py is a by-hand walkthrough script, run neither by the unit suite nor in
+# production, so counting its lines would understate how well the code that does
+# ship is covered.
+omit = ["ceynex/orchestrator/demo.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
