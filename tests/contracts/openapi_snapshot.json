@@ -1,0 +1,3123 @@
+{
+  "paths": {
+    "DELETE /api/account": {
+      "request": {
+        "$ref": "DeleteAccountRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "AccountDeletedResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "DELETE /api/chat/conversations/{conversation_id}": {
+      "params": [
+        "path:conversation_id*"
+      ],
+      "responses": {
+        "204": null,
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/account/api-keys": {
+      "responses": {
+        "200": {
+          "$ref": "ApiKeyListResponse"
+        }
+      }
+    },
+    "GET /api/account/instructions": {
+      "responses": {
+        "200": {
+          "$ref": "UserInstructionResponse"
+        }
+      }
+    },
+    "GET /api/account/preferences": {
+      "responses": {
+        "200": {
+          "$ref": "NotificationPreferences"
+        }
+      }
+    },
+    "GET /api/admin/audit-log": {
+      "responses": {
+        "200": {
+          "$ref": "AuditLogResponse"
+        }
+      }
+    },
+    "GET /api/admin/dq-flags": {
+      "params": [
+        "query:resolved",
+        "query:severity"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "DQFlagsResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/admin/llm/status": {
+      "responses": {
+        "200": {
+          "$ref": "LLMStatusResponse"
+        }
+      }
+    },
+    "GET /api/admin/models": {
+      "responses": {
+        "200": {
+          "$ref": "ModelsResponse"
+        }
+      }
+    },
+    "GET /api/admin/pipeline/status": {
+      "responses": {
+        "200": {
+          "$ref": "PipelineStatusResponse"
+        }
+      }
+    },
+    "GET /api/admin/users": {
+      "responses": {
+        "200": {
+          "$ref": "UsersResponse"
+        }
+      }
+    },
+    "GET /api/auth/me": {
+      "responses": {
+        "200": {
+          "$ref": "UserResponse"
+        }
+      }
+    },
+    "GET /api/chat/conversations": {
+      "params": [
+        "query:include_archived",
+        "query:limit"
+      ],
+      "responses": {
+        "200": {
+          "items": {
+            "$ref": "ConversationSummary"
+          },
+          "type": "array"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/chat/conversations/{conversation_id}": {
+      "params": [
+        "path:conversation_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "ConversationDetail"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/chat/conversations/{conversation_id}/trace/{request_id}": {
+      "params": [
+        "path:conversation_id*",
+        "path:request_id*"
+      ],
+      "responses": {
+        "200": {
+          "items": {
+            "$ref": "TraceEventItem"
+          },
+          "type": "array"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/chat/shared/{token}": {
+      "params": [
+        "path:token*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "SharedConversationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/chat/turns/{request_id}/events": {
+      "params": [
+        "header:last-event-id",
+        "path:request_id*",
+        "query:after"
+      ],
+      "responses": {
+        "200": {},
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/data/freshness": {
+      "responses": {
+        "200": {
+          "$ref": "DataFreshnessResponse"
+        }
+      }
+    },
+    "GET /api/graph/expand": {
+      "params": [
+        "query:node*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "GraphFragment"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/history": {
+      "params": [
+        "query:saved"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "QueryHistoryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/news/search": {
+      "params": [
+        "query:limit",
+        "query:q*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "NewsSearchResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/news/trending": {
+      "responses": {
+        "200": {
+          "$ref": "TrendingResponse"
+        }
+      }
+    },
+    "GET /api/site/theme": {
+      "responses": {
+        "200": {
+          "$ref": "SiteThemeResponse"
+        }
+      }
+    },
+    "GET /api/usage/all": {
+      "params": [
+        "query:days"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "UsageSummaryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /api/usage/limits": {
+      "responses": {
+        "200": {
+          "$ref": "UsageLimitsResponse"
+        }
+      }
+    },
+    "GET /api/usage/summary": {
+      "params": [
+        "query:days"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "UsageSummaryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "GET /health": {
+      "responses": {
+        "200": {
+          "$ref": "HealthResponse"
+        }
+      }
+    },
+    "PATCH /api/chat/conversations/{conversation_id}": {
+      "params": [
+        "path:conversation_id*"
+      ],
+      "request": {
+        "$ref": "ConversationPatchRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "ConversationSummary"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/account/api-keys": {
+      "request": {
+        "$ref": "CreateApiKeyRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "CreateApiKeyResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/account/api-keys/{key_id}/revoke": {
+      "params": [
+        "path:key_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "RevokeApiKeyResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/account/email": {
+      "request": {
+        "$ref": "ChangeEmailRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "LoginResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/account/password": {
+      "request": {
+        "$ref": "ChangePasswordRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "PasswordChangedResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/dq-flags/{flag_id}/resolve": {
+      "params": [
+        "path:flag_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "ResolveDQFlagResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/pipeline/ingest": {
+      "request": {
+        "$ref": "IngestRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "IngestResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/retrain": {
+      "request": {
+        "$ref": "RetrainRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "ModelSummary"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/users": {
+      "request": {
+        "$ref": "CreateUserRequest"
+      },
+      "responses": {
+        "201": {
+          "$ref": "UserMutationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/users/{user_id}/disable": {
+      "params": [
+        "path:user_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "UserMutationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/users/{user_id}/enable": {
+      "params": [
+        "path:user_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "UserMutationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/users/{user_id}/password": {
+      "params": [
+        "path:user_id*"
+      ],
+      "request": {
+        "$ref": "SetUserPasswordRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "UserMutationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/admin/users/{user_id}/role": {
+      "params": [
+        "path:user_id*"
+      ],
+      "request": {
+        "$ref": "SetRoleRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "UserMutationResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/auth/login": {
+      "request": {
+        "$ref": "LoginRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "LoginResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/auth/signup": {
+      "request": {
+        "$ref": "SignupRequest"
+      },
+      "responses": {
+        "201": {
+          "$ref": "LoginResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/clarify/{pending_id}/answer": {
+      "params": [
+        "path:pending_id*"
+      ],
+      "request": {
+        "$ref": "ClarifyAnswerRequest"
+      },
+      "responses": {
+        "200": {},
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/conversations": {
+      "request": {
+        "$ref": "ConversationCreateRequest"
+      },
+      "responses": {
+        "201": {
+          "$ref": "ConversationSummary"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/conversations/{conversation_id}/share": {
+      "params": [
+        "path:conversation_id*"
+      ],
+      "request": {
+        "$ref": "ShareRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "ShareResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/messages/{message_id}/feedback": {
+      "params": [
+        "path:message_id*"
+      ],
+      "request": {
+        "$ref": "FeedbackRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "FeedbackResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/messages/{message_id}/regenerate": {
+      "params": [
+        "path:message_id*"
+      ],
+      "responses": {
+        "200": {},
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/stream": {
+      "request": {
+        "$ref": "ChatStreamRequest"
+      },
+      "responses": {
+        "200": {},
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/chat/turns/{request_id}/cancel": {
+      "params": [
+        "path:request_id*"
+      ],
+      "responses": {
+        "202": {
+          "type": "object"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/history/{entry_id}/save": {
+      "params": [
+        "path:entry_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "SaveQueryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/history/{entry_id}/unsave": {
+      "params": [
+        "path:entry_id*"
+      ],
+      "responses": {
+        "200": {
+          "$ref": "SaveQueryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/query": {
+      "request": {
+        "$ref": "QueryRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "QueryResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/scenario/run": {
+      "request": {
+        "$ref": "ScenarioRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "ScenarioResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "POST /api/site/theme": {
+      "request": {
+        "$ref": "SetSiteThemeRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "SiteThemeResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "PUT /api/account/instructions": {
+      "request": {
+        "$ref": "UserInstructionRequest"
+      },
+      "responses": {
+        "200": {
+          "$ref": "UserInstructionResponse"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    },
+    "PUT /api/account/preferences": {
+      "request": {
+        "$ref": "NotificationPreferences"
+      },
+      "responses": {
+        "200": {
+          "$ref": "NotificationPreferences"
+        },
+        "422": {
+          "$ref": "HTTPValidationError"
+        }
+      }
+    }
+  },
+  "schemas": {
+    "AccountDeletedResponse": {
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "AnswerGraph": {
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "GraphEdge"
+          },
+          "type": "array"
+        },
+        "focus_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nodes": {
+          "items": {
+            "$ref": "GraphNode"
+          },
+          "type": "array"
+        },
+        "queries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ApiKeyItem": {
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "last_used_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "created_at",
+        "id",
+        "key_prefix",
+        "label",
+        "last_used_at",
+        "revoked"
+      ],
+      "type": "object"
+    },
+    "ApiKeyListResponse": {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "ApiKeyItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "type": "object"
+    },
+    "AuditLogItem": {
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "actor_email": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "logged_at": {
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "actor_email",
+        "id",
+        "logged_at",
+        "target"
+      ],
+      "type": "object"
+    },
+    "AuditLogResponse": {
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "AuditLogItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "ChangeEmailRequest": {
+      "properties": {
+        "current_password": {
+          "type": "string"
+        },
+        "new_email": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "current_password",
+        "new_email"
+      ],
+      "type": "object"
+    },
+    "ChangePasswordRequest": {
+      "properties": {
+        "current_password": {
+          "type": "string"
+        },
+        "new_password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "current_password",
+        "new_password"
+      ],
+      "type": "object"
+    },
+    "ChatMessageItem": {
+      "properties": {
+        "agents_used": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence_band": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "confidence_breakdown": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "degraded": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective_query": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "elapsed_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "items": {
+            "$ref": "EvidenceItem"
+          },
+          "type": "array"
+        },
+        "forecast": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "ForecastPointItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "graph": {
+          "anyOf": [
+            {
+              "$ref": "AnswerGraph"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounded": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query_history_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "regenerated_from": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "route": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "saved": {
+          "type": "boolean"
+        },
+        "sectors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "unanswered": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "UsageSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "content",
+        "role",
+        "seq"
+      ],
+      "type": "object"
+    },
+    "ChatStreamRequest": {
+      "properties": {
+        "conversation_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "ClarifyAnswerRequest": {
+      "properties": {
+        "answers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "skip": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConversationCreateRequest": {
+      "properties": {
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConversationDetail": {
+      "properties": {
+        "conversation": {
+          "$ref": "ConversationSummary"
+        },
+        "messages": {
+          "items": {
+            "$ref": "ChatMessageItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "conversation",
+        "messages"
+      ],
+      "type": "object"
+    },
+    "ConversationPatchRequest": {
+      "properties": {
+        "archived": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pinned": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ConversationSummary": {
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "message_count": {
+          "type": "integer"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "archived",
+        "created_at",
+        "id",
+        "message_count",
+        "pinned",
+        "title",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "CreateApiKeyRequest": {
+      "properties": {
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "type": "object"
+    },
+    "CreateApiKeyResponse": {
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "key_prefix": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "created_at",
+        "id",
+        "key",
+        "key_prefix",
+        "label"
+      ],
+      "type": "object"
+    },
+    "CreateUserRequest": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "password",
+        "role"
+      ],
+      "type": "object"
+    },
+    "DQFlagItem": {
+      "properties": {
+        "detected_at": {
+          "type": "string"
+        },
+        "flag_id": {
+          "type": "integer"
+        },
+        "hs_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metric": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "partner_iso3": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pct_diff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "period_start": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved": {
+          "type": "boolean"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_a": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_b": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value_a": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value_b": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "detected_at",
+        "flag_id",
+        "hs_code",
+        "item",
+        "metric",
+        "partner_iso3",
+        "pct_diff",
+        "period_start",
+        "resolved",
+        "severity",
+        "source_a",
+        "source_b",
+        "value_a",
+        "value_b"
+      ],
+      "type": "object"
+    },
+    "DQFlagsResponse": {
+      "properties": {
+        "flags": {
+          "items": {
+            "$ref": "DQFlagItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "flags"
+      ],
+      "type": "object"
+    },
+    "DataFreshnessResponse": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "last_ingest_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest_observation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observations": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "available"
+      ],
+      "type": "object"
+    },
+    "DeleteAccountRequest": {
+      "properties": {
+        "current_password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "current_password"
+      ],
+      "type": "object"
+    },
+    "EvidenceItem": {
+      "properties": {
+        "claim": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "period": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "claim",
+        "detail",
+        "source_id"
+      ],
+      "type": "object"
+    },
+    "FeedbackRequest": {
+      "properties": {
+        "rating": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rating"
+      ],
+      "type": "object"
+    },
+    "FeedbackResponse": {
+      "properties": {
+        "message_id": {
+          "type": "integer"
+        },
+        "rating": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "message_id",
+        "rating"
+      ],
+      "type": "object"
+    },
+    "ForecastPointItem": {
+      "properties": {
+        "lower": {
+          "type": "number"
+        },
+        "period": {
+          "type": "string"
+        },
+        "point": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "upper": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "lower",
+        "period",
+        "point",
+        "unit",
+        "upper"
+      ],
+      "type": "object"
+    },
+    "GraphEdge": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "properties": {
+          "type": "object"
+        },
+        "source": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "target",
+        "type"
+      ],
+      "type": "object"
+    },
+    "GraphFragment": {
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "GraphEdge"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "GraphNode"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "GraphNode": {
+      "properties": {
+        "focus": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "name"
+      ],
+      "type": "object"
+    },
+    "HTTPValidationError": {
+      "properties": {
+        "detail": {
+          "items": {
+            "$ref": "ValidationError"
+          },
+          "type": "array"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "HealthResponse": {
+      "properties": {
+        "detail": {
+          "type": "object"
+        },
+        "llm": {
+          "type": "boolean"
+        },
+        "neo4j": {
+          "type": "boolean"
+        },
+        "postgres": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "llm",
+        "neo4j",
+        "postgres",
+        "status"
+      ],
+      "type": "object"
+    },
+    "IngestRequest": {
+      "properties": {
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "IngestResponse": {
+      "properties": {
+        "results": {
+          "items": {
+            "$ref": "IngestResultItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "results"
+      ],
+      "type": "object"
+    },
+    "IngestResultItem": {
+      "properties": {
+        "dq_flags": {
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows_in": {
+          "type": "integer"
+        },
+        "rows_written": {
+          "type": "integer"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "dq_flags",
+        "rows_in",
+        "rows_written",
+        "source_id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "LLMStatusResponse": {
+      "properties": {
+        "openai": {
+          "$ref": "ProviderStatusItem"
+        },
+        "openrouter": {
+          "$ref": "ProviderStatusItem"
+        }
+      },
+      "required": [
+        "openai",
+        "openrouter"
+      ],
+      "type": "object"
+    },
+    "LoginRequest": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "password"
+      ],
+      "type": "object"
+    },
+    "LoginResponse": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "role",
+        "token"
+      ],
+      "type": "object"
+    },
+    "ModelSummary": {
+      "properties": {
+        "interval_level": {
+          "type": "number"
+        },
+        "item": {
+          "type": "string"
+        },
+        "metrics": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_class": {
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "saved_at": {
+          "type": "string"
+        },
+        "sector": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "training_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "interval_level",
+        "item",
+        "model_class",
+        "saved_at",
+        "sector",
+        "target",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ModelsResponse": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "ModelSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "models"
+      ],
+      "type": "object"
+    },
+    "NewsArticleItem": {
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "relevance": {
+          "type": "string"
+        },
+        "relevance_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seen_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_country": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "source_country",
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "NewsSearchResponse": {
+      "properties": {
+        "articles": {
+          "items": {
+            "$ref": "NewsArticleItem"
+          },
+          "type": "array"
+        },
+        "elapsed_ms": {
+          "type": "number"
+        },
+        "query": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "articles",
+        "elapsed_ms",
+        "query",
+        "source"
+      ],
+      "type": "object"
+    },
+    "NotificationPreferences": {
+      "properties": {
+        "dq_flag_alerts": {
+          "type": "boolean"
+        },
+        "forecast_updates": {
+          "type": "boolean"
+        },
+        "weekly_digest": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dq_flag_alerts",
+        "forecast_updates",
+        "weekly_digest"
+      ],
+      "type": "object"
+    },
+    "PasswordChangedResponse": {
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "token"
+      ],
+      "type": "object"
+    },
+    "PipelineRunItem": {
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows_written": {
+          "type": "integer"
+        },
+        "run_id": {
+          "type": "integer"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "finished_at",
+        "rows_written",
+        "run_id",
+        "source_id",
+        "started_at",
+        "status"
+      ],
+      "type": "object"
+    },
+    "PipelineStatusResponse": {
+      "properties": {
+        "runs": {
+          "items": {
+            "$ref": "PipelineRunItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "runs"
+      ],
+      "type": "object"
+    },
+    "ProviderStatusItem": {
+      "properties": {
+        "configured": {
+          "type": "boolean"
+        },
+        "last_checked_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configured",
+        "last_checked_at",
+        "last_error",
+        "status"
+      ],
+      "type": "object"
+    },
+    "QueryHistoryItem": {
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "asked_at": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "degraded": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "saved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "answer",
+        "asked_at",
+        "confidence",
+        "degraded",
+        "id",
+        "query",
+        "saved"
+      ],
+      "type": "object"
+    },
+    "QueryHistoryResponse": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "QueryHistoryItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "QueryRequest": {
+      "properties": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "QueryResponse": {
+      "properties": {
+        "agents_used": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "confidence_band": {
+          "type": "string"
+        },
+        "confidence_breakdown": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "degraded": {
+          "type": "boolean"
+        },
+        "elapsed_ms": {
+          "type": "number"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "EvidenceItem"
+          },
+          "type": "array"
+        },
+        "forecast": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "ForecastPointItem"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "graph": {
+          "anyOf": [
+            {
+              "$ref": "AnswerGraph"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "route": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sectors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unanswered": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "agents_used",
+        "answer",
+        "confidence",
+        "confidence_band",
+        "degraded",
+        "elapsed_ms",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "ResolveDQFlagResponse": {
+      "properties": {
+        "flag_id": {
+          "type": "integer"
+        },
+        "resolved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "flag_id",
+        "resolved"
+      ],
+      "type": "object"
+    },
+    "RetrainRequest": {
+      "properties": {
+        "item": {
+          "type": "string"
+        },
+        "sector": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "sector"
+      ],
+      "type": "object"
+    },
+    "RevokeApiKeyResponse": {
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "revoked": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "revoked"
+      ],
+      "type": "object"
+    },
+    "SaveQueryResponse": {
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "saved": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "saved"
+      ],
+      "type": "object"
+    },
+    "ScenarioOutcome": {
+      "properties": {
+        "baseline_usd": {
+          "type": "number"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "parameters": {
+          "items": {
+            "$ref": "ScenarioParameter"
+          },
+          "type": "array"
+        },
+        "price_change_pct": {
+          "type": "number"
+        },
+        "revenue_change_pct": {
+          "type": "number"
+        },
+        "revenue_change_usd": {
+          "type": "number"
+        },
+        "sector": {
+          "type": "string"
+        },
+        "shock": {
+          "type": "string"
+        },
+        "volume_change_pct": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "baseline_usd",
+        "detail",
+        "parameters",
+        "price_change_pct",
+        "revenue_change_pct",
+        "revenue_change_usd",
+        "sector",
+        "shock",
+        "volume_change_pct"
+      ],
+      "type": "object"
+    },
+    "ScenarioOverrides": {
+      "properties": {
+        "agreement_loss_mfn_tariff": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "export_demand_elasticity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fx_pass_through": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tariff_incidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "ScenarioParameter": {
+      "properties": {
+        "basis": {
+          "type": "string"
+        },
+        "default": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "overridden": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "basis",
+        "default",
+        "name",
+        "overridden",
+        "source",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ScenarioRequest": {
+      "properties": {
+        "item": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "magnitude": {
+          "type": "number"
+        },
+        "overrides": {
+          "anyOf": [
+            {
+              "$ref": "ScenarioOverrides"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sector": {
+          "type": "string"
+        },
+        "shock": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sector",
+        "shock"
+      ],
+      "type": "object"
+    },
+    "ScenarioResponse": {
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "baseline_cypher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline_year": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "items": {
+            "$ref": "EvidenceItem"
+          },
+          "type": "array"
+        },
+        "item": {
+          "type": "string"
+        },
+        "magnitude": {
+          "type": "number"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "$ref": "ScenarioOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refused": {
+          "type": "boolean"
+        },
+        "sector": {
+          "type": "string"
+        },
+        "shock": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "assumptions",
+        "evidence",
+        "item",
+        "magnitude",
+        "refused",
+        "sector",
+        "shock"
+      ],
+      "type": "object"
+    },
+    "SetRoleRequest": {
+      "properties": {
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
+    "SetSiteThemeRequest": {
+      "properties": {
+        "theme": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "theme"
+      ],
+      "type": "object"
+    },
+    "SetUserPasswordRequest": {
+      "properties": {
+        "password": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "password"
+      ],
+      "type": "object"
+    },
+    "ShareRequest": {
+      "properties": {
+        "shared": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shared"
+      ],
+      "type": "object"
+    },
+    "ShareResponse": {
+      "properties": {
+        "shared": {
+          "type": "boolean"
+        },
+        "token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "shared"
+      ],
+      "type": "object"
+    },
+    "SharedConversationResponse": {
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "messages": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "SignupRequest": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "email",
+        "password"
+      ],
+      "type": "object"
+    },
+    "SiteThemeResponse": {
+      "properties": {
+        "theme": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "theme"
+      ],
+      "type": "object"
+    },
+    "TraceEventItem": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "node": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "payload": {
+          "type": "object"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "ts": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "seq",
+        "ts"
+      ],
+      "type": "object"
+    },
+    "TrendingArticleItem": {
+      "properties": {
+        "domain": {
+          "type": "string"
+        },
+        "seen_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "domain",
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "TrendingResponse": {
+      "properties": {
+        "computed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "partial": {
+          "type": "boolean"
+        },
+        "scopes": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "TrendingTopicItem": {
+      "properties": {
+        "articles_24h": {
+          "type": "integer"
+        },
+        "baseline_24h": {
+          "type": "number"
+        },
+        "delta_pct": {
+          "type": "number"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "top_articles": {
+          "items": {
+            "$ref": "TrendingArticleItem"
+          },
+          "type": "array"
+        },
+        "topic_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "articles_24h",
+        "baseline_24h",
+        "delta_pct",
+        "direction",
+        "label",
+        "prompt",
+        "scope",
+        "topic_id"
+      ],
+      "type": "object"
+    },
+    "UsageLimitsResponse": {
+      "properties": {
+        "cap_is_per_worker": {
+          "type": "boolean"
+        },
+        "daily_spend_cap_usd": {
+          "type": "number"
+        },
+        "deployment_cap_spent": {
+          "type": "boolean"
+        },
+        "limits": {
+          "items": {
+            "$ref": "UsageRollupItem"
+          },
+          "type": "array"
+        },
+        "per_user_daily_cap_usd": {
+          "type": "number"
+        },
+        "resets_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spent_today_by_you_usd": {
+          "type": "number"
+        },
+        "spent_today_usd": {
+          "type": "number"
+        },
+        "worker_count": {
+          "type": "integer"
+        },
+        "your_budget_spent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "daily_spend_cap_usd",
+        "spent_today_usd"
+      ],
+      "type": "object"
+    },
+    "UsageRollupItem": {
+      "properties": {
+        "calls": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "key": {
+          "type": "string"
+        },
+        "tokens_in": {
+          "type": "integer"
+        },
+        "tokens_out": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "calls",
+        "cost_usd",
+        "key",
+        "tokens_in",
+        "tokens_out"
+      ],
+      "type": "object"
+    },
+    "UsageSummary": {
+      "properties": {
+        "cache_hits": {
+          "type": "integer"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "tokens_in": {
+          "type": "integer"
+        },
+        "tokens_out": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "UsageSummaryResponse": {
+      "properties": {
+        "by_day": {
+          "items": {
+            "$ref": "UsageRollupItem"
+          },
+          "type": "array"
+        },
+        "by_role": {
+          "items": {
+            "$ref": "UsageRollupItem"
+          },
+          "type": "array"
+        },
+        "days": {
+          "type": "integer"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "total_calls": {
+          "type": "integer"
+        },
+        "total_cost_usd": {
+          "type": "number"
+        },
+        "total_tokens_in": {
+          "type": "integer"
+        },
+        "total_tokens_out": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "days",
+        "scope",
+        "total_calls",
+        "total_cost_usd",
+        "total_tokens_in",
+        "total_tokens_out"
+      ],
+      "type": "object"
+    },
+    "UserAdminItem": {
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "created_at",
+        "disabled",
+        "email",
+        "id",
+        "role"
+      ],
+      "type": "object"
+    },
+    "UserInstructionRequest": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "UserInstructionResponse": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_chars": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "content",
+        "enabled",
+        "max_chars"
+      ],
+      "type": "object"
+    },
+    "UserMutationResponse": {
+      "properties": {
+        "disabled": {
+          "type": "boolean"
+        },
+        "email": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "disabled",
+        "email",
+        "id",
+        "role"
+      ],
+      "type": "object"
+    },
+    "UserResponse": {
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "role"
+      ],
+      "type": "object"
+    },
+    "UsersResponse": {
+      "properties": {
+        "users": {
+          "items": {
+            "$ref": "UserAdminItem"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "users"
+      ],
+      "type": "object"
+    },
+    "ValidationError": {
+      "properties": {
+        "ctx": {
+          "type": "object"
+        },
+        "input": {},
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "msg": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "loc",
+        "msg",
+        "type"
+      ],
+      "type": "object"
+    }
+  }
+}

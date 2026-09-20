@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-repeat eval-repeat-cited eval-chat eval-chat-degraded eval-policy eval-policy-baseline coherence load-test docs clean
+.PHONY: up down logs test test-unit coverage lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-repeat eval-repeat-cited eval-chat eval-chat-degraded eval-policy eval-policy-baseline coherence load-test docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -45,6 +45,11 @@ test:
 
 test-unit:
 	$(PYTHON) -m pytest -m "not integration"
+
+# The unit suite with a coverage report and the same ratchet floor CI enforces.
+# 80.0%% when introduced (2026-09-19); raise the floor as it climbs.
+coverage:
+	$(PYTHON) -m pytest -m "not integration" --cov=ceynex --cov-report=term-missing --cov-fail-under=79
 
 lint:
 	$(PYTHON) -m ruff check .
