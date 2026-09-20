@@ -1,0 +1,98 @@
+# ceynex-core security scanning: SAST (bandit), dependency-vulnerability
+# scanning (pip-audit) and secrets scanning (gitleaks).
+#
+# Separate from ci.yml so a security regression is legible on its own and so
+# this file can be templated across the org's repos. Needs no secrets, like
+# ci.yml: gitleaks scans the checked-out history, pip-audit reads the resolved
+# dependency set, and bandit reads source. SRS 3.1.11.
+#
+# The `ceynex` namespace is split across two distributions; the dependency job
+# checks out ceynex-contracts beside this repo, the same layout ci.yml uses.
+
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # SAST. Runs against a committed baseline (bandit-baseline.json): the job
+  # fails on a NEW finding, not on the current triaged set. See the triage in
+  # pyproject.toml's [tool.bandit] comment. Regenerate the baseline only
+  # deliberately, never to bury a real finding.
+  sast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install "bandit>=1.9"
+      - run: bandit -r ceynex -b bandit-baseline.json
+
+  # Dependency-vulnerability scanning against the real resolved set (the
+  # backend image's extras plus dev), so a CVE in a transitive package is
+  # surfaced the way httpx2 2.10.0's was (PYSEC-2026-3846/3848/3849, pinned
+  # forward in pyproject).
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: ceynex-core
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: CeyNex-AI/ceynex-contracts
+          path: ceynex-contracts
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install ./ceynex-contracts
+          python -m pip install -e "./ceynex-core[dev,policy]"
+      - name: Audit dependencies
+        working-directory: ceynex-core
+        run: python -m pip_audit --progress-spinner off
+
+  # Secrets scanning over the full git history, so a key committed and later
+  # removed is still caught. .env is gitignored and has never been tracked;
+  # this guards against that changing.
+  #
+  # Runs the gitleaks CLI directly, not gitleaks-action@v2: that action refuses
+  # to run for a GitHub organization without a paid GITLEAKS_LICENSE secret,
+  # while the binary itself is MIT-licensed and free. Pinned to a version so a
+  # new release cannot turn an unrelated PR red.
+  secrets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: "8.21.2"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+          gitleaks version
+      - name: Scan git history for secrets
+        run: gitleaks detect --source . --redact --verbose

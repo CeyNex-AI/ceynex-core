@@ -1,4 +1,4 @@
-.PHONY: up down logs test test-unit coverage lint fmt install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-repeat eval-repeat-cited eval-chat eval-chat-degraded eval-policy eval-policy-baseline coherence load-test docs clean
+.PHONY: up down logs test test-unit coverage lint fmt security install ingest kg-load news-refresh db-init backtest eval eval-degraded eval-repeat eval-repeat-cited eval-chat eval-chat-degraded eval-policy eval-policy-baseline coherence load-test docs clean
 
 # Where the frozen contracts come from. Sibling checkout during the sprint;
 # override to pin a git ref once the repo is pushed:
@@ -56,6 +56,13 @@ lint:
 
 fmt:
 	$(PYTHON) -m ruff check --fix . && $(PYTHON) -m ruff format .
+
+# SAST + dependency-vulnerability scanning, the same two the security workflow
+# runs. bandit is checked against the committed baseline so this fails on a new
+# finding, not the current triaged set. Secrets scanning (gitleaks) is CI-only.
+security:
+	$(PYTHON) -m bandit -r ceynex -b bandit-baseline.json
+	$(PYTHON) -m pip_audit --progress-spinner off
 
 # Applies ceynex-contracts' schema.sql and seeds dim_country / dim_hs. Idempotent.
 # Runs against whatever POSTGRES_* in .env points at, so it serves both the local

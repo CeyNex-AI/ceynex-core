@@ -261,7 +261,11 @@ def load(sector: str, item: str, target: str, version: str = LATEST) -> Forecast
     if not artifact.exists():
         raise RegistryError(f"{sector}/{item}/{target}@{version} is not in the registry")
 
-    model = pickle.loads(artifact.read_bytes())
+    # The artifact is a model this registry itself wrote under CEYNEX_MODELS_DIR
+    # during retrain; it is never user-supplied. Write access to that directory
+    # is already a privileged, deploy-time operation, so loading it does not
+    # widen the trust boundary. Both scanners are told so on the line itself.
+    model = pickle.loads(artifact.read_bytes())  # noqa: S301  # nosec B301
     # Stamp the version onto the instance so an agent can name it in evidence
     # without a second registry call.
     with contextlib.suppress(AttributeError):  # a model using __slots__
@@ -365,11 +369,15 @@ def _read_metadata(path: Path) -> ModelMetadata | None:
 
 
 def _latest_version(parent: Path) -> str | None:
-    versions = [
-        _read_metadata(d / METADATA)
-        for d in parent.iterdir()
-        if d.is_dir() and not d.is_symlink() and (d / METADATA).exists()
-    ] if parent.exists() else []
+    versions = (
+        [
+            _read_metadata(d / METADATA)
+            for d in parent.iterdir()
+            if d.is_dir() and not d.is_symlink() and (d / METADATA).exists()
+        ]
+        if parent.exists()
+        else []
+    )
     real = [v for v in versions if v is not None]
     if not real:
         return None
