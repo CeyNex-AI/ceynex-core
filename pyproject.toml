@@ -152,6 +152,16 @@ known-first-party = ["ceynex", "eval"]
 #   bandit -r ceynex -f json -o bandit-baseline.json
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "build", "dist"]
+[tool.coverage.run]
+source = ["ceynex"]
+# demo.py is a by-hand walkthrough script, run neither by the unit suite nor in
+# production, so counting its lines would understate how well the code that does
+# ship is covered.
+omit = ["ceynex/orchestrator/demo.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

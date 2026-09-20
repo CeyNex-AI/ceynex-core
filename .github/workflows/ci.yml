@@ -86,7 +86,15 @@ jobs:
           # A tripwire: a unit test that reaches for a model download fails here
           # rather than quietly pulling hundreds of MB. Tests never hit the network.
           HF_HUB_OFFLINE: "1"
-        run: python -m pytest -m "not integration" -rfE --durations=15 -o faulthandler_timeout=120
+        # --cov-fail-under is a ratchet, not a target. The unit set covered
+        # 80.0% of ceynex/ when this landed (2026-09-19); the floor sits at 79
+        # so a genuine regression fails the build while the ~1pt of run-to-run
+        # and 3.11-vs-3.12 drift does not. Raise it as coverage climbs; never
+        # lower it to make a red run green.
+        run: >-
+          python -m pytest -m "not integration" -rfE --durations=15
+          -o faulthandler_timeout=120
+          --cov=ceynex --cov-report=term-missing --cov-fail-under=79
 
   integration:
     runs-on: ubuntu-24.04
