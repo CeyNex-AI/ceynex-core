@@ -18,6 +18,13 @@ dependencies = [
     # before widening this pin.
     "langgraph>=1.2,<1.3",
     "openai>=1.40",
+    # Transitive via openai (which allows httpx2<3,>=2.7.0). Pinned forward
+    # because 2.10.0 carries PYSEC-2026-3846/3848/3849 (request-smuggling via a
+    # duplicated Content-Length, header injection through per-file multipart
+    # headers, and a decompression flaw); 2.12.0 fixes all three and stays inside
+    # openai's range. Surfaced by `pip-audit` in the security workflow; drop this
+    # pin once openai's own floor moves past it. SRS 3.1.11.
+    "httpx2>=2.12.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "neo4j>=5.20",
@@ -53,6 +60,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
     "pre-commit>=3.7",
+    # SAST and dependency-vulnerability scanning, run in the security workflow
+    # and available locally through `make security`.
+    "bandit>=1.9",
+    "pip-audit>=2.10",
 ]
 # Policy-document retrieval (D10). Deliberately optional, and deliberately NOT
 # sentence-transformers: that pulls torch, and this package is installed by all
@@ -118,6 +129,29 @@ ignore = ["E501"]
 # — the same top-level package split across two import groups. Nobody reading the
 # code cares which wheel a module came from.
 known-first-party = ["ceynex", "eval"]
+
+# bandit SAST. Scans the shipped package only (tests seed fixtures and assert,
+# which bandit reads as B101/B105 noise). It runs against a committed baseline
+# (bandit-baseline.json) so the security workflow fails on a NEW finding rather
+# than the current set, every one of which was triaged on 2026-09-19 as either a
+# false positive or an accepted, documented risk:
+#   - B608 (23): SQL is assembled from code-authored fragments; every value is
+#     bound as a %s / %(name)s parameter and every interpolated identifier is a
+#     fixed module constant (_COLS) or allowlist member (reader.py's
+#     MEASURED_TARGETS). Confirmed a "'; DROP TABLE fact_trade; --" query leaves
+#     the row count untouched.
+#   - B301 (1): pickle.loads in models/registry.py reads only artifacts the
+#     registry itself wrote; annotated inline with a nosec and reasoning.
+#   - B105 (2): "hardcoded password" matches on config-dict string values in
+#     models/shocks.py (e.g. "fx_pass_through": "sector"), not credentials.
+#   - B603/B607/B404 (5): a fixed-argument `git rev-parse HEAD` for provenance,
+#     no shell and no user input.
+#   - B311/B112/B101 (4): non-crypto randomness, a style nit, an eval-helper
+#     assert.
+# Regenerate the baseline deliberately, never to paper over a real finding:
+#   bandit -r ceynex -f json -o bandit-baseline.json
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "build", "dist"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
