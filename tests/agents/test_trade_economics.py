@@ -254,6 +254,29 @@ def test_an_fx_shock_cites_the_real_historical_exchange_rate(monkeypatch):
     assert "depreciation" in fx_evidence[0]["claim"]
 
 
+def test_the_fx_trend_cites_the_recent_pair_not_the_full_history(monkeypatch):
+    """Found live 2026-09-24: WB_FX runs back to 1960, and a first-to-latest
+    comparison over 60+ years produced a technically-true but useless
+    "6777.6% depreciation" -- a multi-decade figure with nothing to do with
+    a single-year shock. Must cite the most recent year-over-year move."""
+    monkeypatch.setattr(
+        trade_economics,
+        "annual_series",
+        lambda *_a, **_kw: pd.DataFrame(
+            {"period": [1960, 1990, 2022, 2023], "value": [4.76, 40.0, 322.63, 327.51]}
+        ),
+    )
+
+    out = asyncio.run(run("How would a 5% rupee depreciation affect apparel exports?", KG(coverage=GSP_PLUS)))
+
+    fx_evidence = [e for e in out["evidence"] if e["source_id"] == "WB_FX"][0]
+    assert "322.63" in fx_evidence["claim"]
+    assert "327.51" in fx_evidence["claim"]
+    assert "4.76" not in fx_evidence["claim"]
+    assert "1960" not in fx_evidence["claim"]
+    assert fx_evidence["period"] == "2022-2023"
+
+
 def test_a_tariff_shock_does_not_cite_the_fx_trend(monkeypatch):
     """The fx trend is context for an fx shock specifically, not every shock --
     even when real data exists, a tariff question has nothing to do with it."""
