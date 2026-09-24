@@ -44,3 +44,26 @@ def test_faostat_connector_is_repeatable_with_offline_csv_fixture(tmp_path: Path
     assert cleaned.loc[0, "price"] == 9.9123
     assert cleaned.loc[0, "price_unit"] == "USD/kg"
     assert cleaned.loc[0, "original_price_unit"] == "USD/tonne"
+
+
+def test_faostat_connector_matches_area_code_with_leading_apostrophe(tmp_path: Path) -> None:
+    """FAOSTAT's real bulk CSVs quote numeric-looking codes as "'144", not 144.
+
+    A real download from bulks-faostat.fao.org uses this format; a fixture
+    using a plain unquoted 144 doesn't catch a to_numeric() regression here.
+    """
+    raw_dir = tmp_path / "faostat"
+    snapshot = raw_dir / "2026-09-24"
+    snapshot.mkdir(parents=True)
+    (snapshot / "producer_prices.csv").write_text(
+        "Area Code (M49),Area,Item,Element,Year,Value,Months\n"
+        "'144,Sri Lanka,Tea leaves,Producer Price (USD/tonne),2024,1500.0,Annual value\n",
+        encoding="utf-8",
+    )
+    connector = FAOSTATConnector(raw_dir, tmp_path / "staging")
+
+    fact_trade = connector.to_fact_trade(connector.fetch())
+
+    assert len(fact_trade) == 1
+    assert fact_trade.loc[0, "item"] == "tea"
+    assert fact_trade.loc[0, "price"] == 1500.0
