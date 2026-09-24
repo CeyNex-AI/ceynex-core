@@ -88,9 +88,13 @@ class FAOSTATConnector(DataSourceConnector):
             if "Months" in raw.columns
             else pd.Series(True, index=raw.index)
         )
+        # FAOSTAT's real bulk CSVs prefix numeric-looking codes with a leading
+        # apostrophe (Excel-safe text-forcing), e.g. "'144" -- strip it before
+        # to_numeric or every row silently fails to match and this returns empty.
+        area_code = raw["Area Code (M49)"].astype("string").str.strip().str.lstrip("'")
         prices = raw.loc[
             raw["Area"].astype("string").str.strip().eq("Sri Lanka")
-            & pd.to_numeric(raw["Area Code (M49)"], errors="coerce").eq(144)
+            & pd.to_numeric(area_code, errors="coerce").eq(144)
             & raw["Item"].isin(self._ITEMS)
             & raw["Element"].astype("string").str.fullmatch(r"Producer Price \(USD/tonne\)")
             & annual,
