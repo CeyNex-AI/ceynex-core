@@ -31,6 +31,7 @@ from ceynex.data.connectors.apparel_sources import EDB_SOURCE, JAAF_SOURCE
 from ceynex.data.connectors.cinnamon import CinnamonConnector
 from ceynex.data.connectors.comtrade import ComtradeConnector
 from ceynex.data.connectors.faostat import FAOSTATConnector
+from ceynex.data.connectors.fx import FXConnector
 from ceynex.data.connectors.pinksheet import PinkSheetConnector
 from ceynex.data.connectors.teaboard import TeaBoardConnector
 from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
@@ -101,6 +102,7 @@ CONNECTORS: dict[str, Callable[..., DataSourceConnector]] = {
     "pink_sheet": _pink_sheet_connector,
     "tea_board": _tea_board_connector,
     "cinnamon": _cinnamon_connector,
+    "fx": FXConnector,
 }
 
 AGRICULTURE_SOURCES = frozenset({"faostat", "pink_sheet", "tea_board", "cinnamon"})
