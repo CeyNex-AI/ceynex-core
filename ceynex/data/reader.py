@@ -42,7 +42,10 @@ class DatasetUnavailableError(RuntimeError):
 # `data/align.py` states the same rule for the resampling path, and
 # `DataCleaner.resample` implements it; this is the read side of one rule.
 _EXTENSIVE_TARGETS = frozenset({"export_value_usd", "export_volume"})
-MEASURED_TARGETS = _EXTENSIVE_TARGETS | {"price"}
+# fx_usd_lkr is intensive like price: it is a rate, not a quantity, and a
+# national FX rate never varies by partner, so it takes the same plain-mean
+# path price falls back to when no row carries a volume to weight by.
+MEASURED_TARGETS = _EXTENSIVE_TARGETS | {"price", "fx_usd_lkr"}
 
 
 def annual_series(

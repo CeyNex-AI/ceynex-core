@@ -8,14 +8,29 @@ this system could give: it looks exactly like a real answer.
 
 import asyncio
 
+import pandas as pd
 import pytest
 
+from ceynex.agents import trade_economics
 from ceynex.agents.common import AgentDeps
 from ceynex.agents.trade_economics import AGENT, trade_economics_node
 from ceynex.contracts import new_state
+from ceynex.data.reader import DatasetUnavailableError
 from ceynex.llm import FakeLLMClient
 
 BASELINE_USD = 1_000_000.0
+
+
+@pytest.fixture(autouse=True)
+def _no_real_fx_lookup(monkeypatch):
+    """An fx-shock question now also reads fact_trade for grounding context
+    (`_fx_trend_evidence`). Unit tests must not depend on a live Postgres --
+    default to an empty series so it returns `None` immediately; tests that
+    want the real evidence path override this explicitly.
+    """
+    monkeypatch.setattr(
+        trade_economics, "annual_series", lambda *_a, **_kw: pd.DataFrame(columns=["period", "value"])
+    )
 
 
 class KG:
@@ -216,6 +231,56 @@ def test_an_fx_shock_never_calls_the_retriever():
     asyncio.run(run_with("How would a 5% rupee depreciation affect apparel?", PolicyKG(coverage=GSP_PLUS), spy))
 
     assert spy.calls == []
+
+
+# --- real fx-trend grounding (fact_trade's WB_FX rows) --------------------
+
+
+def test_an_fx_shock_cites_the_real_historical_exchange_rate(monkeypatch):
+    """The shock's assumed magnitude is not itself sourced -- this is the real
+    trend a reader can weigh it against."""
+    monkeypatch.setattr(
+        trade_economics,
+        "annual_series",
+        lambda *_a, **_kw: pd.DataFrame({"period": [2015, 2023], "value": [135.86, 327.51]}),
+    )
+
+    out = asyncio.run(run("How would a 5% rupee depreciation affect apparel exports?", KG(coverage=GSP_PLUS)))
+
+    fx_evidence = [e for e in out["evidence"] if e["source_id"] == "WB_FX"]
+    assert fx_evidence, "no real fx trend evidence was cited"
+    assert "135.86" in fx_evidence[0]["claim"]
+    assert "327.51" in fx_evidence[0]["claim"]
+    assert "depreciation" in fx_evidence[0]["claim"]
+
+
+def test_a_tariff_shock_does_not_cite_the_fx_trend(monkeypatch):
+    """The fx trend is context for an fx shock specifically, not every shock --
+    even when real data exists, a tariff question has nothing to do with it."""
+    monkeypatch.setattr(
+        trade_economics,
+        "annual_series",
+        lambda *_a, **_kw: pd.DataFrame({"period": [2015, 2023], "value": [135.86, 327.51]}),
+    )
+
+    out = asyncio.run(run("What if the EU raises tariffs on tea by 10%?", KG(coverage=GSP_PLUS)))
+
+    assert not any(e["source_id"] == "WB_FX" for e in out["evidence"])
+
+
+def test_an_unavailable_fx_lookup_does_not_fail_the_simulation(monkeypatch):
+    """Supplementary context, not a simulation input -- losing it must not
+    turn a real answer into a failure."""
+
+    def _raise(*_a, **_kw):
+        raise DatasetUnavailableError("no postgres")
+
+    monkeypatch.setattr(trade_economics, "annual_series", _raise)
+
+    out = asyncio.run(run("How would a 5% rupee depreciation affect apparel exports?", KG(coverage=GSP_PLUS)))
+
+    assert out["figures"], "the simulation itself must still succeed"
+    assert not any(e["source_id"] == "WB_FX" for e in out["evidence"])
 
 
 def test_an_agreement_shock_anchors_the_search_on_the_graphs_entities():

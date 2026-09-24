@@ -21,6 +21,7 @@ its assumptions rather than implying a precision it does not have.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,6 +29,7 @@ from typing import Any
 from ceynex.agents.common import (
     AgentDeps,
     Intent,
+    evidence_from_dataset,
     evidence_from_model,
     evidence_from_policy,
     evidence_from_query,
@@ -35,6 +37,7 @@ from ceynex.agents.common import (
     parse_intent,
 )
 from ceynex.contracts import AgentState, Evidence, failed_output
+from ceynex.data.reader import DatasetUnavailableError, annual_series
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
 from ceynex.kg.queries import hs_hierarchy
@@ -178,6 +181,15 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     evidence: list[Evidence] = []
     assumptions = _base_assumptions(config, shock, magnitude)
     lines: list[str] = []
+
+    # The shock's magnitude comes from the question (or a 5% default) -- it was
+    # never checked against how much the rupee has actually moved. Real,
+    # sourced grounding for that assumption, not a second simulation input:
+    # the outcome below is unchanged either way.
+    if shock == "fx":
+        fx_evidence = await _fx_trend_evidence(deps)
+        if fx_evidence is not None:
+            evidence.append(fx_evidence)
 
     for sector in sectors:
         item = _representative_item(sector, intent.item)
@@ -394,6 +406,54 @@ def _simulate_fx(
 ) -> shocks.ShockOutcome:
     """A rupee depreciation makes exports cheaper abroad — see `shocks.fx_shock`."""
     return shocks.fx_shock(sector, baseline, depreciation, config)
+
+
+async def _fx_trend_evidence(deps: AgentDeps) -> Evidence | None:
+    """Real historical grounding for the magnitude an FX shock assumes.
+
+    `WB_FX` (the World Bank's official annual USD/LKR rate) has carried real
+    data in `fact_trade` since 2026-09-24 and nothing had read it back out
+    yet. This does not change the simulation itself — the shock's magnitude
+    still comes from the question or the 5% default — it only lets a reader
+    weigh that assumption against how much the rupee has actually moved.
+    """
+    try:
+        # annual_series is a synchronous psycopg call -- off the event loop
+        # via asyncio.to_thread, same pattern agriculture_commodity.py uses
+        # for its own fact_trade reads.
+        frame = await asyncio.to_thread(
+            annual_series,
+            "usd_lkr",
+            sector="macro",
+            target="fx_usd_lkr",
+            source_id="WB_FX",
+            dsn=deps.dsn,
+        )
+    except DatasetUnavailableError as exc:
+        # Supplementary context, not a simulation input -- losing it must not
+        # fail a tariff/agreement/fx answer that would otherwise succeed.
+        log.warning("%s: fx trend lookup unavailable: %s", AGENT, exc)
+        return None
+    if len(frame) < 2:
+        return None
+
+    first, latest = frame.iloc[0], frame.iloc[-1]
+    change_pct = (float(latest.value) - float(first.value)) / float(first.value)
+    direction = "depreciation" if change_pct > 0 else "appreciation"
+    return evidence_from_dataset(
+        claim=(
+            f"Sri Lanka's official USD/LKR exchange rate moved from {float(first.value):,.2f} "
+            f"to {float(latest.value):,.2f} between {int(first.period)} and {int(latest.period)}: "
+            f"a real {direction} of {abs(change_pct) * 100:.1f}%, for context on the shock "
+            "magnitude assumed below."
+        ),
+        detail=(
+            "unified fact_trade annual series: source=WB_FX; item=usd_lkr; "
+            "target=fx_usd_lkr; aggregation=annual mean"
+        ),
+        source_id="WB_FX",
+        period=f"{int(first.period)}-{int(latest.period)}",
+    )
 
 
 def _simulate_tariff(

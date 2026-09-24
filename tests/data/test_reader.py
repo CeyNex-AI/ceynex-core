@@ -237,3 +237,39 @@ def test_the_source_filter_keeps_two_sources_from_blending(clean_sources, tmp_pa
 
     assert filtered.iloc[0]["value"] == pytest.approx(10.0)
     assert blended.iloc[0]["value"] == pytest.approx(455.0), "unfiltered still blends -- hence the filter"
+
+
+def _fx_row(value, *, year=2023, source_id=TEST_SOURCE):
+    """A macro FX row: no partner, no HS code, no volume -- see connectors/fx.py."""
+    return {
+        "source_id": source_id,
+        "sector": "macro",
+        "item": "pytest_usd_lkr",
+        "hs_code": None,
+        "reporter_iso3": "LKA",
+        "reporter_m49": 144,
+        "partner_iso3": None,
+        "partner_m49": None,
+        "period_start": f"{year}-01-01",
+        "period_end": f"{year}-12-31",
+        "frequency": "A",
+        "export_volume": None,
+        "volume_unit": None,
+        "export_value_usd": None,
+        "price": None,
+        "price_unit": None,
+        "fx_usd_lkr": value,
+    }
+
+
+@pytest.mark.integration
+def test_an_fx_rate_reads_back_as_a_plain_mean_not_a_sum(clean_sources, tmp_path):
+    """fx_usd_lkr is a rate, not a quantity -- a single annual observation must
+    read back unchanged, not doubled by the extensive (sum) path."""
+    writer = UnifiedDatasetWriter(parquet_root=tmp_path / "parquet")
+    writer.write(pd.DataFrame([_fx_row(327.51)]), source_id=TEST_SOURCE)
+
+    frame = reader.annual_series("pytest_usd_lkr", target="fx_usd_lkr", source_id=TEST_SOURCE)
+
+    assert len(frame) == 1
+    assert frame.iloc[0]["value"] == pytest.approx(327.51)
