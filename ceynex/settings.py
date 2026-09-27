@@ -280,17 +280,18 @@ def scenario_enabled() -> bool:
 def web_search_enabled() -> bool:
     """Whether general web search may run at all (deviation D14).
 
-    Distinct from having a key: `tavily_api_key()` being None falls back to the
-    keyless provider, whereas this being off means no outbound search happens on
-    any provider. `off` is what makes "answers are byte-identical to the
-    pre-web-search system" a checkable claim.
+    Distinct from having a key: this being off means no outbound search happens
+    even when `tavily_api_key()` is set. A missing key turns the feature off too —
+    there is no keyless fallback (D14) — but `off` is the explicit switch, and it
+    is what makes "answers are byte-identical to the pre-web-search system" a
+    checkable claim.
     """
     value = (_env("CEYNEX_WEB_SEARCH", "on") or "on").lower()
     return value not in ("off", "0", "false", "no")
 
 
 def tavily_api_key() -> str | None:
-    """None is a supported state, not an error — the keyless tier covers it."""
+    """None is a supported state, not an error: web search is simply off (D14)."""
     return _env("TAVILY_API_KEY") or None
 
 
