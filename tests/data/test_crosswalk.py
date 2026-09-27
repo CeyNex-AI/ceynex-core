@@ -292,6 +292,14 @@ def test_market_to_iso3_handles_edb_comma_style_names_without_parens():
     assert market_to_iso3("Tanzania, United Republic of") == ("TZA", 834)
 
 
+def test_market_to_iso3_resolves_jaaf_style_hongkong_as_one_word():
+    """Confirmed on a real saved JAAF market-wise page 2026-09-27: the pie
+    chart's own label is the single word "Hongkong", not "Hong Kong" -- would
+    otherwise fall through to (None, None) and be silently dropped, like a
+    genuinely unrecognized market, rather than resolved."""
+    assert market_to_iso3("Hongkong") == ("HKG", 344)
+
+
 def test_market_to_iso3_unresolvable_name_returns_none_none_not_a_guess():
     assert market_to_iso3("Not Specified") == (None, None)
     assert market_to_iso3("Wakanda") == (None, None)
