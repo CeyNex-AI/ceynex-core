@@ -18,16 +18,38 @@ Only Total, US and UK match a pie-chart label exactly; EU-bloc and Other are
 unofficial groupings JAAF does not itself label.
 
 `to_fact_trade` writes only Total (as the `partner_iso3 IS NULL` "World" row),
-US and UK. EU-bloc(approx) and Other(approx) are excluded, not just flagged:
-written alongside US/UK/Total they would double-count in exactly the way
-`docs/ARCHITECTURE_DELTA.md` D4 excludes Comtrade's World and EU-aggregate
-partner rows for the same reason.
+US and UK from the Annual Exports tables. EU-bloc(approx) and Other(approx) are
+excluded, not just flagged: written alongside US/UK/Total they would
+double-count in exactly the way `docs/ARCHITECTURE_DELTA.md` D4 excludes
+Comtrade's World and EU-aggregate partner rows for the same reason.
+
+**Market Wise's per-country breakdown, wired in 2026-09-27.** The pie chart
+itself names real individual countries the Annual Exports tables never do
+(confirmed on a real saved page: Italy, Germany, Netherlands, Canada, France,
+Belgium, Australia, India, China, Sweden, UAE, Hong Kong, Mexico, Ireland,
+alongside US/UK/an unlabeled "Other Markets" residual) — until now, only used
+to cross-check the Annual Exports table order, then discarded. It is one
+annual snapshot, not a monthly time series like the Annual Exports tables
+(`PROFILE.md`: the pie chart's US figure matches the Annual Exports "us"
+table's most recent *complete* year, summed across its 12 months) — `fetch`
+works out which year that is by finding the annual "us" total the pie chart's
+own US value matches most closely, the same cross-check the module already
+relies on to confirm table order, rather than assuming "latest" is always
+correct on a partial in-progress year.
+
+US, UK and the "Other Markets" residual are excluded from this half too:
+US/UK would double-count the Annual Exports tables' own monthly data for the
+same countries (this connector writes both at different `frequency`s, and
+nothing downstream is guaranteed to filter by frequency before summing), and
+"Other Markets" cannot be geocoded to a real partner. Only the 14 markets with
+no existing coverage are new rows.
 """
 
 from __future__ import annotations
 
 import calendar
 import hashlib
+import logging
 import re
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -36,6 +58,9 @@ import pandas as pd
 from bs4 import BeautifulSoup
 
 from ceynex.contracts.protocols import DataSourceConnector, SourceManifest
+from ceynex.data.crosswalk import market_to_iso3
+
+log = logging.getLogger(__name__)
 
 TABLE_LABELS = ["total", "us", "eu_bloc_approx", "uk", "other_approx"]
 
@@ -84,8 +109,10 @@ def extract_annual_exports_html(html: str) -> list[dict]:
 def extract_market_wise_html(html: str) -> list[tuple[str, float]] | None:
     """Extract the market-wise pie chart data (labels + values) via regex.
 
-    Used as an offline cross-check that the Annual Exports table order/labels
-    still hold (see module docstring) — not written to `fact_trade` itself.
+    Doubles as the offline cross-check that the Annual Exports table
+    order/labels still hold (see module docstring), and as the source of the
+    per-country rows `to_fact_trade` writes for markets the Annual Exports
+    tables never break out on their own.
     """
     data_match = re.search(r"data:\s*\[\s*([\d\.\,\s]+)\]", html)
     labels_match = re.search(r'labels:\s*\[\s*((?:"[^"]*",?\s*)+)\]', html)
@@ -94,6 +121,64 @@ def extract_market_wise_html(html: str) -> list[tuple[str, float]] | None:
     values = [float(v) for v in data_match.group(1).split(",") if v.strip()]
     labels = re.findall(r'"([^"]*)"', labels_match.group(1))
     return list(zip(labels, values, strict=False))
+
+
+# Excluded from the market-wise -> fact_trade rows: US/UK would double-count
+# the Annual Exports tables' own monthly series for the same two countries
+# (written at a different frequency, which nothing downstream is guaranteed
+# to filter by before summing), and "Other Markets" is an unlabeled residual
+# with no real geography to write it under.
+_MARKET_WISE_EXCLUDED = {"us", "usa", "uk", "other markets"}
+
+# How close the pie chart's own US/USA figure must land to an annual "us"
+# total before that year is trusted as the snapshot's period. JAAF's numbers
+# are given to 2 decimal places in USD millions; a few cents of rounding
+# drift is expected, a whole different year's total is not.
+_YEAR_MATCH_TOLERANCE_USD_MN = 1.0
+
+
+def _market_wise_year(annual_records: list[dict], market_wise: list[tuple[str, float]]) -> int | None:
+    """Which year the market-wise snapshot represents.
+
+    Not "whatever year is latest": a partial, still-in-progress year's total
+    would never match the pie chart's own (necessarily complete) figure, and
+    a hardcoded "always the year before latest" would break the day the
+    connector is next run against a saved page from a full year later.
+    Matches on the US total specifically because it is the one already
+    trusted to confirm table identity (module docstring) -- if this fails to
+    resolve, the whole page pairing is suspect, not just the year.
+    """
+    us_pie_value = next(
+        (value for label, value in market_wise if label.strip().lower() in ("us", "usa")), None
+    )
+    if us_pie_value is None:
+        return None
+    annual_us_totals: dict[int, float] = {}
+    for record in annual_records:
+        if record["market"] == "us":
+            annual_us_totals[record["year"]] = annual_us_totals.get(record["year"], 0.0) + record["value_usd_mn"]
+    best_year, best_diff = None, None
+    for year, total in annual_us_totals.items():
+        diff = abs(total - us_pie_value)
+        if best_diff is None or diff < best_diff:
+            best_year, best_diff = year, diff
+    if best_year is None or best_diff > _YEAR_MATCH_TOLERANCE_USD_MN:
+        return None
+    return best_year
+
+
+def _market_wise_to_records(market_wise: list[tuple[str, float]], year: int) -> list[dict]:
+    """The market-wise pie chart's new-market entries, as one annual record
+    each -- same record shape `_annual_tables_to_records` produces, with
+    `month=None` marking it annual rather than monthly."""
+    records = []
+    for label, value in market_wise:
+        if label.strip().lower() in _MARKET_WISE_EXCLUDED:
+            continue
+        records.append(
+            {"market": f"market_wise:{label}", "month": None, "year": year, "value_usd_mn": value}
+        )
+    return records
 
 
 _MONTH_NUMBERS = {
@@ -203,6 +288,22 @@ class JAAFConnector(DataSourceConnector):
             (cache_dir / "market_wise.html").write_text(mw_html, encoding="utf-8")
             market_wise = extract_market_wise_html(mw_html)
             notes["market_wise_labels"] = [label for label, _ in (market_wise or [])]
+            if market_wise:
+                annual_records = _annual_tables_to_records(tables)
+                year = _market_wise_year(annual_records, market_wise)
+                if year is None:
+                    # Table identity itself is now suspect (module docstring's
+                    # cross-check) -- said in the manifest rather than
+                    # guessed at, so a stale or mismatched page pairing is
+                    # visible in ingest_run rather than silently mis-dated.
+                    notes["market_wise_year_unresolved"] = True
+                else:
+                    notes["market_wise_year"] = year
+                    mw_rows = _market_wise_to_records(market_wise, year)
+                    if mw_rows:
+                        raw = pd.concat(
+                            [raw, pd.DataFrame.from_records(mw_rows)], ignore_index=True
+                        )
 
         self._last_manifest = SourceManifest(
             source_id=self.source_id,
@@ -221,14 +322,52 @@ class JAAFConnector(DataSourceConnector):
         return self._last_manifest
 
     def to_fact_trade(self, raw: pd.DataFrame) -> pd.DataFrame:
-        """`fact_trade` rows for Total (World), US and UK only — see module docstring."""
+        """`fact_trade` rows: Total/US/UK monthly from the Annual Exports
+        tables, plus one annual row per market-wise-only country — see the
+        module docstring for why each half excludes what it does."""
         if raw.empty:
             return pd.DataFrame()
         out_rows = []
         for _, r in raw.iterrows():
-            if r["market"] not in _FACT_TRADE_PARTNERS:
+            market = str(r["market"])
+            if market.startswith("market_wise:"):
+                label = market.removeprefix("market_wise:")
+                iso3, m49 = market_to_iso3(label)
+                if iso3 is None:
+                    # A market-wise label this project's crosswalk does not
+                    # yet recognize -- dropped, not guessed at, same
+                    # discipline as an item mismatch anywhere else in this
+                    # codebase. `ingest_run`'s row count will simply be one
+                    # short of `len(market_wise)` for the year it happens.
+                    log.warning("jaaf: market-wise label %r not in the country crosswalk; dropped", label)
+                    continue
+                year = int(r["year"])
+                out_rows.append(
+                    {
+                        "source_id": self.source_id,
+                        "sector": "apparel",
+                        "item": "apparel_textiles",
+                        "hs_code": None,
+                        "reporter_iso3": "LKA",
+                        "reporter_m49": 144,
+                        "partner_iso3": iso3,
+                        "partner_m49": m49,
+                        "period_start": date(year, 1, 1).isoformat(),
+                        "period_end": date(year, 12, 31).isoformat(),
+                        "frequency": "A",
+                        "export_volume": None,
+                        "volume_unit": None,
+                        "export_value_usd": float(r["value_usd_mn"]) * 1_000_000.0,
+                        "price": None,
+                        "price_unit": None,
+                        "fx_usd_lkr": None,
+                        "source_hash": _source_hash(self.source_id, market, year),
+                    }
+                )
                 continue
-            iso3, m49 = _FACT_TRADE_PARTNERS[r["market"]]
+            if market not in _FACT_TRADE_PARTNERS:
+                continue
+            iso3, m49 = _FACT_TRADE_PARTNERS[market]
             period_start = date(int(r["year"]), int(r["month"]), 1)
             out_rows.append(
                 {
@@ -250,7 +389,7 @@ class JAAFConnector(DataSourceConnector):
                     "price_unit": None,
                     "fx_usd_lkr": None,
                     "source_hash": _source_hash(
-                        self.source_id, r["market"], r["year"], r["month"]
+                        self.source_id, market, r["year"], r["month"]
                     ),
                 }
             )

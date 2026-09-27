@@ -394,6 +394,11 @@ _ALIASES: dict[str, str] = {
     "turkey": "TUR",
     "turkiye": "TUR",
     "hong kong": "HKG",
+    # JAAF's market-wise pie chart renders this as one word, confirmed on a
+    # real saved page 2026-09-27 -- "hongkong" would otherwise fall through
+    # to (None, None) and be silently dropped like a genuinely unrecognized
+    # market, rather than resolved like the "hong kong" spelling already is.
+    "hongkong": "HKG",
     "chile": "CHL",
     "south africa": "ZAF",
     "new zealand": "NZL",

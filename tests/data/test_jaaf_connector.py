@@ -136,3 +136,99 @@ def test_fetch_raises_a_clear_error_when_the_page_has_not_been_saved(tmp_path):
     connector = JAAFConnector(annual_exports_path=str(tmp_path / "missing.html"))
     with pytest.raises(FileNotFoundError, match="srilankaapparel.com"):
         connector.fetch()
+
+
+# --- market-wise per-country rows, wired 2026-09-27 -----------------------
+
+
+def _market_wise_html(labels_and_values: list[tuple[str, float]]) -> str:
+    labels = ", ".join(f'"{label}"' for label, _ in labels_and_values)
+    values = ", ".join(str(value) for _, value in labels_and_values)
+    return (
+        "<html><body><canvas id='c'></canvas><script>"
+        f"var c = new Chart(ctx, {{type: 'pie', data: {{labels: [{labels}], "
+        f"datasets: [{{data: [{values}]}}]}}}});"
+        "</script></body></html>"
+    )
+
+
+def test_market_wise_rows_are_written_as_one_annual_row_per_new_country(tmp_path):
+    """The 2025 US total from the fixture's "us" table is 465.0 (Jan+Feb+Mar,
+    the only months this fixture carries) -- the pie chart's own US figure
+    must match that to resolve 2025 as the snapshot's year."""
+    market_wise_path = tmp_path / "market_wise.html"
+    market_wise_path.write_text(
+        _market_wise_html([("US", 465.0), ("UK", 124.0), ("Italy", 90.5), ("Other Markets", 30.0)])
+    )
+    connector = JAAFConnector(
+        annual_exports_path=str(ANNUAL_FIXTURE),
+        market_wise_path=str(market_wise_path),
+        data_dir=str(tmp_path / "cache"),
+    )
+
+    raw = connector.fetch()
+    assert connector.manifest().notes["market_wise_year"] == 2025
+
+    out = connector.to_fact_trade(raw)
+    italy = out[(out["partner_iso3"] == "ITA") & (out["frequency"] == "A")]
+    assert len(italy) == 1
+    assert italy.iloc[0]["period_start"] == "2025-01-01"
+    assert italy.iloc[0]["period_end"] == "2025-12-31"
+    assert italy.iloc[0]["export_value_usd"] == pytest.approx(90.5 * 1_000_000.0)
+
+
+def test_market_wise_excludes_us_uk_and_the_other_markets_residual(tmp_path):
+    """US/UK are already written monthly from the Annual Exports tables --
+    writing them again annually from market-wise would double-count the same
+    real trade flows under two frequencies. "Other Markets" cannot be
+    geocoded to a real partner at all."""
+    market_wise_path = tmp_path / "market_wise.html"
+    market_wise_path.write_text(
+        _market_wise_html([("US", 465.0), ("UK", 124.0), ("Italy", 90.5), ("Other Markets", 30.0)])
+    )
+    connector = JAAFConnector(
+        annual_exports_path=str(ANNUAL_FIXTURE),
+        market_wise_path=str(market_wise_path),
+        data_dir=str(tmp_path / "cache"),
+    )
+
+    raw = connector.fetch()
+    out = connector.to_fact_trade(raw)
+    annual_rows = out[out["frequency"] == "A"]
+    assert set(annual_rows["partner_iso3"]) == {"ITA"}
+
+
+def test_an_unrecognized_market_wise_label_is_dropped_not_guessed_at(tmp_path):
+    market_wise_path = tmp_path / "market_wise.html"
+    market_wise_path.write_text(
+        _market_wise_html([("US", 465.0), ("Neverland", 12.0)])
+    )
+    connector = JAAFConnector(
+        annual_exports_path=str(ANNUAL_FIXTURE),
+        market_wise_path=str(market_wise_path),
+        data_dir=str(tmp_path / "cache"),
+    )
+
+    raw = connector.fetch()
+    out = connector.to_fact_trade(raw)
+    assert not any(out["frequency"] == "A")
+
+
+def test_an_unresolvable_year_is_flagged_not_silently_mis_dated(tmp_path):
+    """The pie chart's US figure matches no real annual "us" total -- table
+    identity itself is suspect (module docstring), so no market-wise rows
+    are written rather than guessed at under the wrong year."""
+    market_wise_path = tmp_path / "market_wise.html"
+    market_wise_path.write_text(
+        _market_wise_html([("US", 999999.0), ("Italy", 90.5)])
+    )
+    connector = JAAFConnector(
+        annual_exports_path=str(ANNUAL_FIXTURE),
+        market_wise_path=str(market_wise_path),
+        data_dir=str(tmp_path / "cache"),
+    )
+
+    raw = connector.fetch()
+    assert connector.manifest().notes["market_wise_year_unresolved"] is True
+    out = connector.to_fact_trade(raw)
+    assert not any(out["frequency"] == "A")
