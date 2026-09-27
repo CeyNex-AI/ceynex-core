@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
 from ceynex.api.main import app
+from ceynex.observability import context as obs_context
 from ceynex.orchestrator.merger import NO_TOPIC_MARKER
 
 
@@ -38,11 +39,17 @@ class FakeKG:
 
     def __init__(self, raises: Exception | None = None):
         self._raises = raises
+        # Which `trace.node()` was active for each `run()` call, so a test can
+        # check attribution without the real `KnowledgeGraphClient`'s own
+        # `trace.emit` -- this double predates it and answers queries directly,
+        # never touching the trace module itself.
+        self.query_nodes: list[str | None] = []
 
     async def verify_connectivity(self):
         return True
 
     async def run(self, cypher, params=None):
+        self.query_nodes.append(obs_context.current_node())
         if self._raises:
             raise self._raises
         if "EXPORTS_TO" in cypher:
