@@ -51,6 +51,21 @@ NUMBER = re.compile(r"-?\d[\d,]*\.?\d*")
 # and the check would stop discriminating.
 STRUCTURAL_DIGIT_LIMIT = 2
 
+# A bare four-digit year is the same kind of structural mention, just one this
+# project didn't have live evidence for until a forecast question hit it: an
+# explanation naturally citing "up from 2025's actual value" or "as of 2025"
+# states 2025 as *context* for when a figure applies, not a quantity a source
+# has to carry -- and a registered forecast model's own evidence only ever
+# names the periods it forecasts (2026, 2027, ...), never the reference year
+# an explanation reasonably orients the reader with. Confirmed live 2026-09-27
+# (`docs/HANDOFF_grounding_year_false_positive_2026-09-27.md`): a cinnamon
+# export-value forecast's own explanation, and separately the merge's
+# composed prose, were both discarded over an unsupported "2025", degrading
+# a real, correctly-sourced answer's confidence by 0.15 twice (once in the
+# agent's own self-score, again at merge) and losing its prose for a decline
+# that was never actually about the forecast being wrong.
+YEAR_RANGE = range(1900, 2100)
+
 #: Terminal punctuation, any closing quotes or brackets, whitespace, then the
 #: start of another sentence. Whitespace is the whole point: no figure contains
 #: any, so a split here can never cut one. Missing a boundary only makes one
@@ -134,6 +149,24 @@ def _grounded_by(value: str, pool: set[str]) -> bool:
     return value in pool or any(g.startswith(value.split(".")[0]) for g in pool)
 
 
+def _is_bare_year(raw: str, value: str) -> bool:
+    """A plain four-digit calendar year, not a quantity that happens to share
+    its digit count.
+
+    Written with no thousands separator and no decimal point -- the form a
+    year is actually written in ("as of 2025"), never the form this project's
+    own number rendering gives a real figure of that size
+    (`corpus_texts`'s `f"{value:,.2f}"` always carries a comma; a raw
+    unformatted `str(value)` could coincidentally collide, but an export
+    figure in this domain is either a currency amount many orders of
+    magnitude larger than four digits, a percentage, or a small count already
+    covered by `STRUCTURAL_DIGIT_LIMIT` -- a real, uncommaed four-digit
+    quantity landing in the calendar-year range is not a realistic collision
+    to guard against here).
+    """
+    return "," not in raw and "." not in value and len(value) == 4 and int(value) in YEAR_RANGE
+
+
 def ungrounded_figures(
     answer: str, corpus: Iterable[str], *, direction_aware: bool | None = None
 ) -> list[str]:
@@ -171,6 +204,8 @@ def ungrounded_figures(
             value = _normalise(raw)
             if len(value.lstrip("-").replace(".", "")) <= STRUCTURAL_DIGIT_LIMIT:
                 continue
+            if _is_bare_year(raw, value):
+                continue
             if _grounded_by(value, grounded):
                 continue
             if says_it_fell and not value.startswith("-") and _grounded_by(value, fallen):
@@ -183,6 +218,7 @@ __all__ = [
     "FELL",
     "NUMBER",
     "SENTENCE_END",
+    "YEAR_RANGE",
     "corpus_texts",
     "numbers_in",
     "split_sentences",
