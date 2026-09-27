@@ -86,6 +86,35 @@ def test_a_rounded_restatement_is_accepted():
     assert ungrounded_figures("about 1234.5", ["1234.52"]) == []
 
 
+def test_a_bare_year_is_structural_too():
+    """"up from 2025's actual value" states 2025 as when, not a quantity.
+
+    Found live 2026-09-27: a cinnamon forecast's own explanation, and
+    separately the merge's composed prose, were both discarded over an
+    unsupported "2025" -- the model's evidence only ever names its own
+    forecast periods (2026, 2027, ...), never the reference year an
+    explanation reasonably orients the reader with.
+    """
+    assert ungrounded_figures("This is up from 2025's actual value.", []) == []
+
+
+def test_a_four_digit_figure_with_a_comma_is_not_a_year():
+    """2,025 (a real quantity, comma-grouped as this project always renders
+    one) must still be checked -- only a bare, unpunctuated four digits gets
+    the year exemption."""
+    assert ungrounded_figures("Exports reached 2,025 tonnes.", []) == ["2,025"]
+
+
+def test_a_four_digit_decimal_is_not_a_year():
+    """2025.5 has a decimal point, so it is a quantity, not a year written
+    in the one form a year is actually written in."""
+    assert ungrounded_figures("The estimate was 2025.5.", []) == ["2025.5"]
+
+
+def test_years_outside_the_plausible_range_are_not_exempted():
+    assert ungrounded_figures("A total of 9999 units.", []) == ["9999"]
+
+
 def test_numbers_in_ignores_empty_text():
     assert numbers_in("") == set()
     assert numbers_in(None) == set()
