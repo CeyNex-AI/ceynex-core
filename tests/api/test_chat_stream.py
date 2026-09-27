@@ -174,6 +174,21 @@ def test_the_stream_reports_the_route_it_took(client):
     assert all(isinstance(data, dict) for _, data in frames)
 
 
+def test_the_answer_graphs_own_queries_are_attributed(client):
+    """`FakeGraph` stands in for the real orchestrator graph, so the only
+    `kg.run()` calls this fixture ever makes are `_answer_graph`'s own, drawing
+    the panel behind the answer. Left unattributed, these landed in the live
+    trace as several identical-looking "Queried the knowledge graph" rows with
+    no agent name beside them — indistinguishable from a real duplicate even
+    though each ran a different facet query (ceynex-web#28, found live
+    2026-09-16, still reproduced live 2026-09-27 against production)."""
+    kg = FakeKG()
+    deps_module.set_runtime(runtime(ANSWERED, kg=kg))
+    stream(client)
+    assert kg.query_nodes, "the ANSWERED fixture's KG evidence should draw a graph"
+    assert all(node == "graph" for node in kg.query_nodes)
+
+
 def test_every_frame_is_a_single_data_line(client):
     """A raw newline inside `data:` splits one frame into two and corrupts every
     frame after it. `json.dumps` escapes them; this is the regression guard."""

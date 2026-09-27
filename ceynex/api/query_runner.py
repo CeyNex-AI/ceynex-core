@@ -216,7 +216,18 @@ async def _assemble(
     # Before the response is built, so `elapsed_ms` below counts it. The graph
     # is time the caller actually waited; excluding it would make the number
     # that SRS 3.4.1 is measured against quietly optimistic.
-    graph = await _answer_graph(runtime, query, final)
+    #
+    # `trace.node("graph")` attributes the subgraph builder's concurrent kg_query
+    # calls (`kg/subgraph.py::build_answer_subgraph`) to something a reader can
+    # tell apart from the agents' own queries. Left unattributed, these landed
+    # in the live trace as several near-identical "Queried the knowledge graph"
+    # rows with no agent name beside them -- indistinguishable from a genuine
+    # duplicate even though each ran a different facet query. Found live via
+    # the 2026-09-16 NVDA pass (ceynex-web#28); confirmed reproducing with a
+    # real production query on 2026-09-27 (4 unattributed kg_query events for
+    # one cinnamon-price turn) before this fix.
+    with trace.node("graph"):
+        graph = await _answer_graph(runtime, query, final)
 
     return QueryResponse(
         answer=final.get("final_answer", ""),
