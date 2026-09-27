@@ -29,6 +29,7 @@ from ceynex.agents.common import (
     evidence_from_model,
     evidence_from_query,
     finish,
+    fx_trend_evidence,
     parse_intent,
 )
 from ceynex.contracts import AgentOutput, AgentState, Evidence, ForecastPoint, failed_output
@@ -260,6 +261,17 @@ async def _trend_answer(
         ["Trend compares the first and latest available annual source observations; no missing years are interpolated."],
         _series_confidence(len(frame), int(latest.period)),
     )
+    # Context for a USD-denominated series only -- tea's export-volume series
+    # is a physical quantity (kg) the exchange rate has no bearing on. Shares
+    # `trade_economics.py`'s fx-shock path's own real trend rather than
+    # inventing a second one: never changes this answer's own figures, only
+    # lets a reader weigh a USD price move against how much the rupee itself
+    # has actually been moving. Wired 2026-09-27 -- WB_FX existed in
+    # fact_trade already, but nothing on the agriculture side had read it.
+    if str(info["unit"]).startswith("USD"):
+        fx_evidence = await fx_trend_evidence(deps, agent=AGENT)
+        if fx_evidence is not None:
+            evidence.append(fx_evidence)
     return await _respond(
         state,
         deps,

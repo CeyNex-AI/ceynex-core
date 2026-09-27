@@ -14,6 +14,7 @@ touched.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from ceynex.contracts import (
     KnowledgeGraphClientProtocol,
     LLMReasoningClientProtocol,
 )
+from ceynex.data.reader import DatasetUnavailableError, annual_series
 from ceynex.orchestrator.confidence import aggregate_confidence, clamp
 from ceynex.orchestrator.grounding import corpus_texts, ungrounded_figures
 
@@ -277,6 +279,65 @@ def evidence_from_dataset(claim: str, detail: str, source_id: str, period: str |
     return evidence
 
 
+async def fx_trend_evidence(deps: AgentDeps, *, agent: str) -> Evidence | None:
+    """Real historical grounding for a USD-denominated figure's currency exposure.
+
+    `WB_FX` (the World Bank's official annual USD/LKR rate) has carried real
+    data in `fact_trade` since 2026-09-24. Originally read only by
+    `trade_economics.py`'s fx-shock path (where it grounds the magnitude a
+    shock assumes); shared here from 2026-09-27 so `agriculture_commodity.py`
+    can cite the same real trend as context for a USD-priced series, without
+    duplicating the query, the recency logic, or the claim wording. Never
+    changes a caller's own figures -- purely supplementary.
+    """
+    try:
+        # annual_series is a synchronous psycopg call -- off the event loop
+        # via asyncio.to_thread, same pattern every other fact_trade read in
+        # this codebase uses (api/routes/admin.py's _do_retrain first).
+        frame = await asyncio.to_thread(
+            annual_series,
+            "usd_lkr",
+            sector="macro",
+            target="fx_usd_lkr",
+            source_id="WB_FX",
+            dsn=deps.dsn,
+        )
+    except DatasetUnavailableError as exc:
+        # Supplementary context, not an input to whatever the caller is
+        # answering -- losing it must not fail an answer that would
+        # otherwise succeed.
+        log.warning("%s: fx trend lookup unavailable: %s", agent, exc)
+        return None
+    if len(frame) < 2:
+        return None
+
+    # The most recent year-over-year move, not the full history. WB_FX runs
+    # back to 1960 -- a first-to-latest comparison over 60+ years produces a
+    # technically-true but useless figure (a several-thousand-percent
+    # "depreciation" spanning currency regimes with nothing to do with a
+    # single-year shock, or with how a recent price actually moved). Live-
+    # checked 2026-09-24: the full 1960-2023 range reads out as a 6777.6%
+    # move, which tells a reader nothing about how the rupee has actually
+    # been moving lately.
+    previous, latest = frame.iloc[-2], frame.iloc[-1]
+    change_pct = (float(latest.value) - float(previous.value)) / float(previous.value)
+    direction = "depreciation" if change_pct > 0 else "appreciation"
+    return evidence_from_dataset(
+        claim=(
+            f"Sri Lanka's official USD/LKR exchange rate moved from {float(previous.value):,.2f} "
+            f"to {float(latest.value):,.2f} between {int(previous.period)} and {int(latest.period)}, "
+            f"its most recent year-over-year change on record: a real {direction} of "
+            f"{abs(change_pct) * 100:.1f}%, for context on this USD-denominated figure."
+        ),
+        detail=(
+            "unified fact_trade annual series: source=WB_FX; item=usd_lkr; "
+            "target=fx_usd_lkr; aggregation=annual mean; most recent year-over-year pair"
+        ),
+        source_id="WB_FX",
+        period=f"{int(previous.period)}-{int(latest.period)}",
+    )
+
+
 def evidence_from_policy(
     claim: str,
     detail: str,
@@ -483,5 +544,6 @@ __all__ = [
     "figures_evidence",
     "find_region",
     "finish",
+    "fx_trend_evidence",
     "parse_intent",
 ]
