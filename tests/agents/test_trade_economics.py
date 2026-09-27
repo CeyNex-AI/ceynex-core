@@ -11,7 +11,7 @@ import asyncio
 import pandas as pd
 import pytest
 
-from ceynex.agents import trade_economics
+from ceynex.agents import common
 from ceynex.agents.common import AgentDeps
 from ceynex.agents.trade_economics import AGENT, trade_economics_node
 from ceynex.contracts import new_state
@@ -29,7 +29,7 @@ def _no_real_fx_lookup(monkeypatch):
     want the real evidence path override this explicitly.
     """
     monkeypatch.setattr(
-        trade_economics, "annual_series", lambda *_a, **_kw: pd.DataFrame(columns=["period", "value"])
+        common, "annual_series", lambda *_a, **_kw: pd.DataFrame(columns=["period", "value"])
     )
 
 
@@ -240,7 +240,7 @@ def test_an_fx_shock_cites_the_real_historical_exchange_rate(monkeypatch):
     """The shock's assumed magnitude is not itself sourced -- this is the real
     trend a reader can weigh it against."""
     monkeypatch.setattr(
-        trade_economics,
+        common,
         "annual_series",
         lambda *_a, **_kw: pd.DataFrame({"period": [2015, 2023], "value": [135.86, 327.51]}),
     )
@@ -260,7 +260,7 @@ def test_the_fx_trend_cites_the_recent_pair_not_the_full_history(monkeypatch):
     "6777.6% depreciation" -- a multi-decade figure with nothing to do with
     a single-year shock. Must cite the most recent year-over-year move."""
     monkeypatch.setattr(
-        trade_economics,
+        common,
         "annual_series",
         lambda *_a, **_kw: pd.DataFrame(
             {"period": [1960, 1990, 2022, 2023], "value": [4.76, 40.0, 322.63, 327.51]}
@@ -281,7 +281,7 @@ def test_a_tariff_shock_does_not_cite_the_fx_trend(monkeypatch):
     """The fx trend is context for an fx shock specifically, not every shock --
     even when real data exists, a tariff question has nothing to do with it."""
     monkeypatch.setattr(
-        trade_economics,
+        common,
         "annual_series",
         lambda *_a, **_kw: pd.DataFrame({"period": [2015, 2023], "value": [135.86, 327.51]}),
     )
@@ -298,7 +298,7 @@ def test_an_unavailable_fx_lookup_does_not_fail_the_simulation(monkeypatch):
     def _raise(*_a, **_kw):
         raise DatasetUnavailableError("no postgres")
 
-    monkeypatch.setattr(trade_economics, "annual_series", _raise)
+    monkeypatch.setattr(common, "annual_series", _raise)
 
     out = asyncio.run(run("How would a 5% rupee depreciation affect apparel exports?", KG(coverage=GSP_PLUS)))
 

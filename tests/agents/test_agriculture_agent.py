@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from ceynex.agents import agriculture_commodity as agriculture
+from ceynex.agents import common
 from ceynex.agents.common import AgentDeps
 from ceynex.contracts import new_state
 from ceynex.kg.client import KnowledgeGraphUnavailableError
@@ -23,6 +24,15 @@ VALUES = [100.0, 105.0, 109.0, 115.0, 121.0, 125.0, 131.0, 140.0, 147.0]
 def isolated_registry(tmp_path, monkeypatch):
     monkeypatch.setenv("CEYNEX_MODELS_DIR", str(tmp_path / "models"))
     monkeypatch.setattr(agriculture, "relevant_dq_flags", lambda *_args, **_kwargs: [])
+    # A cinnamon price-trend answer also reads fact_trade for WB_FX grounding
+    # context now (common.fx_trend_evidence, wired 2026-09-27). Unit tests
+    # must not depend on a live Postgres -- default to an empty series so it
+    # returns None immediately; a test that wants the real evidence path
+    # overrides this explicitly, same convention as test_trade_economics.py's
+    # own `_no_real_fx_lookup`.
+    monkeypatch.setattr(
+        common, "annual_series", lambda *_a, **_kw: pd.DataFrame(columns=["period", "value"])
+    )
 
 
 class KG:
@@ -85,6 +95,44 @@ def test_current_cinnamon_price_trend_has_readable_faostat_evidence(monkeypatch)
     assert all(evidence.get("period") == "2017-2025" for evidence in out["evidence"])
     assert 0.05 <= out["confidence"] <= 0.95
     assert not any(evidence["source_id"] == "DQ_FLAG" for evidence in out["evidence"])
+
+
+def test_a_cinnamon_price_trend_cites_the_real_fx_trend(monkeypatch):
+    """A USD/kg price series is currency-exposed in a way a physical
+    quantity (tea's export volume, in kg) is not. Wired 2026-09-27, sharing
+    `trade_economics.py`'s own real WB_FX read (`common.fx_trend_evidence`)
+    rather than a second implementation."""
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+    monkeypatch.setattr(
+        common,
+        "annual_series",
+        lambda *_a, **_kw: pd.DataFrame({"period": [2022, 2023], "value": [322.63, 327.51]}),
+    )
+
+    out = run("What is the current price trend for cinnamon?")
+
+    fx_evidence = [e for e in out["evidence"] if e["source_id"] == "WB_FX"]
+    assert fx_evidence, "no real fx trend evidence was cited for a USD-priced series"
+    assert "322.63" in fx_evidence[0]["claim"]
+    assert "327.51" in fx_evidence[0]["claim"]
+    # Still every other assertion the base test makes about this answer --
+    # the fx context is additive, not a replacement for the FAOSTAT figures.
+    assert out["figures"]["latest_price"] == 147.0
+
+
+def test_a_tea_volume_trend_does_not_cite_the_fx_trend(monkeypatch):
+    """A physical quantity (kg) has no currency exposure -- even with real
+    fx data available, a volume answer must not cite it."""
+    monkeypatch.setattr(agriculture, "annual_series", _series)
+    monkeypatch.setattr(
+        common,
+        "annual_series",
+        lambda *_a, **_kw: pd.DataFrame({"period": [2022, 2023], "value": [322.63, 327.51]}),
+    )
+
+    out = run("How have tea export volumes changed over the last five years?")
+
+    assert not any(e["source_id"] == "WB_FX" for e in out["evidence"])
 
 
 def test_a_material_dq_flag_is_evidence_without_changing_the_agents_own_confidence(monkeypatch):
