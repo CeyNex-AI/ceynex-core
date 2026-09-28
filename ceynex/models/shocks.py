@@ -175,8 +175,15 @@ def fx_shock(
         f"Volume effect {volume_change * 100:+.1f}%, price effect {price_change * 100:+.1f}%."
     )
     return ShockOutcome(
-        "fx", sector, baseline, baseline * revenue_change, revenue_change,
-        price_change, volume_change, (pass_through, elasticity), detail,
+        "fx",
+        sector,
+        baseline,
+        baseline * revenue_change,
+        revenue_change,
+        price_change,
+        volume_change,
+        (pass_through, elasticity),
+        detail,
     )
 
 
@@ -188,24 +195,56 @@ def tariff_shock(
     *,
     overrides: dict[str, float | None] | None = None,
 ) -> ShockOutcome:
-    """An importing country's tariff raises the buyer's price by the incidence share.
+    """An importing country's tariff, split between the two sides of the sale.
 
-    The exporter's own unit price is held: the whole revenue effect is the
-    volume lost to the higher landed price.
+    `tariff_incidence` is the share the Sri Lankan exporter bears — what the
+    config table and the workbench slider both say it is. So a tariff `t` with
+    incidence `s` does two things:
+
+    - the buyer's landed price rises by `(1 − s)·t`, and volume responds to that;
+    - the exporter cuts its own net price by `s·t` to absorb the rest.
+
+    USD revenue change ≈ e·(1 − s)·t − s·t. The second term is the exporter's
+    price concession; leaving it out is the same error `fx_shock` warns about,
+    and it made a larger exporter incidence look like a *larger volume* loss
+    while the exporter's own price stayed untouched (corrected in D18).
     """
     incidence = parameter(config, "tariff_incidence", "default", overrides=overrides)
     elasticity = parameter(config, "export_demand_elasticity", sector, overrides=overrides)
-
-    price_change = incidence.value * tariff
-    revenue_change = elasticity.value * price_change
+    buyer_price, volume_change, revenue_change = _tariff_split(
+        tariff, incidence.value, elasticity.value
+    )
 
     detail = (
         f"{sector}: {tariff * 100:.1f}% tariff with exporter incidence {incidence.value:.2f} and "
-        f"demand elasticity {elasticity.value:.2f}. Buyer price {price_change * 100:+.1f}%."
+        f"demand elasticity {elasticity.value:.2f}. "
+        f"{_tariff_effects(tariff, incidence.value, buyer_price, volume_change)}"
     )
     return ShockOutcome(
-        "tariff", sector, baseline, baseline * revenue_change, revenue_change,
-        price_change, revenue_change, (incidence, elasticity), detail,
+        "tariff",
+        sector,
+        baseline,
+        baseline * revenue_change,
+        revenue_change,
+        buyer_price,
+        volume_change,
+        (incidence, elasticity),
+        detail,
+    )
+
+
+def _tariff_split(tariff: float, incidence: float, elasticity: float) -> tuple[float, float, float]:
+    """`(buyer price, volume, revenue)` changes for a tariff; see `tariff_shock`."""
+    buyer_price = (1 - incidence) * tariff
+    volume_change = elasticity * buyer_price
+    revenue_change = volume_change - incidence * tariff
+    return buyer_price, volume_change, revenue_change
+
+
+def _tariff_effects(tariff: float, incidence: float, buyer_price: float, volume: float) -> str:
+    return (
+        f"Buyer price {buyer_price * 100:+.1f}%, volume {volume * 100:+.1f}%, "
+        f"exporter's net price {-incidence * tariff * 100:+.1f}%."
     )
 
 
@@ -232,17 +271,26 @@ def agreement_loss_shock(
     incidence = parameter(config, "tariff_incidence", "default", overrides=overrides)
     elasticity = parameter(config, "export_demand_elasticity", sector, overrides=overrides)
 
-    price_change = incidence.value * rate.value
-    revenue_change = elasticity.value * price_change
+    buyer_price, volume_change, revenue_change = _tariff_split(
+        rate.value, incidence.value, elasticity.value
+    )
 
     detail = (
         f"{sector}: preference coverage resolved from the knowledge graph ({coverage}). "
         f"Loss modelled as an {basis_text}, with exporter incidence {incidence.value:.2f} "
-        f"and demand elasticity {elasticity.value:.2f}."
+        f"and demand elasticity {elasticity.value:.2f}. "
+        f"{_tariff_effects(rate.value, incidence.value, buyer_price, volume_change)}"
     )
     return ShockOutcome(
-        "agreement", sector, baseline, baseline * revenue_change, revenue_change,
-        price_change, revenue_change, (rate, incidence, elasticity), detail,
+        "agreement",
+        sector,
+        baseline,
+        baseline * revenue_change,
+        revenue_change,
+        buyer_price,
+        volume_change,
+        (rate, incidence, elasticity),
+        detail,
     )
 
 

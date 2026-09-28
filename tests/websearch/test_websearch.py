@@ -120,6 +120,81 @@ async def test_the_fixture_provider_satisfies_the_protocol():
     assert await provider.search("anything") == RESULTS
 
 
+# --- the real provider's request and response, over a mock transport ---------
+
+
+def _tavily(results: list[dict], seen: list):
+    """A `TavilyProvider` whose HTTP goes to a handler, never the network."""
+    import httpx
+
+    from ceynex.websearch.providers import TavilyProvider
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"results": results})
+
+    return TavilyProvider("tvly-test-key", transport=httpx.MockTransport(handler))
+
+
+async def test_the_key_travels_as_a_bearer_header_and_never_in_the_body():
+    """Bearer is the only form Tavily's API reference documents. Were a body key
+    rejected, every call would 401 and `safe_search` would swallow it as
+    `failed` — live in name only, which is exactly what a key-in-prod rollout
+    could not see."""
+    import json
+
+    seen: list = []
+    await _tavily([], seen).search("latest tea prices", limit=3)
+
+    (request,) = seen
+    assert request.headers["authorization"] == "Bearer tvly-test-key"
+    body = json.loads(request.content)
+    assert "api_key" not in body
+    assert body["query"] == "latest tea prices"
+    assert body["max_results"] == 3
+    assert body["include_raw_content"] is False
+
+
+async def test_a_tavily_hit_becomes_a_web_result():
+    hits = [
+        {
+            "title": "Tea auction prices",
+            "url": "https://news.example.test/tea",
+            "content": "x" * 900,
+            "published_date": "2026-09-20",
+        }
+    ]
+    (result,) = await _tavily(hits, []).search("latest tea prices")
+    assert result.url == "https://news.example.test/tea"
+    assert result.domain == "news.example.test"
+    assert result.published == "2026-09-20"
+    assert len(result.snippet) == 600, "snippets are capped, v1 keeps the surface small"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "javascript:alert(document.cookie)",
+        "JavaScript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "file:///etc/passwd",
+        "//no-scheme.example.test/x",
+        "http://[::1",
+        "",
+    ],
+)
+async def test_a_result_that_is_not_a_web_page_is_dropped(url):
+    """A web result's URL becomes an `href` in the evidence panel. Only http(s)
+    gets through; the rest is dropped where untrusted data enters rather than
+    trusted to every renderer."""
+    hits = [
+        {"title": "hostile", "url": url, "content": "s"},
+        {"title": "fine", "url": "https://ok.example.test/", "content": "s"},
+    ]
+    results = await _tavily(hits, []).search("latest tea prices")
+    assert [r.title for r in results] == ["fine"]
+
+
 # --- the structural exclusions, which are the whole safety argument ----------
 
 
@@ -138,8 +213,14 @@ async def test_web_evidence_is_appended_after_merge_and_never_reaches_it():
 
     marker = "USD 987,654,321"
     provider = FixtureProvider(
-        [WebResult(title="A blog post", url="https://example.test/p",
-                   snippet=f"Exports hit {marker} last week.", domain="example.test")]
+        [
+            WebResult(
+                title="A blog post",
+                url="https://example.test/p",
+                snippet=f"Exports hit {marker} last week.",
+                domain="example.test",
+            )
+        ]
     )
     runtime = deps_module.Runtime(
         kg=FakeKG(), llm=FakeLLM(), deps=None, graph=FakeGraph(ANSWERED), websearch=provider
@@ -191,7 +272,8 @@ async def test_a_historical_question_never_calls_the_provider():
         kg=FakeKG(), llm=FakeLLM(), deps=None, graph=FakeGraph(ANSWERED), websearch=provider
     )
     await run_query(
-        runtime, "Which country took the largest share of tea exports in 2019?",
+        runtime,
+        "Which country took the largest share of tea exports in 2019?",
         record_history=False,
     )
     assert provider.queries == []
@@ -243,9 +325,9 @@ def test_web_search_is_not_reachable_from_an_agent(monkeypatch):
     # `PolicyRetriever` included, which made the obvious form of this assertion
     # fail against perfectly correct wiring.
     assert "websearch" not in runtime.deps.extras
-    assert all(value is not runtime.websearch for value in runtime.deps.extras.values()), (
-        "the provider reached AgentDeps.extras, where an agent can read it"
-    )
+    assert all(
+        value is not runtime.websearch for value in runtime.deps.extras.values()
+    ), "the provider reached AgentDeps.extras, where an agent can read it"
 
 
 # --- the global cap: fairness limits do not bound a bill ---------------------

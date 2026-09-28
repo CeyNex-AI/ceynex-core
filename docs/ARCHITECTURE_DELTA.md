@@ -842,3 +842,54 @@ the shared module regardless.
 **Cost, stated plainly.** No new table, no new dependency, no model spend. One
 route, one page, one shared module; the agent file is 46 lines shorter.
 
+
+---
+
+## D18 — tariff incidence is the exporter's share, and now costs the exporter
+
+**Decided 2026-09-28, M2.**
+**Spec touched:** SRS 3.1.5 (simulation must state its assumptions).
+
+`config/elasticities.yaml` and the workbench slider both define
+`tariff_incidence` as the share of a tariff borne by the Sri Lankan exporter.
+`shocks.py::tariff_shock` and `agreement_loss_shock` used the same number as the
+rise in the *buyer's* price, and held the exporter's own price fixed. So the
+exporter's share cost nothing, and moving the slider toward "the exporter bears
+it all" gave the largest volume loss, when a buyer facing no price change buys
+the same amount. At the default of 0.5 the two readings give the same buyer price,
+which is why no golden value or published answer showed the problem.
+
+**The corrected split**, for a tariff `t` with exporter incidence `s` and demand
+elasticity `e`:
+
+- the buyer's landed price rises by `(1 − s)·t`, and volume moves by `e·(1 − s)·t`;
+- the exporter's net price falls by `s·t`;
+- revenue ≈ `e·(1 − s)·t − s·t`.
+
+This is the structure `fx_shock` already has: a volume effect plus the price
+effect, and its docstring names leaving out the price effect as "the classic
+error". `ShockOutcome` keeps its fields. `price_change_pct` is still the buyer's
+price (which is what the workbench's "Buyer's price" row shows), and the `detail`
+sentence now states the exporter's price concession, so a reader sees why revenue
+is no longer just the volume row.
+
+**What moves, at the configured defaults** (`s = 0.5`):
+
+| Shock | Before | After |
+|---|---|---|
+| Apparel, 5% tariff | −3.0% | −5.5% |
+| Agriculture, 10% tariff | −4.0% | −9.0% |
+| Apparel, preference loss (MFN 9.5%) | −5.7% | −10.45% |
+| Agriculture, preference loss (MFN 5.5%) | −2.2% | −4.95% |
+
+The fx shock doesn't change. The golden values in `tests/models/test_shocks.py`
+still pin the pre-refactor fx arithmetic. The tariff and agreement goldens are
+the corrected values, each worked out by hand in a comment beside it. There are
+also tests for the edge cases: incidence 1 means no volume change and revenue
+−t, incidence 0 means revenue `e·t`, and the decomposition holds at every
+incidence.
+
+**Cost, stated plainly.** No new parameter, no contract change, no model spend.
+Simulated tariff and preference-loss losses are larger than they were: by a
+factor of about 1.8 to 2.25 at the defaults above, and by more for an exporter
+with inelastic demand.
