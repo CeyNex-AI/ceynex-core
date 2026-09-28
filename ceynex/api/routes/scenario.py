@@ -15,9 +15,10 @@ a slider moves.
 or no recorded preference coverage for an agreement shock, means no number —
 `refused: true` and a reason, with the assumptions still stated.
 
-**Every parameter comes back with its `basis` and `source`.** Several sources in
-`config/elasticities.yaml` are still `TBD` placeholders. The page shows them as
-such; a slider over a number nobody has sourced must not look like a fitted one.
+**Every parameter comes back with its `basis` and `source`.** None in
+`config/elasticities.yaml` is a fitted estimate, and the demand elasticities are
+labelled `assumption`; the page shows each as it is, because a slider over a
+judgment call must not look like a fitted one.
 """
 
 from __future__ import annotations

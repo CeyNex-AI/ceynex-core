@@ -4,40 +4,63 @@
 # SRS 3.1.5 requires the simulation to state its assumptions, and because a
 # marker will ask where these numbers come from. Every entry needs a `source`.
 #
-# Populated properly on Day 7. Values below are PLACEHOLDERS carrying literature
-# ranges, not fitted estimates — the agent must surface `basis` in its
-# `assumptions` list so a reader knows which is which.
+# Sourced 2026-09-28; the evidence, and how each figure was converted to the
+# convention below, is in docs/ELASTICITY_SOURCES.md. None is a fitted Sri Lankan
+# estimate. `basis` says what kind of number each one is, and the agent surfaces
+# it in its `assumptions` list so a reader knows which is which:
+#   own_data        — measured from this project's own fact_trade rows
+#   literature      — a published estimate, converted to our convention
+#   tariff_schedule — a published tariff schedule
+#   assumption      — a judgment inside the range its source states
 
 fx_pass_through:
   # Share of a depreciation that reaches USD export prices within one year.
-  # <1.0 because contracts are priced in USD and repriced with a lag.
+  # This is the importer-currency convention; the dominant-currency literature
+  # often reports the complement (the exporter's own-currency price response).
   agriculture:
-    value: 0.6
-    basis: literature_range
-    source: "TBD Day 7 — cite the source used"
+    value: 0.1
+    basis: own_data
+    source: >-
+      fact_trade UN_COMTRADE unit values vs WB_FX: in 2021-22 the rupee lost 38%
+      of its USD value while USD/kg moved +7.5% (tea), -3.4% (cinnamon), -6.2%
+      (rubber). World-priced commodities adjust in rupees, not dollars.
   apparel:
-    value: 0.4
-    basis: literature_range
-    source: "TBD Day 7 — apparel is more contract-priced than agriculture"
+    value: 0.3
+    basis: literature
+    source: >-
+      Gopinath, Boz, Casas, Diez, Gourinchas & Plagborg-Moller (2020), AER 110(3),
+      s.4: Colombian manufactured exports, peso-price response 0.84 on impact and
+      0.56 after two years, i.e. 0.16-0.44 reaching the USD price; ~0.3 at one year.
 
 export_demand_elasticity:
   # % change in export volume per 1% change in the buyer's landed price.
   # Negative by construction.
   agriculture:
     value: -0.8
-    basis: literature_range
-    source: "TBD Day 7"
+    basis: assumption
+    source: >-
+      Between Senhadji & Montenegro (1999), IMF Staff Papers 46(3), one-year
+      aggregate export price elasticity -0.21 (mean), and substitution with Kenyan
+      and Indian teas; tea demand in importing markets is itself inelastic.
   apparel:
     value: -1.2
-    basis: literature_range
-    source: "TBD Day 7 — apparel buyers substitute to Bangladesh/Vietnam more readily"
+    basis: assumption
+    source: >-
+      Between Senhadji & Montenegro (1999) one-year -0.21 / long-run -1.0 aggregate
+      elasticities and Phillips (2024, USITC) Armington ~3.6 for textiles and
+      apparel: buyers substitute to Bangladesh/Vietnam, but not within a year.
 
 tariff_incidence:
   # Share of a tariff borne by the Sri Lankan exporter rather than the importer.
+  # Serves both a new tariff and a lost preference; the evidence differs between
+  # the two (docs/ELASTICITY_SOURCES.md s.3), and splitting it is an open item.
   default:
     value: 0.5
-    basis: assumption
-    source: "TBD Day 7 — symmetric split is the neutral prior; state it as such"
+    basis: literature
+    source: >-
+      Cirera (2014), Rev. World Econ. 150(3): exporters capture 0.17-0.8 of EU
+      preference margins (0.48-0.59 above a 4% margin). New US tariffs in 2018-19
+      fell almost wholly on importers (Amiti, Redding & Weinstein 2019).
 
 model:
   # The simulation is a documented linear elasticity model. This is an explicit,
@@ -57,14 +80,21 @@ model:
 # simulation cannot be completed rather than applying this number (SAD 4.1).
 #
 # This is the documented fallback for the WITS tariff ingestion the plan lists
-# first in its "if you fall behind" cut order. Replace with a real WITS pull and
-# these become fitted rather than assumed.
+# first in its "if you fall behind" cut order (D9). The rates are the EU's
+# published MFN schedule, but one per sector — not queried per tariff line at
+# run time — and a policy document that states a rate still overrides them.
 agreement_loss_mfn_tariff:
   agriculture:
-    value: 0.055
-    basis: assumption
-    source: TBD — EU MFN applied rates for HS 09/15/40 vary widely by heading
+    value: 0.0
+    basis: tariff_schedule
+    source: >-
+      WITS/TRAINS, EU MFN 2023: black tea 0902.30/.40, cinnamon 0906 and natural
+      rubber 4001 are all 0% (green tea in small packs 3.2%), so losing GSP+
+      re-imposes no tariff on CeyNex's agriculture items.
   apparel:
-    value: 0.095
-    basis: assumption
-    source: TBD — EU MFN for HS 61/62 is commonly cited near 9.6%, verify per heading
+    value: 0.115
+    basis: tariff_schedule
+    source: >-
+      WTO World Tariff Profiles 2019, EU Part A.2: Clothing (ch. 61-62) MFN applied
+      average 11.5%, max 12%; WITS 2023 confirms 12% on T-shirts and trousers, 6.5%
+      on bras (6212.10).

@@ -8,11 +8,11 @@ so both call the functions here, and `tests/models/test_shocks.py` asserts the
 agent and the workbench agree to the cent on the same inputs.
 
 **Every parameter carries its provenance.** `config/elasticities.yaml` records a
-`basis` and a `source` beside each value, and several of those sources are still
-`TBD` placeholders. The agent reads only the value; the workbench shows all
-three, because a slider over a number nobody has sourced must say so rather
-than look like a fitted estimate. An overridden value is marked as such and
-keeps the configured default beside it.
+`basis` and a `source` beside each value (sourced in docs/ELASTICITY_SOURCES.md;
+none is a fitted Sri Lankan estimate, and two are labelled `assumption`). The
+agent reads only the value; the workbench shows all three, because a slider over
+a judgment call must say so rather than look like a fitted estimate. An
+overridden value is marked as such and keeps the configured default beside it.
 
 **Pure arithmetic, no I/O, no model call.** Baselines and coverage come from the
 knowledge graph through the caller; nothing here reaches a database or an LLM.
@@ -54,7 +54,8 @@ class Parameter:
     value: float
     #: The configured value, kept beside an override so the page can show both.
     default: float
-    #: `literature_range` / `assumption` from the config, `override` when the
+    #: `own_data` / `literature` / `tariff_schedule` / `assumption` from the
+    #: config, `override` when the
     #: caller supplied the value, `sourced` when a policy document did, and
     #: `fallback` when the config had no entry.
     basis: str
@@ -234,17 +235,22 @@ def tariff_shock(
 
 
 def _tariff_split(tariff: float, incidence: float, elasticity: float) -> tuple[float, float, float]:
-    """`(buyer price, volume, revenue)` changes for a tariff; see `tariff_shock`."""
-    buyer_price = (1 - incidence) * tariff
-    volume_change = elasticity * buyer_price
-    revenue_change = volume_change - incidence * tariff
+    """`(buyer price, volume, revenue)` changes for a tariff; see `tariff_shock`.
+
+    `+ 0.0` turns a negative zero (a 0% rate times a negative elasticity) into a
+    plain zero, so a rate that changes nothing never prints as "-0.0%".
+    """
+    buyer_price = (1 - incidence) * tariff + 0.0
+    volume_change = elasticity * buyer_price + 0.0
+    revenue_change = volume_change - incidence * tariff + 0.0
     return buyer_price, volume_change, revenue_change
 
 
 def _tariff_effects(tariff: float, incidence: float, buyer_price: float, volume: float) -> str:
+    exporter_price = -incidence * tariff + 0.0
     return (
         f"Buyer price {buyer_price * 100:+.1f}%, volume {volume * 100:+.1f}%, "
-        f"exporter's net price {-incidence * tariff * 100:+.1f}%."
+        f"exporter's net price {exporter_price * 100:+.1f}%."
     )
 
 
@@ -307,18 +313,21 @@ def describe_coverage(preferences: list[dict[str, Any]]) -> str:
 def describe_config_rate(rate: Parameter) -> str:
     """How the agent names the D9 fallback constant when no document sourced a rate.
 
-    An overridden rate is the reader's, not the config's, and the sentence says
-    so — a workbench slider must not be described as a literature constant.
+    The configured rate is the EU's published MFN schedule, but one figure per
+    sector rather than the rate for the heading in question, and the sentence
+    says so. An overridden rate is the reader's, not the config's — a workbench
+    slider must not be described as the configured schedule rate.
     """
     if rate.overridden:
         return (
             f"MFN tariff of {rate.value * 100:.1f}% set in the scenario workbench "
-            f"(overriding the {rate.default * 100:.1f}% literature constant in "
+            f"(overriding the {rate.default * 100:.1f}% sector constant in "
             f"config/elasticities.yaml — deviation D9)"
         )
     return (
         f"MFN tariff of {rate.value * 100:.1f}% from config/elasticities.yaml "
-        f"(a literature constant, not a queried tariff schedule — deviation D9)"
+        f"(a sector constant from the EU MFN schedule, not queried per tariff line "
+        f"— deviation D9)"
     )
 
 

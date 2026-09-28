@@ -369,7 +369,7 @@ def test_the_assumptions_say_which_rate_was_used():
     # every contributing agent, and this sentence was being silently dropped
     # whenever another agent's own caveats filled that cap first.
     assert any("USTR" in e["claim"] for e in sourced["evidence"])
-    assert any("literature constant" in e["claim"] for e in fallback["evidence"])
+    assert any("sector constant from the EU MFN schedule" in e["claim"] for e in fallback["evidence"])
     assert sourced["figures"]["apparel_impact_usd"] != fallback["figures"]["apparel_impact_usd"]
 
 

@@ -7,11 +7,15 @@ The golden values below were computed from the agent's code *before* the move
 (`git show d71083d:ceynex/agents/trade_economics.py`), so the check is against
 the formulas as they were, not against the module checking itself.
 
-The one deliberate exception is the tariff arithmetic, corrected in D18: the
-exporter's share of a tariff now lowers the exporter's own price, where before it
-raised the buyer's price and cost nothing else. The tariff and agreement-loss
-goldens are the corrected values, worked by hand in the comments beside them;
-the fx goldens are still the pre-move originals.
+Two deliberate changes since, so every golden below is now worked by hand in
+the comment beside it rather than copied from the old agent:
+
+- D18 corrected the tariff arithmetic: the exporter's share of a tariff now
+  lowers the exporter's own price, where before it raised the buyer's price and
+  cost nothing else.
+- The config's `TBD` placeholders were replaced with sourced values
+  (docs/ELASTICITY_SOURCES.md, 2026-09-28): pass-through 0.1 / 0.3, EU MFN 0% /
+  11.5%. The formulas the goldens pin did not change with them.
 """
 
 from __future__ import annotations
@@ -26,26 +30,29 @@ from ceynex.settings import elasticity_config
 
 BASELINE = 1_000_000.0
 
-# (delta_usd, pct, detail): fx from the pre-refactor `_simulate_fx`; tariff from
-# the D18-corrected `tariff_shock`, revenue = e·(1 − s)·t − s·t.
+# (delta_usd, pct, detail). fx: revenue = pt·d·(−e − 1); tariff (D18):
+# revenue = e·(1 − s)·t − s·t.
 GOLDEN = {
+    # 0.1 × 0.05 × (0.8 − 1) = −0.001
     ("fx", "agriculture", 0.05): (
-        -5999.999999999998,
-        -0.005999999999999998,
-        "agriculture: FX pass-through 0.60 and export demand elasticity -0.80 applied linearly "
-        "to a 5.0% depreciation. Volume effect +2.4%, price effect -3.0%.",
+        -1000.0,
+        -0.001,
+        "agriculture: FX pass-through 0.10 and export demand elasticity -0.80 applied linearly "
+        "to a 5.0% depreciation. Volume effect +0.4%, price effect -0.5%.",
     ),
+    # 0.1 × -0.03 × (0.8 − 1) = +0.0006
     ("fx", "agriculture", -0.03): (
-        3599.999999999999,
-        0.003599999999999999,
-        "agriculture: FX pass-through 0.60 and export demand elasticity -0.80 applied linearly "
-        "to a -3.0% depreciation. Volume effect -1.4%, price effect +1.8%.",
+        599.9999999999999,
+        0.0005999999999999998,
+        "agriculture: FX pass-through 0.10 and export demand elasticity -0.80 applied linearly "
+        "to a -3.0% depreciation. Volume effect -0.2%, price effect +0.3%.",
     ),
+    # 0.3 × 0.10 × (1.2 − 1) = +0.006
     ("fx", "apparel", 0.10): (
-        8000.0,
-        0.008,
-        "apparel: FX pass-through 0.40 and export demand elasticity -1.20 applied linearly "
-        "to a 10.0% depreciation. Volume effect +4.8%, price effect -4.0%.",
+        5999.999999999998,
+        0.005999999999999998,
+        "apparel: FX pass-through 0.30 and export demand elasticity -1.20 applied linearly "
+        "to a 10.0% depreciation. Volume effect +3.6%, price effect -3.0%.",
     ),
     # -0.8 × 0.05 − 0.05 = −0.09
     ("tariff", "agriculture", 0.10): (
@@ -85,27 +92,27 @@ COVERAGE_ROWS = [
     },
 ]
 
-# D18-corrected, the same split as a tariff at the configured MFN rate.
+# D18-corrected, the same split as a tariff at the configured EU MFN rate.
 GOLDEN_AGREEMENT = {
-    # -1.2 × 0.0475 − 0.0475 = −0.1045
+    # -1.2 × 0.0575 − 0.0575 = −0.1265
     "apparel": (
-        -104500.0,
-        -0.1045,
+        -126500.0,
+        -0.1265,
         "apparel: preference coverage resolved from the knowledge graph (GSP+, UK DCTS, matched "
-        "on HS 61, status unverified/verified). Loss modelled as an MFN tariff of 9.5% from "
-        "config/elasticities.yaml (a literature constant, not a queried tariff schedule — "
-        "deviation D9), with exporter incidence 0.50 and demand elasticity -1.20. "
-        "Buyer price +4.8%, volume -5.7%, exporter's net price -4.8%.",
+        "on HS 61, status unverified/verified). Loss modelled as an MFN tariff of 11.5% from "
+        "config/elasticities.yaml (a sector constant from the EU MFN schedule, not queried per "
+        "tariff line — deviation D9), with exporter incidence 0.50 and demand elasticity -1.20. "
+        "Buyer price +5.8%, volume -6.9%, exporter's net price -5.8%.",
     ),
-    # -0.8 × 0.0275 − 0.0275 = −0.0495
+    # The EU MFN on tea, cinnamon and rubber is 0%: a lost preference costs nothing.
     "agriculture": (
-        -49500.0,
-        -0.0495,
+        0.0,
+        0.0,
         "agriculture: preference coverage resolved from the knowledge graph (GSP+, UK DCTS, "
-        "matched on HS 61, status unverified/verified). Loss modelled as an MFN tariff of 5.5% "
-        "from config/elasticities.yaml (a literature constant, not a queried tariff schedule — "
-        "deviation D9), with exporter incidence 0.50 and demand elasticity -0.80. "
-        "Buyer price +2.8%, volume -2.2%, exporter's net price -2.8%.",
+        "matched on HS 61, status unverified/verified). Loss modelled as an MFN tariff of 0.0% "
+        "from config/elasticities.yaml (a sector constant from the EU MFN schedule, not queried "
+        "per tariff line — deviation D9), with exporter incidence 0.50 and demand elasticity "
+        "-0.80. Buyer price +0.0%, volume +0.0%, exporter's net price +0.0%.",
     ),
 }
 
@@ -203,7 +210,18 @@ def test_a_tariff_lowers_revenue_and_a_negative_tariff_raises_it(config):
 def test_losing_a_preference_can_never_raise_revenue(config):
     for sector in shocks.SECTORS:
         outcome = shocks.agreement_loss_shock(sector, BASELINE, config, coverage="GSP+")
-        assert outcome.revenue_change_usd < 0
+        assert outcome.revenue_change_usd <= 0
+
+
+def test_a_preference_on_a_zero_mfn_good_is_worth_nothing_to_lose(config):
+    """The EU's MFN rate on black tea, cinnamon and natural rubber is already 0%,
+    so GSP+ saves nothing on them. The old 5.5% constant simulated a loss on a
+    preference that had no value."""
+    outcome = shocks.agreement_loss_shock("agriculture", BASELINE, config, coverage="GSP+")
+    assert outcome.revenue_change_usd == 0.0
+    assert "-0.0" not in outcome.detail
+    apparel = shocks.agreement_loss_shock("apparel", BASELINE, config, coverage="GSP+")
+    assert apparel.revenue_change_usd < 0
 
 
 # --- tariff incidence means the exporter's share (D18) ----------------------------
@@ -253,14 +271,30 @@ def test_revenue_is_the_volume_effect_plus_the_exporters_price_concession(config
 
 
 def test_every_parameter_carries_its_basis_and_source_verbatim(config):
-    """The config's `TBD` placeholders must reach the page as `TBD`, not be
-    tidied into something that looks sourced."""
+    """`basis` and `source` reach the page exactly as the config states them — in
+    particular an `assumption` must not be tidied into something that looks
+    fitted."""
     outcome = shocks.fx_shock("agriculture", BASELINE, 0.05, config)
     by_name = {p.name: p for p in outcome.parameters}
-    assert by_name["fx_pass_through"].basis == "literature_range"
-    assert by_name["fx_pass_through"].source.startswith("TBD")
-    assert by_name["export_demand_elasticity"].source.startswith("TBD")
+    assert by_name["fx_pass_through"].basis == "own_data"
+    assert by_name["fx_pass_through"].source.startswith("fact_trade UN_COMTRADE")
+    assert by_name["export_demand_elasticity"].basis == "assumption"
     assert all(not p.overridden for p in outcome.parameters)
+
+
+def test_no_config_entry_is_left_unsourced(config):
+    """Every elasticity carries a real source and a known basis — no `TBD`."""
+    known = {"own_data", "literature", "tariff_schedule", "assumption"}
+    groups = (
+        "fx_pass_through",
+        "export_demand_elasticity",
+        "tariff_incidence",
+        "agreement_loss_mfn_tariff",
+    )
+    for group in groups:
+        for key, entry in config[group].items():
+            assert entry["basis"] in known, (group, key)
+            assert not str(entry["source"]).startswith("TBD"), (group, key)
 
 
 def test_an_override_changes_only_the_named_parameter_and_says_so(config):
@@ -278,7 +312,7 @@ def test_an_override_changes_only_the_named_parameter_and_says_so(config):
     assert moved.revenue_change_pct == pytest.approx(-0.01)
 
 
-def test_an_overridden_mfn_rate_is_not_called_a_literature_constant(config):
+def test_an_overridden_mfn_rate_is_not_called_the_configured_rate(config):
     """The detail line the page shows must say whose number it is."""
     outcome = shocks.agreement_loss_shock(
         "apparel",
@@ -288,8 +322,8 @@ def test_an_overridden_mfn_rate_is_not_called_a_literature_constant(config):
         overrides={"agreement_loss_mfn_tariff": 0.15},
     )
     assert "set in the scenario workbench" in outcome.detail
-    assert "overriding the 9.5% literature constant" in outcome.detail
-    assert "a literature constant, not a queried" not in outcome.detail
+    assert "overriding the 11.5% sector constant" in outcome.detail
+    assert "from the EU MFN schedule" not in outcome.detail
 
 
 def test_a_none_override_is_no_override(config):

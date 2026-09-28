@@ -107,7 +107,7 @@ def test_an_agreement_run_uses_the_graphs_coverage_and_cites_it(client, kg):
     assert body["outcome"]["detail"] == expected.detail
     assert any("COVERED_BY" in query for query in kg.queries)
     assert [e["source_id"] for e in body["evidence"]] == ["KG", "KG"]
-    assert "MFN tariff of 9.5%" in body["evidence"][1]["claim"]
+    assert "MFN tariff of 11.5%" in body["evidence"][1]["claim"]
 
 
 # --- it refuses the way the agent refuses --------------------------------------
@@ -151,11 +151,12 @@ def test_a_graph_outage_is_a_503():
 # --- provenance travels ----------------------------------------------------------
 
 
-def test_every_parameter_carries_its_source_including_tbd(client):
+def test_every_parameter_carries_its_basis_and_source(client):
     body = run(client, {"shock": "fx", "sector": "agriculture"}).json()
     by_name = {p["name"]: p for p in body["outcome"]["parameters"]}
-    assert by_name["fx_pass_through"]["basis"] == "literature_range"
-    assert by_name["fx_pass_through"]["source"].startswith("TBD")
+    assert by_name["fx_pass_through"]["basis"] == "own_data"
+    assert by_name["export_demand_elasticity"]["basis"] == "assumption"
+    assert all(p["source"] and not p["source"].startswith("TBD") for p in by_name.values())
     assert all(p["overridden"] is False for p in by_name.values())
 
 
@@ -163,7 +164,7 @@ def test_an_override_is_applied_and_echoed_with_its_default(client):
     body = run(client, {"shock": "fx", "sector": "agriculture", "magnitude": 0.05,
                         "overrides": {"fx_pass_through": 1.0}}).json()
     moved = {p["name"]: p for p in body["outcome"]["parameters"]}["fx_pass_through"]
-    assert moved["overridden"] is True and moved["value"] == 1.0 and moved["default"] == 0.6
+    assert moved["overridden"] is True and moved["value"] == 1.0 and moved["default"] == 0.1
     assert body["outcome"]["revenue_change_pct"] == pytest.approx(-0.01)
 
 

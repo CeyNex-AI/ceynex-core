@@ -170,8 +170,9 @@ questions:
     answerable: true
     note: >
       The headline case for this work. Today the magnitude comes from
-      `agreement_loss_mfn_tariff` (9.5%), a literature constant standing in for
-      the WITS ingestion that was cut (D9). A correct answer after this change
+      `agreement_loss_mfn_tariff` (11.5%, the EU clothing MFN average since
+      2026-09-28; 9.5% before), a sector constant standing in for the WITS
+      ingestion that was cut (D9). A correct answer after this change
       cites a rate from the US schedule, or states that it fell back to the
       constant. Either is acceptable; silently using the constant while implying
       a source is not.
@@ -186,6 +187,9 @@ questions:
       M02 asks this for apparel and is one of the answers EVALUATION.md §1 flags
       for an ungrounded figure. The agriculture twin is here so the grounding fix
       is measured on a question that was not part of the run that found the bug.
+      Since 2026-09-28 the configured agriculture MFN rate is 0% (the EU charges
+      none on black tea, cinnamon or rubber), so a correct answer reports no
+      tariff effect rather than a loss.
 
   - id: P13
     category: simulation
