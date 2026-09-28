@@ -162,7 +162,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     #
     # `agreement` is deliberately not included. Losing a preference re-imposes a
     # rate the question does not have to supply -- `_simulate_agreement_loss`
-    # sources it, and says so when it falls back to the D9 literature constant.
+    # sources it, and says so when it falls back to the D9 sector constant.
     if shock == "tariff" and intent.pct_change is None and not _posits_a_change(state["query"]):
         log.info("tariff question with no rate and no proposed change; describing policy instead")
         shock = "policy"
