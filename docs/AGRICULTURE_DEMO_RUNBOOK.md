@@ -32,7 +32,7 @@ remote repository.
 ### 0--10 seconds: scope
 
 > CeyNex provides evidence-backed support for Sri Lankan agriculture exporters.
-> This demonstration uses annual Tea Board and FAOSTAT source series, a local
+> This demonstration uses a curated annual tea series and FAOSTAT prices, a local
 > knowledge graph, and registered forecast models. Every answer shows its
 > assumptions and evidence boundary.
 
@@ -66,8 +66,14 @@ Ask:
 
 Show the `A04` result. State:
 
-> Tea Board annual export volume fell from **323,012,000 kg in 2011** to
+> The curated tea annual export volume fell from **323,012,000 kg in 2011** to
 > **257,440,000 kg in 2025**, a **20.3% decline**.
+
+The 2011 figure is attributed in the workbook to the Central Bank of Sri Lanka;
+the 2025 figure is attributed to the Tea Exporters Association. `TEA_BOARD`
+is the database source ID for this curated workbook, not the publisher of
+every row. The question says “five years,” but this trend is the full
+2011–2025 span; say so during the demo.
 
 Then show the data-quality treatment, not a reconciled replacement value:
 
@@ -75,7 +81,8 @@ Then show the data-quality treatment, not a reconciled replacement value:
 .\.venv\Scripts\python.exe -m eval.agriculture_validation
 ```
 
-The verified comparison reports one material finding: for 2020, Tea Board has
+The verified comparison reports one material finding: for 2020, the curated
+tea workbook (Tea Exporters Association attribution) has
 **265,569,000 kg** and partner-aggregated UN Comtrade has **279,710,426.42 kg**
 (**5.32%** difference). Say:
 

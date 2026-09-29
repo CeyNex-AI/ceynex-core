@@ -348,7 +348,7 @@ not be compared as if they were the same experiment.
 
 | Target | Source | Frequency | Observations | Window | Decision |
 |---|---|---:|---:|---|---|
-| Tea export volume | Tea Board total exports | annual | 15 | 2011–2025 | Short annual series: baselines first |
+| Tea export volume | Curated tea totals: Central Bank (2011–2016), Tea Exporters Association (2017–2025) | annual | 15 | 2011–2025 | Short annual series: baselines first |
 | Cinnamon producer price | FAOSTAT USD producer price | annual | 34 | 1991–2024 | Short annual series: baselines first |
 
 Both series are below the plan's 40-observation threshold. Backtests use an
@@ -429,7 +429,7 @@ the orchestrator's 30-question evaluation.
 | Cinnamon trend | Source-backed price trend with figures and two evidence records | Pass: 10.05 USD/kg in 2024, up 382.8% from 1991 |
 | Cinnamon forecast | Registered producer-price forecast with an 80% interval | Pass: 2025 point forecast 10.05 USD/kg; 8.96-11.15 interval; annual-frequency caveat stated |
 | Cinnamon districts | Do not invent a largest district without a sourced share | Pass: lists Matara, Galle, and Ratnapura; explicitly refuses a largest-share claim |
-| Tea export trend | Tea Board export-volume trend with figures and two evidence records | Pass: 257,440,000 kg in 2025, down 20.3% from 2011 |
+| Tea export trend | Curated tea export-volume trend with figures and two evidence records | Pass: 257,440,000 kg in 2025, down 20.3% from 2011; endpoints attributed to Tea Exporters Association and Central Bank tables, respectively |
 | Tea-to-rubber substitution | Do not infer a relationship without evidence | Pass: explicitly reports that the effect cannot be estimated responsibly |
 
 All **5 of 5** checks passed, with a mean of **2.0 evidence records** per
@@ -437,6 +437,13 @@ answer. Each answer was correctly marked `degraded=True`, because no LLM prose
 was requested. The two refusal cases are passes, not missing functionality:
 they show the agent preserves evidence boundaries instead of manufacturing a
 district share or substitution effect.
+
+**2026-09-29 local rerun:** the same five checks passed, all five answers were
+degraded, and the mean evidence count was 2.2. The workbook audit confirmed
+15 mapped tea years (2011–2025), sourced from Central Bank and Tea Exporters
+Association tables, and five mapped DEA/EAC cinnamon export years (2013–2017).
+The 2011/2025 tea trend is a full-span comparison even though the test prompt
+asks about five years; it must not be described as a five-year change.
 
 ### Agriculture cross-source validation
 
@@ -448,6 +455,11 @@ Tea Board or DEA/EAC world-total row as-is, and compares tea (`TEA_BOARD` vs
 The run is non-destructive: source facts are only read, and only material
 (5-20%) or severe (>20%) discrepancies are inserted into `dq_flag`. Exact
 existing flags are not inserted twice.
+
+**2026-09-29 local rerun:** 12 comparable pairs again produced 11 minor and
+one material difference, with no severe differences. The material 2020 tea
+flag was already present and unresolved in `dq_flag`, so this read-only rerun
+inserted zero rows. The source facts remained unchanged.
 
 The run measured on **2026-09-07**, after the documented 2015--2024 UN
 Comtrade import, found 121 FAOSTAT, 15 Tea Board, 5 Cinnamon, 2,413 UN

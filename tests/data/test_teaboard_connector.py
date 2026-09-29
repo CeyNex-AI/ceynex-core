@@ -50,7 +50,9 @@ def test_teaboard_connector_stages_and_maps_total_exports(tmp_path: Path) -> Non
     first_stage, second_stage = connector.stage(), connector.stage()
     assert first_stage == second_stage
     assert first_stage.exists()
-    assert connector.manifest().period_start == "2024"
+    manifest = connector.manifest()
+    assert manifest.period_start == "2024"
+    assert manifest.notes["missing_years"] == list(range(2011, 2024))
 
     fact_trade = connector.to_fact_trade(raw)
     assert fact_trade["export_volume"].tolist() == [245787000, 257440000]

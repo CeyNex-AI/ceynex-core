@@ -11,7 +11,7 @@ the relevant snapshot profiles live alongside the raw data.
 | --- | --- | --- | --- | --- | --- |
 | FAOSTAT | Annual crop observations, 1961–2024; producer-price observations, 1991–2025 (annual and monthly records may be present) | tonnes; LCU/tonne; USD/tonne; price index | kg for applicable volumes; USD/kg for mapped USD prices; LKR/kg where an LKR price is cleaned | `producer_price` only: annual `Producer Price (USD/tonne)` observations for tea, cinnamon, rubber, and coconut | `FAOSTATConnector` → `data/staging/faostat.parquet` |
 | World Bank Pink Sheet | Monthly, 1960-01–2026-07 in the supplied historical workbook | USD/kg for `Tea, Colombo`; other workbook columns retain their source units | USD/kg for mapped Tea, Colombo prices | Monthly tea `producer_price` (`Tea, Colombo`) | `PinkSheetConnector` → `data/staging/pinksheet.parquet` |
-| Sri Lanka Tea Board | Annual, 2011–2025 | metric tonnes (MT) for production and exports | kg for mapped export volume | Annual total tea `export_volume` (HS 0902) | `TeaBoardConnector` → `data/staging/teaboard.parquet` |
+| Curated tea workbook (`TEA_BOARD` connector ID) | Annual, 2011–2025; Central Bank totals through 2016 and Tea Exporters Association tables from 2017 | metric tonnes (MT) for production and exports | kg for mapped export volume | Annual total tea `export_volume` (HS 0902) | `TeaBoardConnector` → `data/staging/teaboard.parquet` |
 | Cinnamon / DEA-EAC | Annual fallback workbook, 2011–2025; DEA/EAC export series, 2013–2017 | tonnes/MT, hectares, kg/ha, LKR/kg, USD/tonne, and price indexes | kg for mapped export volume; LKR/kg or USD/kg for cleaned price fields | Annual DEA/EAC total cinnamon `export_volume` (HS 0906) | `CinnamonConnector` → `data/staging/cinnamon.parquet` |
 
 Each connector stages the full useful raw series with its source metadata. Its
@@ -19,6 +19,17 @@ Each connector stages the full useful raw series with its source metadata. Its
 the current trade-fact schema are loaded into `fact_trade`. In particular,
 FAOSTAT crop-production and Tea Board production data remain staged for later
 use rather than being incorrectly labelled as exports.
+
+### Curated-workbook provenance audit (2026-09-29)
+
+The ingestion pipeline selects the 2026-08-15 workbooks in the workspace-level
+`data/raw/` directory. `python tools/audit_agriculture_source_workbooks.py`
+checks those exact files, their source metadata, and their mapped totals. The
+tea workbook contains 2011-2025 annual totals: 2011-2016 cite Central Bank
+tables and 2017-2025 cite Tea Exporters Association tables. `TEA_BOARD` is the
+connector identifier, not a claim that every observation was issued by the
+Tea Board. The cinnamon workbook stages FAOSTAT and DEA/EAC series separately;
+only the five 2013-2017 DEA/EAC export totals map through this connector.
 
 ## Raw snapshots and staging
 

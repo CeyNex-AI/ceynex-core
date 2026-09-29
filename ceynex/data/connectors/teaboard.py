@@ -38,6 +38,7 @@ class TeaBoardConnector(DataSourceConnector):
         "green_tea_mt",
         "total_exports_mt",
     )
+    _EXPECTED_YEARS = range(2011, 2026)
 
     def __init__(self, workbook_path: Path, staging_dir: Path) -> None:
         self.workbook_path = Path(workbook_path)
@@ -78,6 +79,7 @@ class TeaBoardConnector(DataSourceConnector):
         if self._last is None or self._fetched_at is None:
             raise RuntimeError("Call fetch() before manifest().")
         years = self._last["year"]
+        available_years = {int(year) for year in years.unique()}
         return SourceManifest(
             source_id=self.source_id,
             fetched_at=self._fetched_at.isoformat(),
@@ -91,6 +93,9 @@ class TeaBoardConnector(DataSourceConnector):
                 ).name,
                 "metrics": sorted(self._last["metric"].unique().tolist()),
                 "production_mapping": "staged only; fact_trade lacks production_volume",
+                "missing_years": [
+                    year for year in self._EXPECTED_YEARS if year not in available_years
+                ],
             },
         )
 
@@ -101,7 +106,11 @@ class TeaBoardConnector(DataSourceConnector):
         if missing:
             raise ValueError(f"Tea Board records missing columns: {sorted(missing)}")
 
-        exports = raw[(raw["metric"] == "export") & (raw["category"] == "total")].copy()
+        exports = raw[
+            (raw["metric"] == "export")
+            & (raw["category"] == "total")
+            & raw["value_mt"].notna()
+        ].copy()
         periods = pd.to_datetime(exports["year"].astype(str) + "-01-01")
         return pd.DataFrame(
             {
