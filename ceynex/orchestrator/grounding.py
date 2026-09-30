@@ -164,7 +164,13 @@ def _is_bare_year(raw: str, value: str) -> bool:
     quantity landing in the calendar-year range is not a realistic collision
     to guard against here).
     """
-    return "," not in raw and "." not in value and len(value) == 4 and int(value) in YEAR_RANGE
+    # `NUMBER` also takes the sentence's own punctuation when a year ends a
+    # clause -- "in 2024." reads as "2024." and "In 2024, exports" as "2024,"
+    # -- so trailing commas and full stops are sentence punctuation here, not
+    # part of the figure. Only a separator or decimal point *inside* the digits
+    # makes it a quantity.
+    bare = raw.rstrip(",.")
+    return "," not in bare and "." not in bare and len(bare) == 4 and bare.isdigit() and int(bare) in YEAR_RANGE
 
 
 def ungrounded_figures(

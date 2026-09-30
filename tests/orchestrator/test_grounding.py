@@ -98,6 +98,19 @@ def test_a_bare_year_is_structural_too():
     assert ungrounded_figures("This is up from 2025's actual value.", []) == []
 
 
+def test_a_year_ending_a_sentence_or_clause_is_still_structural():
+    """`NUMBER` takes trailing punctuation with the digits, so "in 2024." and
+    "In 2024, exports" read as "2024." and "2024,". Before this, both counted as
+    ungrounded figures and the merge guard discarded otherwise-grounded prose."""
+    assert ungrounded_figures("Exports rose in 2024.", []) == []
+    assert ungrounded_figures("In 2024, exports rose.", []) == []
+    assert ungrounded_figures("Between 2019 and 2024, then 2025.", []) == []
+
+
+def test_punctuation_after_a_comma_grouped_figure_does_not_make_it_a_year():
+    assert ungrounded_figures("Exports reached 2,025.", []) == ["2,025."]
+
+
 def test_a_four_digit_figure_with_a_comma_is_not_a_year():
     """2,025 (a real quantity, comma-grouped as this project always renders
     one) must still be checked -- only a bare, unpunctuated four digits gets
