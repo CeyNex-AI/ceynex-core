@@ -102,21 +102,25 @@ async def test_the_discuss_path_inherits_the_grounding_check_it_does_not_fork_it
 
     assert STRUCTURAL_DIGIT_LIMIT == 2
 
-    llm = ScriptedLLM("Exports reached USD 4.2m, and will hit USD 9.9m by 2029.")
+    llm = ScriptedLLM("Exports reached USD 4.2m, and will hit USD 9.9m, or 1,875 tonnes, by 2029.")
     result = await discuss("summarise that", PRIOR, PRIOR_QUERY, llm)
 
-    # "2029" is caught; "9.9" is not. Asserted so the gap is visible in the
-    # suite rather than discovered by a reader of the output.
+    # "1,875" is caught; "9.9" is not, and neither is the bare year "2029",
+    # which is structural by design (a year ending a sentence included).
+    # Asserted so the gap is visible in the suite rather than discovered by a
+    # reader of the output.
     assert not result.grounded
-    assert "2029" in " ".join(result.rejected_figures)
+    assert "1,875" in " ".join(result.rejected_figures)
     assert "9.9" not in " ".join(result.rejected_figures)
+    assert "2029" not in " ".join(result.rejected_figures)
 
 
 async def test_the_evidence_panel_survives_a_rejected_discussion():
     """The analysis was fine — only the discussion of it was not."""
-    llm = ScriptedLLM("It will be USD 9.9m by 2030.")
+    llm = ScriptedLLM("It will be USD 1,234.5m by 2030.")
     result = await discuss("what next", PRIOR, PRIOR_QUERY, llm)
 
+    assert not result.grounded
     assert result.evidence == PRIOR.evidence
 
 
