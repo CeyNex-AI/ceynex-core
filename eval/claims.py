@@ -40,6 +40,8 @@ import os
 import random
 import statistics
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -48,7 +50,10 @@ JUDGE_MODEL = "gpt-4o"
 JUDGED = ("A", "C", "D")
 LABELS = ("SUPPORTED", "CONTRADICTED", "UNVERIFIABLE")
 MAX_REFERENCE_CHARS = 12_000
-CONCURRENCY = 4
+# Two at a time: at four, gpt-4o's rate limit on the project key refused 380 of
+# 405 calls with HTTP 429 (2026-09-30). The key is shared with production.
+CONCURRENCY = 2
+MAX_ATTEMPTS = 8
 
 JUDGE_SYSTEM = """You are a careful fact-checker for trade statistics.
 You receive a QUESTION, REFERENCE records taken from a trade dataset, and an ANSWER.
@@ -90,9 +95,26 @@ def _call_judge(prompt: str) -> dict[str, Any]:
         "https://api.openai.com/v1/chat/completions", data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=90) as response:  # noqa: S310 - fixed https URL
-        payload = json.load(response)
-    return parse_judgement(payload["choices"][0]["message"]["content"] or "")
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:  # noqa: S310 - fixed https URL
+                payload = json.load(response)
+            return parse_judgement(payload["choices"][0]["message"]["content"] or "")
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (429, 500, 502, 503) or attempt == MAX_ATTEMPTS:
+                raise
+            time.sleep(retry_delay(exc.headers.get("Retry-After"), attempt))
+    raise RuntimeError("unreachable")
+
+
+def retry_delay(retry_after: str | None, attempt: int) -> float:
+    """The server's Retry-After when given, else exponential backoff capped at 60 s."""
+    try:
+        if retry_after is not None:
+            return max(1.0, float(retry_after))
+    except ValueError:
+        pass
+    return min(60.0, 2.0 ** attempt)
 
 
 def parse_judgement(content: str) -> dict[str, Any]:
@@ -111,11 +133,22 @@ def parse_judgement(content: str) -> dict[str, Any]:
     return {"claims": claims}
 
 
-async def judge_all(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def failed(judgement: dict[str, Any]) -> bool:
+    return "error" in judgement or "parse_error" in judgement
+
+
+async def judge_all(records: list[dict[str, Any]],
+                    previous: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Judge every answer; with `previous`, keep its successful judgements and
+    redo only the failed ones."""
     semaphore = asyncio.Semaphore(CONCURRENCY)
     jobs = []
+    done = {(j["repeat"], j["id"], j["condition"]): j for j in previous or [] if not failed(j)}
 
     async def one(record: dict[str, Any], condition: str) -> dict[str, Any]:
+        kept = done.get((record["repeat"], record["id"], condition))
+        if kept is not None:
+            return kept
         answer = record[condition]["answer"]
         async with semaphore:
             if not answer.strip():
@@ -145,7 +178,10 @@ def summarise(judgements: list[dict[str, Any]]) -> dict[str, Any]:
     for condition in JUDGED:
         per_repeat = []
         for rep in repeats:
-            rows = [j for j in judgements if j["condition"] == condition and j["repeat"] == rep]
+            every = [j for j in judgements if j["condition"] == condition and j["repeat"] == rep]
+            # A failed judgement is not an answer with no claims: leaving it in
+            # would dilute every rate. It is counted in `judge_errors` instead.
+            rows = [j for j in every if not failed(j)]
             claims = [c for j in rows for c in j["claims"]]
             n = len(claims)
             per_repeat.append({
@@ -155,7 +191,7 @@ def summarise(judgements: list[dict[str, Any]]) -> dict[str, Any]:
                 "unverifiable": sum(c["label"] == "UNVERIFIABLE" for c in claims) / n if n else 0.0,
                 "answers_with_contradiction": (sum(any(c["label"] == "CONTRADICTED" for c in j["claims"]) for j in rows)
                                                / len(rows)) if rows else 0.0,
-                "judge_errors": sum(1 for j in rows if "error" in j or "parse_error" in j),
+                "judge_errors": sum(1 for j in every if failed(j)),
             })
         out[condition] = {k: {"mean": statistics.fmean(p[k] for p in per_repeat),
                               "sd": statistics.stdev([p[k] for p in per_repeat]) if len(per_repeat) > 1 else 0.0}
@@ -222,6 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=Path, default=Path("eval/results/baseline"))
     parser.add_argument("--audit-size", type=int, default=60)
     parser.add_argument("--agreement", type=Path, help="human-labelled audit_blind.csv")
+    parser.add_argument("--resume", action="store_true",
+                        help="keep successful judgements from an existing claims.json; redo only failures")
     args = parser.parse_args(argv)
 
     if args.agreement:
@@ -238,7 +276,14 @@ def main(argv: list[str] | None = None) -> int:
         print("these results predate eval.baseline storing its reference; rerun it", file=sys.stderr)
         return 1
 
-    judgements = asyncio.run(judge_all(records))
+    previous = None
+    if args.resume and (args.runs / "claims.json").exists():
+        previous = json.loads((args.runs / "claims.json").read_text())
+    judgements = asyncio.run(judge_all(records, previous))
+    errors = sum(1 for j in judgements if failed(j))
+    if errors:
+        print(f"WARNING: {errors} judgement(s) failed; rerun with --resume before using these figures",
+              file=sys.stderr)
     (args.runs / "claims.json").write_text(json.dumps(judgements, indent=2))
     summary = summarise(judgements)
     (args.runs / "claims_summary.json").write_text(json.dumps(summary, indent=2))

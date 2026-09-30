@@ -58,3 +58,33 @@ def test_audit_is_blind_and_agreement_is_measured(tmp_path):
 
 def test_kappa_is_zero_for_chance_agreement():
     assert claims.cohens_kappa(["SUPPORTED", "CONTRADICTED"], ["CONTRADICTED", "SUPPORTED"]) < 0
+
+
+def test_failed_judgements_are_excluded_from_rates_and_counted():
+    ok = _j("A", 1, ["CONTRADICTED", "SUPPORTED"])
+    bad = {**_j("A", 1, []), "error": "HTTP Error 429"}
+    s = claims.summarise([ok, bad, _j("C", 1, ["SUPPORTED"]), _j("D", 1, ["SUPPORTED"])])
+    assert s["A"]["claims_per_answer"]["mean"] == 2.0
+    assert s["A"]["answers_with_contradiction"]["mean"] == 1.0
+    assert s["A"]["judge_errors"]["mean"] == 1
+
+
+def test_resume_keeps_good_judgements_and_redoes_failed_ones(monkeypatch):
+    import asyncio
+
+    record = {"repeat": 1, "id": "S01", "question": "q", "answerable": True, "reference": ["r"],
+              **{c: {"answer": "Iraq took 12.4%."} for c in "ABCD"}}
+    previous = [{**_j("A", 1, ["SUPPORTED"])},
+                {**_j("C", 1, []), "error": "HTTP Error 429"}]
+    calls = []
+    monkeypatch.setattr(claims, "_call_judge", lambda prompt: calls.append(prompt) or {"claims": []})
+    out = asyncio.run(claims.judge_all([record], previous))
+    assert len(calls) == 2  # C (failed before) and D (never judged); A kept
+    assert [j["condition"] for j in out] == ["A", "C", "D"]
+    assert out[0]["claims"][0]["label"] == "SUPPORTED"
+
+
+def test_retry_delay_prefers_retry_after_then_backs_off():
+    assert claims.retry_delay("7", 1) == 7.0
+    assert claims.retry_delay(None, 3) == 8.0
+    assert claims.retry_delay("soon", 10) == 60.0
