@@ -230,7 +230,9 @@ async def one_repeat(questions: list[dict[str, Any]], index: int) -> list[dict[s
         for c in ("B", "C", "D"):
             reference += row["runs"][c]["evidence"]
         record = {"repeat": index, "id": qid, "category": q["category"], "question": q["question"],
-                  "answerable": bool(q.get("answerable", True)), "reference_size": len(reference) - 1}
+                  "answerable": bool(q.get("answerable", True)), "reference_size": len(reference) - 1,
+                  # Kept so eval/claims.py can judge claims against exactly what was scored.
+                  "reference": sorted(set(reference[1:]))}
         for c in CONDITIONS:
             run = row["runs"][c]
             record[c] = {**run, **score(run, reference)}
