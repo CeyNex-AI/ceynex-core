@@ -19,7 +19,7 @@ record of feedback that has already been collected.
 
 1. Explain the source/evidence and limitation approach in one minute.
 2. Ask the participant to read the cinnamon forecast result.
-3. Show the Tea Board/UN Comtrade `dq_flag` example.
+3. Show the curated tea/UN Comtrade `dq_flag` example and identify the workbook publisher.
 4. Ask the questions below and record anonymised responses.
 5. Do not promise that any suggestion will be implemented.
 
@@ -31,7 +31,7 @@ Rate each closed question from 1 (strongly disagree) to 5 (strongly agree).
 |---|---|---|
 | F1 | I can understand what the cinnamon forecast means. | 1 2 3 4 5 |
 | F2 | The 80% interval and the 33% back-test coverage limitation are clear. | 1 2 3 4 5 |
-| F3 | Showing the Tea Board and UN Comtrade discrepancy helps me judge the tea figure. | 1 2 3 4 5 |
+| F3 | Showing the curated tea and UN Comtrade discrepancy helps me judge the tea figure. | 1 2 3 4 5 |
 | F4 | The stated data limitations make me trust the system more than an unsupported answer would. | 1 2 3 4 5 |
 | F5 | I could use this type of evidence when exploring an export decision. | 1 2 3 4 5 |
 

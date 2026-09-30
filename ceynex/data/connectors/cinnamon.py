@@ -100,6 +100,7 @@ class CinnamonConnector(DataSourceConnector):
             & (raw["metric"] == "export_volume")
             & (raw["category"] == "total")
             & (raw["unit"] == "MT")
+            & raw["value"].notna()
         ].copy()
         periods = pd.to_datetime(exports["year"].astype(str) + "-01-01")
         return pd.DataFrame(
