@@ -12,8 +12,8 @@ which market takes the most Sri Lankan tea, the LLM-only baseline answered
 **Method.** For each answerable question and each of conditions A, C and D
 (B's prose differs from C's only when the guard fires, so it adds little here),
 a judge model extracts up to six substantive trade claims from the answer and
-labels each against the reference records that `eval.baseline` stored for that
-question:
+labels each against the dataset records that `eval.baseline` stored for that
+question (evidence plus the agents' computed findings):
 
 - SUPPORTED: the records state it, or it follows by simple arithmetic;
 - CONTRADICTED: the records state something incompatible for the same item and
@@ -123,7 +123,7 @@ async def judge_all(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             else:
                 try:
                     verdict = await asyncio.to_thread(
-                        _call_judge, judge_prompt(record["question"], record.get("reference", []), answer))
+                        _call_judge, judge_prompt(record["question"], record.get("dataset_reference") or record.get("reference", []), answer))
                 except Exception as exc:  # noqa: BLE001 - a failed judgement is recorded, not fatal
                     verdict = {"claims": [], "error": str(exc)}
         print(f"  judged repeat {record['repeat']} {record['id']} {condition}: "

@@ -23,6 +23,7 @@ from ceynex.contracts import new_state
 from ceynex.kg.client import KnowledgeGraphClient
 from ceynex.llm import FakeLLMClient, LLMReasoningClient
 from ceynex.orchestrator.graph import build_graph
+from ceynex.orchestrator.grounding import corpus_texts
 from ceynex.orchestrator.merger import agents_used_from_outputs, unanswered_from_outputs
 from ceynex.retrieval.client import PolicyRetriever
 
@@ -71,6 +72,20 @@ async def answer(query: str, *, use_llm: bool = True, user_id: str = "cli") -> d
         "route": final.get("route", []),
         "sectors": final.get("sectors", []),
         "evidence": final.get("merged_evidence", []),
+        # Each agent's findings rendered the way the grounding guards read them
+        # (`grounding.corpus_texts`): what an answer's figures may legitimately
+        # restate. eval/baseline.py scores against this as well as the evidence.
+        "findings": [
+            text
+            for out in outputs.values()
+            if not out.get("error")
+            for text in corpus_texts(
+                summary=out.get("summary"),
+                figures=out.get("figures"),
+                evidence=out.get("evidence"),
+                assumptions=out.get("assumptions"),
+            )
+        ],
         "forecast": _forecast_of(outputs),
         "degraded": final.get("degraded", False),
         "errors": final.get("errors", []),

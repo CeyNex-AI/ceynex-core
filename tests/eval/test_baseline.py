@@ -18,6 +18,18 @@ def test_a_figure_absent_from_the_reference_is_unsupported():
     assert result["unsupported"] == ["18.2"]
 
 
+def test_a_computed_figure_is_supported_at_dataset_level_but_not_strictly():
+    """A difference an agent computed (7.97 = 10.05 - 2.08) is in its findings,
+    not in any evidence record: it passes the dataset level only."""
+    result = baseline.score(
+        {"answer": "Prices rose by 7.97 USD/kg to 10.05."},
+        ["q", "Cinnamon 10.05 USD/kg in 2024, 2.08 in 1991"],
+        ["q", "Cinnamon 10.05 USD/kg in 2024, 2.08 in 1991", "change_usd_kg: 7.97"],
+    )
+    assert result["unsupported"] == ["7.97"]
+    assert result["unsupported_dataset"] == []
+
+
 def test_a_figure_quoted_from_the_question_is_supported():
     result = baseline.score({"answer": "A 7.5% depreciation would lift volumes."}, ["What if the rupee falls 7.5%?"])
     assert result["unsupported"] == []
@@ -28,7 +40,7 @@ def _row(repeat, qid, *, answerable=True, a_unsupported=True, a_refused=False):
            "answerable": answerable, "reference_size": 1}
     for c in baseline.CONDITIONS:
         unsupported = ["18.2"] if (c == "A" and a_unsupported) else []
-        row[c] = {"figures": ["18.2", "23.5"], "unsupported": unsupported,
+        row[c] = {"figures": ["18.2", "23.5"], "unsupported": unsupported, "unsupported_dataset": unsupported,
                   "refused": (not answerable and c != "A") or (c == "A" and a_refused),
                   "error": None, "elapsed_ms": 1000.0 * (repeat + 1), "guard_discards": []}
     return row
@@ -44,6 +56,7 @@ def test_summary_reports_rates_per_condition_with_spread_over_repeats():
     assert a["unsupported_figure_rate"]["mean"] == 0.25  # 50% then 0%
     assert a["unsupported_figure_rate"]["sd"] > 0
     assert a["unanswerable_refused"]["mean"] == 0.5
+    assert a["unsupported_rate_dataset"]["mean"] == 0.25
     assert summary["C"]["unsupported_figure_rate"]["mean"] == 0.0
     assert summary["C"]["unanswerable_refused"]["mean"] == 1.0
 

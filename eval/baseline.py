@@ -18,6 +18,12 @@ Runs every question in `eval/questions.yaml` under four conditions:
 - **D: CeyNex, deterministic.** No language model at all (SRS 3.4.3's degraded
   path, keyword router and composer).
 
+**Two levels.** *Dataset*: the figure appears in the evidence or in a figure
+an agent computed from the data (the guard's own corpus), which is the fair
+comparison with a model that has no data. *Strict*: the figure appears in a
+cited evidence record, i.e. a reader can find it in the evidence panel; derived
+values such as a difference between two cited prices fail this level.
+
 **How a figure is judged.** A plain model has no evidence of its own, so every
 condition is scored against one shared reference: the question plus every
 evidence entry that the CeyNex conditions (B, C and D) retrieved for that
@@ -141,6 +147,7 @@ async def run_ceynex(question: str, *, use_llm: bool) -> dict[str, Any]:
     return {
         "answer": result.get("answer", "") or "",
         "evidence": [str(e.get("claim", "")) + " " + str(e.get("detail", "")) for e in result.get("evidence", []) or []],
+        "findings": [str(t) for t in result.get("findings", []) or []],
         "refused": is_refusal(result.get("answer", "") or "", result) if result else False,
         "degraded": bool(result.get("degraded", False)),
         "route": list(result.get("route", []) or []),
@@ -181,6 +188,7 @@ async def run_llm_only(question: str) -> dict[str, Any]:
     return {
         "answer": text,
         "evidence": [],
+        "findings": [],
         # No `unanswered` field exists for a bare model, so the harness falls back
         # to its refusal-marker list. Read these three answers by hand as well.
         "refused": is_refusal(text, {}) if text else True,
@@ -200,10 +208,14 @@ def figures(text: str) -> list[str]:
     return grounding.ungrounded_figures(text or "", [], direction_aware=False)
 
 
-def score(run: dict[str, Any], reference: list[str]) -> dict[str, Any]:
+def score(run: dict[str, Any], reference: list[str], dataset: list[str] | None = None) -> dict[str, Any]:
+    """`unsupported`: not in any evidence record (strict, what the evidence panel
+    shows). `unsupported_dataset`: not in the evidence nor in any figure the
+    agents computed from the data (what the grounding guard checks against)."""
     stated = figures(run["answer"])
     unsupported = grounding.ungrounded_figures(run["answer"] or "", reference)
-    return {"figures": stated, "unsupported": unsupported}
+    unsupported_dataset = grounding.ungrounded_figures(run["answer"] or "", dataset if dataset is not None else reference)
+    return {"figures": stated, "unsupported": unsupported, "unsupported_dataset": unsupported_dataset}
 
 
 async def one_repeat(questions: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
@@ -229,14 +241,19 @@ async def one_repeat(questions: list[dict[str, Any]], index: int) -> list[dict[s
         reference = [q["question"]]
         for c in ("B", "C", "D"):
             reference += row["runs"][c]["evidence"]
+        dataset = list(reference)
+        for c in ("B", "C", "D"):
+            dataset += row["runs"][c]["findings"]
         record = {"repeat": index, "id": qid, "category": q["category"], "question": q["question"],
                   "answerable": bool(q.get("answerable", True)), "reference_size": len(reference) - 1,
                   # Kept so eval/claims.py can judge claims against exactly what was scored.
-                  "reference": sorted(set(reference[1:]))}
+                  "reference": sorted(set(reference[1:])),
+                  "dataset_reference": sorted(set(dataset[1:]))}
         for c in CONDITIONS:
             run = row["runs"][c]
-            record[c] = {**run, **score(run, reference)}
+            record[c] = {**run, **score(run, reference, dataset)}
             record[c].pop("evidence", None)
+            record[c].pop("findings", None)
         out.append(record)
     return out
 
@@ -253,6 +270,7 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
             unanswerable = [r for r in rows if not r["answerable"]]
             total_figs = sum(len(r[c]["figures"]) for r in answerable)
             total_unsup = sum(len(r[c]["unsupported"]) for r in answerable)
+            total_unsup_ds = sum(len(r[c].get("unsupported_dataset", r[c]["unsupported"])) for r in answerable)
             with_figs = [r for r in answerable if r[c]["figures"]]
             clean = [r for r in with_figs if not r[c]["unsupported"]]
             latencies = sorted(r[c]["elapsed_ms"] for r in rows if not r[c]["error"])
@@ -260,6 +278,9 @@ def summarise(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "figures_per_answer": total_figs / len(answerable) if answerable else 0.0,
                 "unsupported_figure_rate": total_unsup / total_figs if total_figs else 0.0,
                 "answers_with_unsupported": sum(1 for r in answerable if r[c]["unsupported"]) / len(answerable),
+                "unsupported_rate_dataset": total_unsup_ds / total_figs if total_figs else 0.0,
+                "answers_with_unsupported_dataset": sum(
+                    1 for r in answerable if r[c].get("unsupported_dataset", r[c]["unsupported"])) / len(answerable),
                 "fully_supported_of_answers_with_figures": len(clean) / len(with_figs) if with_figs else 0.0,
                 "answers_with_figures": len(with_figs) / len(answerable),
                 "unanswerable_refused": (sum(1 for r in unanswerable if r[c]["refused"]) / len(unanswerable)) if unanswerable else 0.0,
@@ -280,8 +301,10 @@ def _stats(values: list[float]) -> dict[str, float]:
 def render(summary: dict[str, Any]) -> str:
     metrics = [
         ("figures_per_answer", "Figures per answerable answer", False),
-        ("unsupported_figure_rate", "Unsupported figures / all figures", True),
-        ("answers_with_unsupported", "Answers with >= 1 unsupported figure", True),
+        ("unsupported_rate_dataset", "Figures not from the dataset / all figures", True),
+        ("answers_with_unsupported_dataset", "Answers with >= 1 figure not from the dataset", True),
+        ("unsupported_figure_rate", "Figures not in a cited evidence record (strict)", True),
+        ("answers_with_unsupported", "Answers with >= 1 figure not in a cited record (strict)", True),
         ("fully_supported_of_answers_with_figures", "Fully supported (answers with figures)", True),
         ("answers_with_figures", "Answerable answers that state a figure", True),
         ("unanswerable_refused", "Unanswerable questions refused", True),
