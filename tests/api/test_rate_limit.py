@@ -99,8 +99,10 @@ async def test_stale_windows_do_not_accumulate_forever(monkeypatch):
     assert len(window._hits) < 1000, "counters from the previous window were never dropped"
 
 
-async def test_a_redis_outage_allows_the_request():
-    """Failing open, deliberately — see rate_limit.py's "Failing open" section."""
+async def test_a_redis_outage_counts_in_this_worker_rather_than_allowing_everything():
+    """rate_limit.py's "Failing over, not open": the outage itself never refuses
+    a request, but the limit still holds per worker. Until 2026-10 every request
+    was allowed for as long as Redis was down."""
 
     class BrokenRedis:
         async def incr(self, key):
@@ -109,8 +111,10 @@ async def test_a_redis_outage_allows_the_request():
         async def expire(self, key, seconds):  # pragma: no cover - never reached
             raise AssertionError
 
-    decision = await rate_limit.RedisWindow(BrokenRedis()).check("user:a", 1, 60)
-    assert decision.allowed
+    window = rate_limit.RedisWindow(BrokenRedis())
+    assert (await window.check("user:a", 1, 60)).allowed
+    assert not (await window.check("user:a", 1, 60)).allowed
+    assert (await window.check("user:b", 1, 60)).allowed, "per identity, as with Redis"
 
 
 async def test_redis_sets_an_expiry_only_on_the_first_hit_of_a_window():

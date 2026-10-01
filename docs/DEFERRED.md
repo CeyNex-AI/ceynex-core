@@ -82,7 +82,11 @@ issued against, and `auth.verify_token` makes one indexed lookup
 (`current_token_epoch`) per authed request and 401s a token whose epoch has
 moved on (or whose account is gone/disabled). The self-service password route
 returns a fresh token so the caller's own device is not logged out. The
-lookup fails open on a Postgres outage (token accepted on signature alone).
+lookup fails open on a Postgres outage, narrowed in 2026-10: a token is still
+accepted on its signature, unless this worker has already read an epoch that
+rules it out (a session cut before the outage stays cut). The exposure left is
+an account this worker never checked since its epoch moved, bounded by the
+outage and the 8 h TTL; `tests/api/test_failopen_exposure.py` pins it.
 API keys were already live — `auth.role_for_email` re-derives their role every
 request.
 
@@ -284,12 +288,13 @@ login/signup attempt is counted against **both** the client address
 generous for a person, tight for a script on top of bcrypt's own per-attempt
 cost.
 
-**It fails open.** If Redis is unreachable the request is allowed and a warning
-is logged, so a Redis outage means abuse is unthrottled until it is restored.
-That is the deliberate direction — the alternative is a rate-limit store outage
-taking down query submission (or login) entirely, which causes the
-unavailability the limiter exists to prevent — but it is an exposure and is
-recorded here rather than left to be discovered.
+**It fails over, not open (since 2026-10).** If Redis is unreachable each
+worker counts on its own, so the limit still holds per worker (at most
+`workers × limit` per window) rather than not at all, and the outage itself never
+refuses a request: a rate-limit store outage taking down query submission (or
+login) would cause the unavailability the limiter exists to prevent. Until
+2026-10 every request was allowed for the length of the outage. The Redis
+client times out after 0.5 s, so a hung Redis costs a request half a second.
 
 Still unlimited by design: a user reading their own history, and the admin
 routes (a valid admin token is already the gate there).

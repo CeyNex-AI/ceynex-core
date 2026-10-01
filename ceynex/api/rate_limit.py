@@ -31,14 +31,17 @@ rather than instantaneous burst shaping. The burst is bounded, and
 the conversational layer it is genuinely applied, having previously been declared
 and never passed to a timeout, so this sentence was aspirational until then.
 
-Failing open
-------------
-If Redis is unreachable the request is **allowed**, with a warning logged. This
-is a deliberate trade in the same direction as SRS 3.4.3's degraded mode: an
-unavailable rate-limit store taking down query submission entirely would cause
-the outage the limiter exists to prevent. The exposure while Redis is down is
-that abuse is unthrottled, which is the lesser failure and is recorded in
-docs/DEFERRED.md.
+Failing over, not open
+----------------------
+If Redis is unreachable the request is counted by this worker alone, with a
+warning logged, and never refused for the outage itself: an unavailable store
+taking down query submission would cause the outage the limiter exists to
+prevent (SRS 3.4.3's degrade-don't-fail). Until 2026-10 it was *allowed*
+outright, which left abuse unthrottled for the length of a Redis outage. Now the
+limit still holds per worker, so at most `workers x limit` per window: the same
+"fail open, but never weaker than before" line D16 draws for the spend cap
+(docs/ARCHITECTURE_DELTA.md). The Redis client gets short timeouts, so a hung
+Redis costs a request half a second rather than its whole budget.
 """
 
 from __future__ import annotations
@@ -116,8 +119,10 @@ class RedisWindow:
     throttles the wrong window. Redis reclaims it on the next `EXPIRE` anyway.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, fallback: Window | None = None) -> None:
         self._client = client
+        # Counts while Redis is unreachable; see "Failing over" above.
+        self._fallback = fallback or InProcessWindow()
 
     async def check(self, identity: str, limit: int, window_s: int) -> Decision:
         now = time.time()
@@ -128,9 +133,9 @@ class RedisWindow:
                 # Two windows' grace so a clock skew between workers cannot
                 # expire a counter that is still in use.
                 await self._client.expire(key, window_s * 2)
-        except Exception:  # noqa: BLE001 - see "Failing open" in the module docstring
-            log.warning("rate-limit store unavailable; allowing the request", exc_info=True)
-            return Decision(allowed=True, limit=limit, remaining=limit, retry_after_s=0)
+        except Exception:  # noqa: BLE001 - see "Failing over" in the module docstring
+            log.warning("rate-limit store unavailable; counting in this worker", exc_info=True)
+            return await self._fallback.check(identity, limit, window_s)
         return _decide(count, limit, window_s, now)
 
 
@@ -156,7 +161,15 @@ def build_window() -> Window:
         from redis.asyncio import from_url  # noqa: PLC0415 - optional at import time
 
         log.info("rate limiting backed by Redis")
-        return RedisWindow(from_url(url, encoding="utf-8", decode_responses=True))
+        return RedisWindow(
+            from_url(
+                url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_connect_timeout=0.5,
+                socket_timeout=0.5,
+            )
+        )
     except Exception:  # noqa: BLE001
         log.warning(
             "could not build the Redis rate-limit store; falling back to per-process", exc_info=True
