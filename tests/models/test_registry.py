@@ -125,6 +125,17 @@ def test_retrain_keeps_the_model_class_and_leaves_the_old_version_in_place():
     assert len(registry.list_models()) == 2, "the previous version must stay loadable"
 
 
+def test_a_retrained_version_is_scored_so_load_best_can_serve_it():
+    """Live 2026-10-01: apparel_woven's admin retrain was saved with metrics=None,
+    and load_best skips unscored versions, so the retrain was never served."""
+    registry.save(fitted(), version="v1", metrics={"mape": 0.50})
+    retrained = registry.retrain("agriculture", "cinnamon", "export_value_usd", SERIES)
+
+    assert retrained.metrics is not None and retrained.metrics.get("mape") is not None
+    best = registry.load_best(item="cinnamon")
+    assert best is not None and best.version == retrained.version, "a better-scoring retrain must be the one served"
+
+
 # --- choosing between two registered families ----------------------------
 
 
