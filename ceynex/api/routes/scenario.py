@@ -81,9 +81,7 @@ async def enforce_scenario_rate_limit(
 
     limit = int(config.get("runs_per_minute", 60))
     window_s = int(config.get("window_seconds", 60))
-    identity = "scenario:" + rate_limit.identity_of(
-        user.email, http_request.client.host if http_request.client else None
-    )
+    identity = "scenario:" + rate_limit.identity_of(user.email, rate_limit.client_ip(http_request))
 
     decision = await _window().check(identity, limit, window_s)
     if decision.allowed:

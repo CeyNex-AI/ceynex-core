@@ -140,10 +140,11 @@ def _numbered(body: str) -> list[tuple[int, str]]:
 
 
 def _stream_turn(client, headers=None, conversation_id=None):
+    """A turn streamed by its owner: the stream requires sign-in (SRS 3.1.11)."""
     body = {"query": "cinnamon export trend"}
     if conversation_id is not None:
         body["conversation_id"] = conversation_id
-    return client.post("/api/chat/stream", json=body, headers=headers or {})
+    return client.post("/api/chat/stream", json=body, headers=headers or auth())
 
 
 async def _drain_turn(started: turn_log.LocalTurn) -> None:
@@ -167,12 +168,8 @@ def test_every_frame_is_numbered_from_one_without_gaps(client, fake_store):
 
 
 def test_the_start_frame_names_the_turn_and_whether_it_can_be_resumed(client, fake_store):
-    signed_in = dict(parse_frames(_stream_turn(client, auth()).text))["start"]
-    anonymous = dict(parse_frames(_stream_turn(client).text))["start"]
-
-    assert signed_in["request_id"] and signed_in["resumable"] is True
-    # No owner, so nothing to check a resume against — and nothing is stored.
-    assert anonymous["resumable"] is False
+    start = dict(parse_frames(_stream_turn(client).text))["start"]
+    assert start["request_id"] and start["resumable"] is True
 
 
 def test_the_done_frame_and_the_start_frame_name_the_same_turn(client, fake_store):
@@ -223,10 +220,22 @@ def test_someone_elses_turn_cannot_be_resumed(client, fake_store):
     assert stolen.status_code == 404
 
 
-def test_an_anonymous_turn_cannot_be_resumed_by_anyone(client, fake_store):
-    original = _stream_turn(client).text
-    request_id = dict(parse_frames(original))["start"]["request_id"]
-    assert client.get(f"/api/chat/turns/{request_id}/events", headers=auth()).status_code == 404
+async def test_an_ownerless_turn_is_not_resumable_by_anyone(fake_store):
+    """Every HTTP route that starts a turn requires sign-in, but an in-process
+    caller may still start one with no owner. There is nothing to check a resume
+    against, so the start frame says so and the events route finds no turn."""
+    started = turn_runner.start_turn(
+        turn_runner.TurnRequest(runtime=conversation_runtime(), query="cinnamon",
+                                typed="cinnamon", user_email=None)
+    )
+    await _drain_turn(started)
+    assert started.frames[0].event == "start"
+    assert started.frames[0].data["resumable"] is False
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+        resumed = await ac.get(f"/api/chat/turns/{started.request_id}/events", headers=auth())
+    assert resumed.status_code == 404
 
 
 def test_an_unknown_turn_is_not_found(client, fake_store):
@@ -282,7 +291,7 @@ async def test_a_signed_in_turn_outlives_a_reader_that_leaves(fake_store):
                                 user_email=OWNER, conversation_id=conversation_id)
     )
     reader = Disconnectable()
-    stream = turn_runner.follow(started.request_id, 0, reader, cancel_on_disconnect=False)
+    stream = turn_runner.follow(started.request_id, 0, reader)
     first = await anext(stream)
     assert "event: start" in first
 
@@ -299,45 +308,6 @@ async def test_a_signed_in_turn_outlives_a_reader_that_leaves(fake_store):
     assert graph.completed and not graph.cancelled
     assert started.frames[-1].event == "done" and started.frames[-1].data["failed"] is False
     assert [m.role for m in fake_store.messages[conversation_id]] == ["user", "assistant"]
-
-
-async def test_an_anonymous_turn_is_cancelled_when_its_reader_leaves(fake_store):
-    """No owner, so no resume and nothing stored: finishing it would be spending
-    money on an answer that nobody could ever read."""
-    graph = GatedGraph()
-    started = turn_runner.start_turn(
-        turn_runner.TurnRequest(runtime=_gated_runtime(graph), query="cinnamon",
-                                typed="cinnamon", user_email=None)
-    )
-    reader = Disconnectable()
-    stream = turn_runner.follow(started.request_id, 0, reader, cancel_on_disconnect=True)
-    await anext(stream)
-    await asyncio.wait_for(graph.started.wait(), timeout=5)
-    reader.gone = True
-    with pytest.raises(StopAsyncIteration):
-        while True:
-            await anext(stream)
-
-    await _drain_turn(started)
-    assert graph.cancelled and not graph.completed, "the fan-out kept running"
-    assert started.frames[-1].data.get("cancelled") is True
-
-
-def test_only_an_anonymous_reader_leaving_cancels_its_turn(client, fake_store, monkeypatch):
-    """The routes decide which turns die with their reader. Pinned here, because
-    the runner tests above take the flag as given."""
-    seen: list[bool] = []
-    real_follow = turn_runner.follow
-
-    def spy(request_id, after, http_request, *, cancel_on_disconnect=False):
-        seen.append(cancel_on_disconnect)
-        return real_follow(request_id, after, http_request,
-                           cancel_on_disconnect=cancel_on_disconnect)
-
-    monkeypatch.setattr(turn_runner, "follow", spy)
-    _stream_turn(client, auth())
-    _stream_turn(client)
-    assert seen == [False, True]
 
 
 # --- a discussion streams while it is being written ------------------------------------

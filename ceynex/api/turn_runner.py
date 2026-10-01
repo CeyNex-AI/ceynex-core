@@ -20,10 +20,10 @@ They are two things now:
 finishes, it is persisted, and the reader can resume it (same `request_id`,
 last `seq`) or find it in the reloaded transcript. The explicit Stop is
 `cancel()`, reached through its own endpoint, because a browser's abort and a
-dropped network look identical from here. An **anonymous** turn keeps the old
-behaviour — cancelled on disconnect — because nobody can resume it and nothing
-is stored, so finishing it would be spending money on an answer no one can
-ever read.
+dropped network look identical from here. Every HTTP route that starts a turn
+requires sign-in (SRS 3.1.11), so every followed turn has an owner who can
+resume it. An in-process caller may still pass `user_email=None`: that turn is
+not resumable and nothing is stored, but nobody follows it over HTTP either.
 
 **No HTTP error status once streaming has begun.** Headers go out at 200 with
 the first byte, so a graph failure, a timeout and a cancellation each become
@@ -169,62 +169,50 @@ async def follow(
     request_id: str,
     after: int,
     http_request: Request,
-    *,
-    cancel_on_disconnect: bool = False,
 ) -> AsyncIterator[str]:
     """Frames of a turn past `after`, as SSE, until its `done` frame.
 
     Served from this process's log when the turn runs here — always the case
     for the connection that started it — and from the Redis mirror otherwise.
-    `cancel_on_disconnect` is for the anonymous path only; see the module
-    docstring for why a signed-in turn outlives its reader.
+    A reader leaving does not cancel the turn; see the module docstring.
     """
     local = registry().get(request_id)
     seq = after
     last_write = last_frame = time.monotonic()
-    finished = False
-    try:
-        while True:
-            if await http_request.is_disconnected():
+    while True:
+        if await http_request.is_disconnected():
+            return
+
+        if local is not None:
+            frames = await local.wait_after(seq, POLL_INTERVAL_S)
+        else:
+            replica = mirror()
+            frames = (
+                await replica.read(request_id, seq, int(POLL_INTERVAL_S * 1000))
+                if replica is not None
+                else []
+            )
+
+        for frame in frames:
+            yield frame.as_sse()
+            seq = frame.seq
+            last_write = last_frame = time.monotonic()
+            if frame.event == "done":
                 return
 
-            if local is not None:
-                frames = await local.wait_after(seq, POLL_INTERVAL_S)
-            else:
-                replica = mirror()
-                frames = (
-                    await replica.read(request_id, seq, int(POLL_INTERVAL_S * 1000))
-                    if replica is not None
-                    else []
-                )
+        if local is None and time.monotonic() - last_frame > REMOTE_IDLE_LIMIT_S:
+            yield _synthetic_done(seq).as_sse()
+            return
 
-            for frame in frames:
-                yield frame.as_sse()
-                seq = frame.seq
-                last_write = last_frame = time.monotonic()
-                if frame.event == "done":
-                    finished = True
-                    return
+        if local is not None and local.done and local.last_seq <= seq:
+            # The task ended without a `done` frame — it died before it
+            # could write one. Say so rather than leaving the reader waiting.
+            yield _synthetic_done(seq).as_sse()
+            return
 
-            if local is None and time.monotonic() - last_frame > REMOTE_IDLE_LIMIT_S:
-                finished = True
-                yield _synthetic_done(seq).as_sse()
-                return
-
-            if local is not None and local.done and local.last_seq <= seq:
-                # The task ended without a `done` frame — it died before it
-                # could write one. Say so rather than leaving the reader waiting.
-                finished = True
-                yield _synthetic_done(seq).as_sse()
-                return
-
-            if not frames and time.monotonic() - last_write >= HEARTBEAT_INTERVAL_S:
-                yield ": heartbeat\n\n"
-                last_write = time.monotonic()
-    finally:
-        if not finished and cancel_on_disconnect and local is not None:
-            log.info("anonymous chat reader went away; cancelling turn %s", request_id)
-            await cancel(local)
+        if not frames and time.monotonic() - last_write >= HEARTBEAT_INTERVAL_S:
+            yield ": heartbeat\n\n"
+            last_write = time.monotonic()
 
 
 def _synthetic_done(seq: int) -> TurnFrame:
@@ -249,7 +237,7 @@ async def _run(turn_log: LocalTurn, request: TurnRequest) -> None:
     try:
         await _produce(turn_log, request, publish)
     except asyncio.CancelledError:
-        # Stop, or an anonymous reader leaving. Nothing is persisted: the reader
+        # Stop. Nothing is persisted: the reader
         # chose not to have this answer, and a half-written turn in the
         # transcript would be a record of something that did not happen.
         log.info("chat turn %s cancelled", turn_log.request_id)
@@ -512,8 +500,8 @@ async def _pump(task: asyncio.Task, sink: trace.TraceSink, publish, *,
     gate releases reaches the wire when it is released rather than when the
     call that produced it returns. Between events it checks for a Stop pressed
     on a reader served by the other worker. A cancellation from outside — the
-    Stop endpoint on this worker, or an anonymous reader leaving — is passed to
-    the task, waited out, and re-raised for `_run` to record.
+    Stop endpoint on this worker — is passed to the task, waited out, and
+    re-raised for `_run` to record.
     """
     replica = mirror()
     try:

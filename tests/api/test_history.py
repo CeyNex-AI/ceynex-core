@@ -95,20 +95,21 @@ def test_an_authenticated_query_is_recorded(client, recorded):
     assert recorded[0]["degraded"] is False
 
 
-def test_an_anonymous_query_is_not_recorded(client, recorded):
-    client.post("/api/query", json={"query": "cinnamon export trend"})
+def test_an_anonymous_query_is_refused_and_not_recorded(client, recorded):
+    """POST /api/query requires sign-in (SRS 3.1.11), so there is no
+    unattributed query left to record or to skip."""
+    response = client.post("/api/query", json={"query": "cinnamon export trend"})
+    assert response.status_code == 401
     assert recorded == []
 
 
-def test_an_invalid_token_is_treated_as_anonymous_not_rejected(client, recorded):
-    """POST /api/query stays open to anyone — an expired/garbage token just
-    means the query isn't attributed to anyone, it does not fail the request."""
+def test_an_invalid_token_is_refused_not_treated_as_anonymous(client, recorded):
     response = client.post(
         "/api/query",
         json={"query": "cinnamon export trend"},
         headers={"Authorization": "Bearer not-a-real-token"},
     )
-    assert response.status_code == 200
+    assert response.status_code == 401
     assert recorded == []
 
 

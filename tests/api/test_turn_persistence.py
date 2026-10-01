@@ -106,8 +106,9 @@ def test_a_discussion_writes_and_links_no_history_row(client, fake_store, histor
 
 
 def test_an_unstored_turn_names_no_rows(client, fake_store, no_instruction):
-    """Anonymous and stateless: nothing was written, so nothing is claimed."""
-    done = _frames(client.post("/api/chat/stream", json={"query": "cinnamon"}))["done"]
+    """Stateless, with no conversation: no message rows were written, so none
+    are claimed."""
+    done = _frames(_stream(client, "cinnamon"))["done"]
     assert done["message_id"] is None and done["user_message_id"] is None
 
 

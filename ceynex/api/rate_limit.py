@@ -192,12 +192,11 @@ def client_ip(request: Any) -> str | None:
 def identity_of(user_email: str | None, client_host: str | None) -> str:
     """Who this request counts against.
 
-    Per *user* when there is one, per client address when there is not.
-    `POST /api/query` deliberately answers anonymous callers (docs/DEFERRED.md),
-    so limiting only signed-in users would leave the limit bypassable by
-    dropping the token — the opposite of what SRS 3.4.6 asks for. The two
-    namespaces are kept distinct so one shared NAT address cannot exhaust a
-    signed-in user's own allowance.
+    Per *user* when there is one, per client address when there is not. The
+    query, chat and news routes require sign-in, so for them it is always the
+    user; `/api/graph/expand` still answers a shared link's anonymous reader,
+    which is what the address is for. The two namespaces are kept distinct so
+    one shared NAT address cannot exhaust a signed-in user's own allowance.
     """
     if user_email:
         return f"user:{user_email}"

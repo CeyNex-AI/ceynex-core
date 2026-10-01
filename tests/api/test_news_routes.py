@@ -16,6 +16,7 @@ from ceynex.api.routes import news as news_routes
 from ceynex.news import snapshot
 from ceynex.news.gdelt import GdeltUnavailableError
 from ceynex.news.schema import NewsArticle
+from tests.api.test_query import signed_in
 
 
 class FakeGdelt:
@@ -81,15 +82,40 @@ def isolated_news(monkeypatch):
     set_runtime(None)
 
 
-def client_with(gdelt=None, store=None) -> TestClient:
-    """A TestClient over a runtime carrying only what the news routes touch."""
+def client_with(gdelt=None, store=None, *, anonymous: bool = False) -> TestClient:
+    """A signed-in TestClient over a runtime carrying only what the news routes
+    touch. Both routes require sign-in (SRS 3.1.11)."""
     runtime = Runtime(
         kg=None, llm=None, deps=None, graph=None, policy=None, gdelt=gdelt, news=store
     )
     set_runtime(runtime)
     from ceynex.api.main import app
 
-    return TestClient(app)
+    return TestClient(app) if anonymous else TestClient(app, headers=signed_in())
+
+
+# --- sign-in (SRS 3.1.11, FR-ACC-01) -------------------------------------
+
+
+def test_an_anonymous_search_is_refused():
+    client = client_with(gdelt=FakeGdelt([article("Ceylon tea exports rise")]), anonymous=True)
+    assert client.get("/api/news/search", params={"q": "ceylon tea"}).status_code == 401
+
+
+def test_anonymous_trending_is_refused():
+    client = client_with(anonymous=True)
+    assert client.get("/api/news/trending").status_code == 401
+
+
+def test_a_signed_in_reply_is_never_held_by_a_shared_cache(monkeypatch):
+    monkeypatch.setattr(snapshot, "latest", lambda scope: None)
+    client = client_with(gdelt=FakeGdelt([article("Ceylon tea exports rise")]))
+
+    search = client.get("/api/news/search", params={"q": "ceylon tea"})
+    trending = client.get("/api/news/trending")
+
+    assert search.headers["Cache-Control"].startswith("private")
+    assert trending.headers["Cache-Control"].startswith("private")
 
 
 # --- the happy path ------------------------------------------------------
@@ -239,11 +265,23 @@ async def test_news_searches_do_not_consume_the_query_allowance():
     for i in range(21):
         client.get("/api/news/search", params={"q": f"question number {i}"})
 
-    # The query endpoint's own identity, unprefixed, must be untouched.
-    decision = await shared.check(rate_limit.identity_of(None, "testclient"), 30, 60)
+    # The query endpoint's own identity for this user, unprefixed, must be untouched.
+    decision = await shared.check(rate_limit.identity_of("tester@ceynex.dev", None), 30, 60)
 
     assert decision.allowed
     assert decision.remaining == 29, "news requests leaked into the query allowance"
+
+
+def test_trending_has_its_own_allowance_separate_from_searches():
+    """Reloading the Query page reads trending each time; that must not spend
+    the searches that run beside each answer, and it is limited in its own right."""
+    client = client_with(gdelt=FakeGdelt([]))
+
+    trending = [client.get("/api/news/trending").status_code for _ in range(31)]
+    assert trending[:30] == [200] * 30
+    assert trending[30] == 429
+
+    assert client.get("/api/news/search", params={"q": "ceylon tea"}).status_code == 200
 
 
 def test_the_news_allowance_is_enforced():

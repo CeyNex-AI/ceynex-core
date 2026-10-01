@@ -12,7 +12,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from ceynex.api import api_keys as api_keys_module
 from ceynex.api import deps as deps_module
+from ceynex.api.auth import TokenPayload, issue_token
 from ceynex.api.main import app
 from ceynex.observability import context as obs_context
 from ceynex.orchestrator.merger import NO_TOPIC_MARKER
@@ -76,6 +78,12 @@ class FakeLLM:
     available = False
 
 
+def signed_in(email: str = "tester@ceynex.dev", role: str = "researcher") -> dict[str, str]:
+    """`POST /api/query` requires sign-in (SRS 3.1.11), so every client in this
+    file is a signed-in researcher unless a test says otherwise."""
+    return {"Authorization": f"Bearer {issue_token(email, role)}"}
+
+
 def runtime(final=None, raises=None, kg=None):
     return deps_module.Runtime(
         kg=kg or FakeKG(), llm=FakeLLM(), deps=None, graph=FakeGraph(final, raises)
@@ -111,7 +119,7 @@ def client(request):
     try:
         # No `with` block: entering TestClient's context would run the app
         # lifespan, which builds a real Neo4j pool.
-        yield TestClient(app)
+        yield TestClient(app, headers=signed_in())
     finally:
         deps_module.set_runtime(None)
 
@@ -360,7 +368,9 @@ def test_a_dead_graph_still_answers():
         runtime(ANSWERED, kg=FakeKG(raises=KnowledgeGraphUnavailableError("neo4j down")))
     )
     try:
-        response = TestClient(app).post("/api/query", json={"query": "cinnamon export trend"})
+        response = TestClient(app, headers=signed_in()).post(
+            "/api/query", json={"query": "cinnamon export trend"}
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["answer"] == "Exports grew steadily."
@@ -385,7 +395,7 @@ def test_the_graph_year_follows_the_agents_own_precedence():
 
     deps_module.set_runtime(runtime(ANSWERED, kg=RecordingKG()))
     try:
-        client = TestClient(app)
+        client = TestClient(app, headers=signed_in())
         client.post("/api/query", json={"query": "cinnamon exports in 2019"})
         assert asked == ["2019"], "an explicit year in the question must win"
 
@@ -394,6 +404,57 @@ def test_the_graph_year_follows_the_agents_own_precedence():
         assert asked == ["2024"], "otherwise the item's own latest year"
     finally:
         deps_module.set_runtime(None)
+
+
+# --- sign-in (SRS 3.1.11, FR-ACC-01) ---------------------------------------
+
+
+@pytest.fixture
+def unreachable_graph():
+    """A runtime whose graph fails the test if it is ever invoked: a refused
+    caller must be refused before the paid fan-out, not after it."""
+    deps_module.set_runtime(runtime(raises=AssertionError("the graph ran for a refused caller")))
+    try:
+        yield
+    finally:
+        deps_module.set_runtime(None)
+
+
+def test_an_anonymous_query_is_refused_before_the_graph_runs(unreachable_graph):
+    response = TestClient(app).post("/api/query", json={"query": "cinnamon export trend"})
+    assert response.status_code == 401
+
+
+def test_an_invalid_token_is_refused_not_treated_as_anonymous(unreachable_graph):
+    response = TestClient(app).post(
+        "/api/query",
+        json={"query": "cinnamon export trend"},
+        headers={"Authorization": "Bearer not-a-real-token"},
+    )
+    assert response.status_code == 401
+
+
+def test_an_api_key_is_accepted_like_a_login_token(monkeypatch):
+    """Programmatic access (SRS 3.1.11's API keys) still works: a `ck_` key is
+    a bearer token like any other."""
+    monkeypatch.setattr(
+        api_keys_module,
+        "authenticate",
+        lambda raw: TokenPayload(email="key-owner@ceynex.dev", role="researcher")
+        if raw == "ck_test-key"
+        else None,
+    )
+    deps_module.set_runtime(runtime(ANSWERED))
+    try:
+        response = TestClient(app).post(
+            "/api/query",
+            json={"query": "cinnamon export trend"},
+            headers={"Authorization": "Bearer ck_test-key"},
+        )
+    finally:
+        deps_module.set_runtime(None)
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Exports grew steadily."
 
 
 # --- validation and failure ----------------------------------------------
@@ -418,7 +479,7 @@ def test_an_over_long_query_is_rejected(client):
 def test_an_orchestration_failure_becomes_a_500_with_a_reason():
     deps_module.set_runtime(runtime(raises=RuntimeError("graph exploded")))
     try:
-        response = TestClient(app, raise_server_exceptions=False).post(
+        response = TestClient(app, raise_server_exceptions=False, headers=signed_in()).post(
             "/api/query", json={"query": "anything"}
         )
         assert response.status_code == 500

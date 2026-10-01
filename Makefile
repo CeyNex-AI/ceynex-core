@@ -134,7 +134,8 @@ coherence:
 # harness above. Needs `make up` and a server already started separately
 # (`$(PYTHON) -m uvicorn ceynex.api.main:app --host 127.0.0.1 --port 8000`) --
 # unlike the eval targets above, this Makefile does not own that process, so it
-# is not started here.
+# is not started here. Every virtual user is a real account (the API requires
+# sign-in), created against the database in .env and deleted after the run.
 load-test:
 	$(PYTHON) -m eval.load_test --json load_results.json
 

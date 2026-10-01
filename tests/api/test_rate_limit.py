@@ -3,7 +3,8 @@
 The requirement protects availability (SRS 3.3.1) and response time (3.4.1) for
 *other* callers, so the assertions that matter are the ones about isolation: one
 caller exhausting its allowance must not affect anybody else, and dropping the
-token must not hand you a fresh allowance.
+token must not hand you a fresh allowance. Since sign-in became required (SRS
+3.1.11), dropping it gets a 401 before any allowance is counted.
 """
 
 import pytest
@@ -14,7 +15,7 @@ from ceynex.api import rate_limit
 from ceynex.api.main import app
 from ceynex.api.routes import query as query_routes
 
-from .test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM
+from .test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM, signed_in
 
 
 def runtime():
@@ -25,7 +26,7 @@ def runtime():
 def client():
     deps_module.set_runtime(runtime())
     try:
-        yield TestClient(app)
+        yield TestClient(app, headers=signed_in())
     finally:
         deps_module.set_runtime(None)
 
@@ -143,8 +144,9 @@ def test_a_signed_in_user_is_counted_by_email_not_address():
 
 
 def test_an_anonymous_caller_is_counted_by_address():
-    """`POST /api/query` answers anonymous callers, so they must be limited too —
-    otherwise dropping the token buys a fresh allowance."""
+    """The query, chat and news routes refuse anonymous callers, but
+    `/api/graph/expand` answers a shared link's reader, who has no account, and
+    is limited by address."""
     assert rate_limit.identity_of(None, "10.0.0.1") == "ip:10.0.0.1"
 
 
@@ -195,6 +197,20 @@ def test_the_endpoint_refuses_with_429_and_a_retry_after_header(client, monkeypa
     assert refused.status_code == 429
     assert refused.headers["Retry-After"].isdigit()
     assert "rate limit exceeded" in refused.json()["detail"]
+
+
+def test_an_anonymous_caller_is_refused_without_spending_an_allowance(client, monkeypatch):
+    monkeypatch.setattr(
+        query_routes.settings,
+        "load_config",
+        lambda name: {"rate_limit": {"enabled": True, "query_per_minute": 1, "window_seconds": 60}},
+    )
+    anonymous = TestClient(app)
+    for _ in range(3):
+        assert post(anonymous).status_code == 401
+
+    # The one allowed query is still there for the signed-in caller.
+    assert post(client).status_code == 200
 
 
 def test_the_limit_can_be_switched_off_in_config(client, monkeypatch):

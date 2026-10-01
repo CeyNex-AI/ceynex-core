@@ -1,8 +1,8 @@
 # API-surface decisions that a marker may ask us to justify, kept out of code
 # so a diff shows who changed what (see ceynex/settings.py's module docstring).
 
-# SRS 3.4.6 — rate limiting on POST /api/query, per signed-in user, or per
-# client address for the anonymous callers the endpoint still answers.
+# SRS 3.4.6 — rate limiting on POST /api/query, per signed-in user. The
+# endpoint requires sign-in (SRS 3.1.11), so the identity is always the user.
 rate_limit:
   enabled: true
 
@@ -43,6 +43,10 @@ auth_rate_limit:
 news_rate_limit:
   enabled: true
   search_per_minute: 20
+  # GET /api/news/trending, under its own `news-trending:` identity. A read of
+  # the precomputed snapshot, once per Query page load: generous for a reader,
+  # a ceiling for a script.
+  trending_per_minute: 30
   window_seconds: 60
 
 # GET /api/graph/expand — clicking a node in the answer's knowledge graph. A

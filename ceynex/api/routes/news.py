@@ -20,9 +20,14 @@ no `detail`; `NewsArticle` has no `.to_evidence()`; `SourceId` in the frontend i
 a closed union behind a three-reviewer PR. Four independent things would have to
 change before a headline could be cited, which is the point.
 
-**Always 200.** A dead GDELT, a dead Qdrant and an empty snapshot are all
-ordinary states here. A 5xx from the sidecar would make a working answer page
-look broken.
+**Always 200** once signed in. A dead GDELT, a dead Qdrant and an empty
+snapshot are all ordinary states here. A 5xx from the sidecar would make a
+working answer page look broken.
+
+**Sign-in required on both** (SRS 3.1.11, FR-ACC-01), closed together with
+`POST /api/query` as docs/DEFERRED.md said they had to be: gating one while the
+other stayed open would have been incoherent. The responses are therefore
+`Cache-Control: private` — a shared cache must not hold a signed-in reply.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from ceynex import settings
 from ceynex.api import rate_limit
 from ceynex.api.deps import Runtime, get_runtime
-from ceynex.api.routes.auth import TokenPayload, get_optional_user
+from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import (
     NewsArticleItem,
     NewsSearchResponse,
@@ -92,7 +97,7 @@ def set_window(window: rate_limit.Window | None) -> None:
 
 async def enforce_news_rate_limit(
     http_request: Request,
-    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+    user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> None:
     """SRS 3.4.6's shape, applied to the sidecar's own allowance.
 
@@ -110,10 +115,7 @@ async def enforce_news_rate_limit(
 
     limit = int(config.get("search_per_minute", 20))
     window_s = int(config.get("window_seconds", 60))
-    identity = "news:" + rate_limit.identity_of(
-        user.email if user else None,
-        rate_limit.client_ip(http_request),
-    )
+    identity = "news:" + rate_limit.identity_of(user.email, rate_limit.client_ip(http_request))
 
     decision = await _window().check(identity, limit, window_s)
     if decision.allowed:
@@ -122,6 +124,38 @@ async def enforce_news_rate_limit(
     raise HTTPException(
         status_code=429,
         detail=f"rate limit exceeded: at most {limit} news searches per {window_s} seconds.",
+        headers={"Retry-After": str(decision.retry_after_s)},
+    )
+
+
+async def enforce_trending_rate_limit(
+    http_request: Request,
+    user: TokenPayload = Depends(require_user),  # noqa: B008
+) -> None:
+    """The trending panel's own allowance, under a `news-trending:` prefix.
+
+    Separate from the search allowance because the unit differs: trending is a
+    read of a precomputed snapshot, made once per page load, and a reader
+    reloading the Query page should not spend the searches that run beside each
+    answer. It had no limit at all before sign-in was required.
+    """
+    config = settings.load_config("api").get("news_rate_limit", {})
+    if not config.get("enabled", True):
+        return
+
+    limit = int(config.get("trending_per_minute", 30))
+    window_s = int(config.get("window_seconds", 60))
+    identity = "news-trending:" + rate_limit.identity_of(
+        user.email, rate_limit.client_ip(http_request)
+    )
+
+    decision = await _window().check(identity, limit, window_s)
+    if decision.allowed:
+        return
+
+    raise HTTPException(
+        status_code=429,
+        detail=f"rate limit exceeded: at most {limit} trending reads per {window_s} seconds.",
         headers={"Retry-After": str(decision.retry_after_s)},
     )
 
@@ -169,7 +203,7 @@ async def search_news(
 
         _cache_put(query, limit, articles, source)
 
-    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["Cache-Control"] = "private, max-age=300"
     return NewsSearchResponse(
         query=query,
         articles=[_to_item(article) for article in articles],
@@ -292,10 +326,15 @@ def clear_cache() -> None:
 # --- trending -------------------------------------------------------------
 
 
-@router.get("/api/news/trending", response_model=TrendingResponse)
+@router.get(
+    "/api/news/trending",
+    response_model=TrendingResponse,
+    dependencies=[Depends(enforce_trending_rate_limit)],
+)
 async def trending(response: Response) -> TrendingResponse:
-    """The precomputed panel. Always 200, whatever state the refresher is in."""
-    response.headers["Cache-Control"] = "public, max-age=120"
+    """The precomputed panel. Always 200 once signed in, whatever state the
+    refresher is in."""
+    response.headers["Cache-Control"] = "private, max-age=120"
 
     if not settings.news_enabled():
         return TrendingResponse(status="unavailable", scopes={scope: [] for scope in SCOPES})
