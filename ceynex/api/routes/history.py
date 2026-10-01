@@ -18,7 +18,7 @@ router = APIRouter(tags=["history"])
 
 
 @router.get("/api/history", response_model=QueryHistoryResponse)
-async def get_history(
+def get_history(
     saved: bool | None = None,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> QueryHistoryResponse:
@@ -54,7 +54,7 @@ def _set_saved(entry_id: int, user: TokenPayload, *, saved: bool) -> SaveQueryRe
 
 
 @router.post("/api/history/{entry_id}/save", response_model=SaveQueryResponse)
-async def save_query(
+def save_query(
     entry_id: int,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> SaveQueryResponse:
@@ -62,7 +62,7 @@ async def save_query(
 
 
 @router.post("/api/history/{entry_id}/unsave", response_model=SaveQueryResponse)
-async def unsave_query(
+def unsave_query(
     entry_id: int,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> SaveQueryResponse:

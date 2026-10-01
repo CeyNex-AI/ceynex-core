@@ -19,6 +19,8 @@ bounds a script that does not care.
 
 from __future__ import annotations
 
+import asyncio
+
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -94,7 +96,9 @@ async def signup(request: SignupRequest, http_request: Request) -> LoginResponse
         )
 
     try:
-        user = users.create_user(request.email, request.password, role)
+        # bcrypt and an INSERT: off the event loop, which serves every other
+        # request on this worker meanwhile (SAD C14).
+        user = await asyncio.to_thread(users.create_user, request.email, request.password, role)
     except users.EmailTakenError as exc:
         raise HTTPException(status_code=409, detail="an account with that email already exists") from exc
     except users.WeakPasswordError as exc:
@@ -108,7 +112,7 @@ async def signup(request: SignupRequest, http_request: Request) -> LoginResponse
 async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
     await _enforce_auth_rate_limit(http_request, email=request.email)
     try:
-        user = authenticate(request.email, request.password)
+        user = await asyncio.to_thread(authenticate, request.email, request.password)
     except psycopg.Error as exc:
         raise HTTPException(status_code=503, detail="login temporarily unavailable") from exc
     if user is None:

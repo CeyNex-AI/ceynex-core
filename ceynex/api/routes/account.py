@@ -53,7 +53,7 @@ def _require_current_password(email: str, password: str) -> users.User:
 
 
 @router.post("/api/account/password", response_model=PasswordChangedResponse)
-async def change_password(
+def change_password(
     body: ChangePasswordRequest,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> PasswordChangedResponse:
@@ -83,7 +83,7 @@ async def change_password(
 
 
 @router.post("/api/account/email", response_model=LoginResponse)
-async def change_email(
+def change_email(
     body: ChangeEmailRequest,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> LoginResponse:
@@ -109,7 +109,7 @@ async def change_email(
 
 
 @router.delete("/api/account", response_model=AccountDeletedResponse)
-async def delete_account(
+def delete_account(
     body: DeleteAccountRequest,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> AccountDeletedResponse:
@@ -131,7 +131,7 @@ async def delete_account(
 
 
 @router.get("/api/account/preferences", response_model=NotificationPreferences)
-async def get_preferences(user: TokenPayload = Depends(require_user)) -> NotificationPreferences:  # noqa: B008
+def get_preferences(user: TokenPayload = Depends(require_user)) -> NotificationPreferences:  # noqa: B008
     try:
         prefs = preferences.get_for_user(user.email)
     except psycopg.Error as exc:
@@ -144,7 +144,7 @@ async def get_preferences(user: TokenPayload = Depends(require_user)) -> Notific
 
 
 @router.put("/api/account/preferences", response_model=NotificationPreferences)
-async def put_preferences(
+def put_preferences(
     body: NotificationPreferences,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> NotificationPreferences:
@@ -165,7 +165,7 @@ async def put_preferences(
 
 
 @router.get("/api/account/api-keys", response_model=ApiKeyListResponse)
-async def list_api_keys(user: TokenPayload = Depends(require_user)) -> ApiKeyListResponse:  # noqa: B008
+def list_api_keys(user: TokenPayload = Depends(require_user)) -> ApiKeyListResponse:  # noqa: B008
     try:
         entries = api_keys.list_for_user(user.email)
     except psycopg.Error as exc:
@@ -186,7 +186,7 @@ async def list_api_keys(user: TokenPayload = Depends(require_user)) -> ApiKeyLis
 
 
 @router.post("/api/account/api-keys", response_model=CreateApiKeyResponse)
-async def create_api_key(
+def create_api_key(
     body: CreateApiKeyRequest,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> CreateApiKeyResponse:
@@ -204,7 +204,7 @@ async def create_api_key(
 
 
 @router.post("/api/account/api-keys/{key_id}/revoke", response_model=RevokeApiKeyResponse)
-async def revoke_api_key(
+def revoke_api_key(
     key_id: int,
     user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> RevokeApiKeyResponse:
