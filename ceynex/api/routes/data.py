@@ -32,11 +32,13 @@ def _freshness_sync() -> dict:
         latest_period, rows = cur.fetchone()
         # The most recent run that actually finished. A failed or running row
         # says nothing about how current the data is, and showing one would be
-        # the opposite of the reassurance this endpoint exists to give.
+        # the opposite of the reassurance this endpoint exists to give. The
+        # writer's statuses are running | success | failed (writer.py); this
+        # filtered on 'ok' until 2026-10, so last_ingest_at was always null.
         cur.execute(
             """
             SELECT max(finished_at) FROM ingest_run
-            WHERE status = 'ok' AND finished_at IS NOT NULL
+            WHERE status = 'success' AND finished_at IS NOT NULL
             """
         )
         (last_ingest,) = cur.fetchone()
