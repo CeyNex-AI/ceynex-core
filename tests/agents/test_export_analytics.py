@@ -109,6 +109,27 @@ def test_market_share_is_reported_from_the_leading_partner_row():
     assert out["figures"]["partner_count"] == 3.0
 
 
+def test_summary_and_evidence_state_the_same_rounded_share():
+    """Live rubber 2025: Pakistan USD 6,162,351 of 30,585,981 = 20.148%. The
+    summary used to format a share pre-rounded to 4 dp (0.2015 -> "20.2%")
+    while the evidence formatted the raw share ("20.1%"), so one answer gave
+    two values for one figure. Caught by the paper's claim check."""
+    total = 30_585_981.0
+    values = [("Pakistan", "PAK", 6_162_351.0)] + [
+        (f"Market {i}", f"M{i:02d}", 4_884_726.0) for i in range(5)  # remainder, each smaller
+    ]
+    rows = [
+        {"partner": name, "partner_iso3": iso, "export_value_usd": value,
+         "total_export_value_usd": total, "share": value / total}
+        for name, iso, value in values
+    ]
+    out, _ = run(kg=KG(share=rows))
+
+    assert "took 20.1% of that value" in out["summary"]
+    assert any("Pakistan took 20.1%" in e["claim"] for e in out["evidence"])
+    assert "20.2%" not in out["summary"]
+
+
 def test_the_concentration_index_is_the_sum_of_squared_shares():
     """HHI for 0.6/0.3/0.1 is 0.36 + 0.09 + 0.01 = 0.46. Verified by hand."""
     out, _ = run()
