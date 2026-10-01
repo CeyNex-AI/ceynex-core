@@ -119,8 +119,8 @@ async def login(request: LoginRequest, http_request: Request) -> LoginResponse:
 def _verify_bearer(token: str) -> TokenPayload | None:
     """A `ck_`-prefixed token is an API key (`ceynex/api/api_keys.py`);
     anything else is a login JWT. Shared by `require_user` and
-    `get_optional_user` so a key works everywhere a token does — query
-    history included, which is the point of "programmatic access"."""
+    `get_optional_user` so a key works everywhere a token does — `/api/query`
+    and its history included, which is the point of "programmatic access"."""
     if token.startswith(api_keys.KEY_PREFIX):
         return api_keys.authenticate(token)
     return verify_token(token)
@@ -142,8 +142,9 @@ def get_optional_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),  # noqa: B008
 ) -> TokenPayload | None:
     """Like `require_user`, but never 401s — None instead of raising when
-    there's no (valid) token. For routes where being signed in unlocks
-    something extra (query history) without gating the route itself."""
+    there's no (valid) token. For the routes a shared link's reader reaches
+    without an account, where a token only changes whose allowance is spent
+    (`/api/graph/expand`)."""
     if credentials is None:
         return None
     return _verify_bearer(credentials.credentials)

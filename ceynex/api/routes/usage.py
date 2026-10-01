@@ -124,6 +124,7 @@ async def usage_limits(
         ("rate_limit", "Questions", "query_per_minute"),
         ("chat_rate_limit", "Conversation turns", "turns_per_minute"),
         ("news_rate_limit", "News searches", "search_per_minute"),
+        ("news_rate_limit", "Trending-topic reads", "trending_per_minute"),
         ("graph_rate_limit", "Graph expansions", "expand_per_minute"),
         ("scenario_rate_limit", "Scenario runs", "runs_per_minute"),
     ):

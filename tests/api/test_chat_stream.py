@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from ceynex.api import deps as deps_module
 from ceynex.api.main import app
-from tests.api.test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM
+from tests.api.test_query import ANSWERED, FakeGraph, FakeKG, FakeLLM, signed_in
 
 
 def runtime(final=None, raises=None, kg=None):
@@ -37,7 +37,8 @@ def client(request):
     final = getattr(request, "param", ANSWERED)
     deps_module.set_runtime(runtime(final))
     try:
-        yield TestClient(app)
+        # Signed in: the stream requires it, stateless turns included (SRS 3.1.11).
+        yield TestClient(app, headers=signed_in())
     finally:
         deps_module.set_runtime(None)
 
@@ -149,6 +150,18 @@ def test_an_empty_query_is_rejected_before_the_stream_opens(client):
     """This one *can* be a status code: nothing has been written yet."""
     response = client.post("/api/chat/stream", json={"query": "   "})
     assert response.status_code == 422
+
+
+def test_an_anonymous_stream_is_refused_before_a_turn_starts():
+    """A stateless turn needed no account until sign-in became required (SRS
+    3.1.11). It is now a plain 401, with nothing streamed and no graph run."""
+    deps_module.set_runtime(runtime(raises=AssertionError("the graph ran for a refused caller")))
+    try:
+        response = TestClient(app).post("/api/chat/stream", json={"query": "cinnamon export trend"})
+    finally:
+        deps_module.set_runtime(None)
+    assert response.status_code == 401
+    assert not response.headers["content-type"].startswith("text/event-stream")
 
 
 def test_chat_can_be_switched_off_entirely(client, monkeypatch):

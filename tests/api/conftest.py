@@ -11,6 +11,7 @@ The rate limit itself is exercised deliberately in `test_rate_limit.py`.
 
 import pytest
 
+from ceynex.api import history as history_module
 from ceynex.api import rate_limit
 from ceynex.api import users as users_module
 from ceynex.api.routes import auth as auth_routes
@@ -30,6 +31,27 @@ def stub_token_epoch(monkeypatch):
     `test_auth.py`) re-patch it with a store-aware version in their own
     fixtures — a later monkeypatch wins and both unwind at teardown."""
     monkeypatch.setattr(users_module, "current_token_epoch", lambda email: 0)
+
+
+@pytest.fixture(autouse=True)
+def stub_query_history(monkeypatch):
+    """`POST /api/query` and the chat stream require sign-in, so every query
+    in these tests is attributed and recorded — a real Postgres write. Recording
+    is a no-op here; `test_history.py`'s `recorded` fixture re-patches it to
+    capture the calls it asserts on."""
+    monkeypatch.setattr(history_module, "record", lambda **_kwargs: None)
+
+
+@pytest.fixture(autouse=True)
+def stub_standing_instructions(monkeypatch):
+    """Every chat turn now has an owner, so the turn reads the owner's standing
+    instruction from Postgres. None here; the files that test instructions
+    (`test_turn_persistence.py`, `test_regenerate.py`) re-patch it."""
+
+    async def none(_user_email):
+        return "", True
+
+    monkeypatch.setattr("ceynex.chat.instructions.get", none)
 
 
 @pytest.fixture(autouse=True)

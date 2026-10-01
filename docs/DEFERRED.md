@@ -86,23 +86,28 @@ lookup fails open on a Postgres outage (token accepted on signature alone).
 API keys were already live — `auth.role_for_email` re-derives their role every
 request.
 
-**`POST /api/query` itself still does not require a token.** `require_user`
-(`ceynex/api/routes/auth.py`) gates every route that needs a signed-in user,
-but wiring it onto `/api/query` was a deliberate choice left for later: the
-four roles gate which UI pages render and the admin routes, not *what* a query
-can see, so requiring a token there today would add a login wall without
-changing any behaviour behind it. `POST /api/query` instead takes an *optional*
-token (`get_optional_user`) — signed in or not, a query still answers; being
-signed in only additionally attributes it to that user for history. Revisit
-the hard requirement once a route needs to tell users apart to change *what*
-it returns.
+**`POST /api/query` requires a token — closed 2026-10.** It used to take an
+*optional* one, on the reasoning that the roles change which pages render, not
+what a query can see. That left the paid LLM path open to anyone, bounded only
+per address, and contradicted SRS 3.1.11 ("account based authentication for all
+users prior to query submission"; FR-ACC-01). `require_user` now gates
+`POST /api/query`, `POST /api/chat/stream` (stateless turns included),
+`GET /api/news/search` and `GET /api/news/trending`, before the rate limit or
+the graph runs. `tests/api/test_route_inventory.py` fails on any route that
+answers anonymous callers and is not on its allowlist: `/health`, signup,
+login, a shared link (`/api/chat/shared/{token}`), that reader's
+`/api/graph/expand`, and `GET /api/site/theme`.
+
+What bounds cost now is the account, not the address: signup is open, so the
+per-user ($1) and deployment-wide ($5) daily caps in `config/llm.yaml` are the
+real limit on what one person, or many new accounts, can spend.
 
 **Query history (SRS 3.5.2, first half) is built**: `ceynex/api/history.py`
 records every authenticated query into a `query_history` table (additive to
 the frozen contracts schema, not part of it — see that module's docstring for
-why), and `GET /api/history` lists a signed-in user's own past queries. An
-anonymous query, or one with an invalid/expired token, still answers
-normally — it simply is not recorded, silently, by design.
+why), and `GET /api/history` lists a signed-in user's own past queries. Since
+the endpoint requires a token, every answered query is recorded; an invalid or
+expired token is a 401, not an unrecorded answer.
 
 ## WITS tariff ingestion — cut
 
@@ -309,12 +314,10 @@ routes (a valid admin token is already the gate there).
 
 ## News sidecar (D11)
 
-- **The news endpoints are unauthenticated.** `GET /api/news/search` and
-  `/api/news/trending` use `get_optional_user` and gate nothing, matching
-  `POST /api/query`, which deliberately answers anonymous callers. Gating the
-  sidecar while the main event stays open would be incoherent; both should be
-  closed together or not at all. They have their own rate-limit allowance under
-  a `news:` identity prefix, so abuse of one cannot exhaust the other.
+- **The news endpoints require sign-in — closed 2026-10**, together with
+  `POST /api/query`, as this entry said they had to be. Search keeps its own
+  `news:` allowance; trending, which had no limit at all, now has its own
+  `news-trending:` one. Both reply `Cache-Control: private`.
 - **The relevance floor is measured but not a clean boundary.**
   `relevance.min_score = -8.0` comes from scoring 150 real indexed headlines
   against 11 real questions on the deployed box (the table is in

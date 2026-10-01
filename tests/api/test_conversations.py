@@ -158,9 +158,10 @@ def test_chat_routes_disappear_when_chat_is_off(client, fake_store, monkeypatch)
 # --- turns inside a conversation ------------------------------------------
 
 
-def test_a_conversation_id_requires_a_signed_in_user(client, fake_store):
-    """Anonymous streaming still works — but not against someone's transcript."""
-    assert client.post("/api/chat/stream", json={"query": "cinnamon"}).status_code == 200
+def test_streaming_requires_a_signed_in_user_with_or_without_a_conversation(client, fake_store):
+    """SRS 3.1.11: a stateless turn needs an account too, not only a turn
+    against someone's transcript."""
+    assert client.post("/api/chat/stream", json={"query": "cinnamon"}).status_code == 401
     response = client.post("/api/chat/stream", json={"query": "cinnamon", "conversation_id": 1})
     assert response.status_code == 401
 

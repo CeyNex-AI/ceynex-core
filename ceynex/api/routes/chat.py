@@ -55,7 +55,7 @@ from fastapi.responses import StreamingResponse
 from ceynex import settings
 from ceynex.api import rate_limit, turn_log, turn_runner
 from ceynex.api.deps import Runtime, get_runtime
-from ceynex.api.routes.auth import TokenPayload, get_optional_user, require_user
+from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import ChatStreamRequest, ClarifyAnswerRequest
 from ceynex.chat import clarify, store
 
@@ -71,7 +71,7 @@ router = APIRouter(tags=["chat"])
 
 async def enforce_chat_rate_limit(
     http_request: Request,
-    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+    user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> None:
     """SRS 3.4.6's shape, applied to the conversational surface's own allowance.
 
@@ -91,10 +91,7 @@ async def enforce_chat_rate_limit(
 
     limit = int(config.get("turns_per_minute", 45))
     window_s = int(config.get("window_seconds", 60))
-    identity = "chat:" + rate_limit.identity_of(
-        user.email if user else None,
-        http_request.client.host if http_request.client else None,
-    )
+    identity = "chat:" + rate_limit.identity_of(user.email, rate_limit.client_ip(http_request))
 
     decision = await _chat_window().check(identity, limit, window_s)
     if decision.allowed:
@@ -138,10 +135,10 @@ _SSE_HEADERS = {
 
 
 def _follow_response(
-    request_id: str, http_request: Request, *, after: int = 0, anonymous: bool = False
+    request_id: str, http_request: Request, *, after: int = 0
 ) -> StreamingResponse:
     return StreamingResponse(
-        turn_runner.follow(request_id, after, http_request, cancel_on_disconnect=anonymous),
+        turn_runner.follow(request_id, after, http_request),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -152,7 +149,7 @@ async def chat_stream(
     request: ChatStreamRequest,
     http_request: Request,
     runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
-    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+    user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> StreamingResponse:
     """The same answer as `POST /api/query`, reported as it is assembled.
 
@@ -160,9 +157,9 @@ async def chat_stream(
     invokes the identical five-agent fan-out, so leaving it off would make this
     endpoint a bypass around SRS 3.4.6 for the most expensive call in the system.
 
-    `conversation_id` is optional and requires a signed-in owner. Without one the
-    turn is a stateless question, exactly as `/api/query` is — which keeps the
-    streaming transport usable for a demo before any account exists.
+    Sign-in is required, as on `/api/query` (SRS 3.1.11), stateless turns
+    included. `conversation_id` is optional; without one the turn is a stateless
+    question, and with one the caller must own the conversation.
     """
     if not settings.chat_enabled():
         raise HTTPException(status_code=404, detail="chat is not enabled on this deployment")
@@ -173,8 +170,6 @@ async def chat_stream(
 
     conversation_id = request.conversation_id
     if conversation_id is not None:
-        if user is None:
-            raise HTTPException(status_code=401, detail="a conversation needs a signed-in user")
         try:
             if not await store.owns(conversation_id, user.email):
                 raise HTTPException(status_code=404, detail="conversation not found")
@@ -186,11 +181,11 @@ async def chat_stream(
             runtime=runtime,
             query=query,
             typed=query,
-            user_email=user.email if user else None,
+            user_email=user.email,
             conversation_id=conversation_id,
         )
     )
-    return _follow_response(started.request_id, http_request, anonymous=user is None)
+    return _follow_response(started.request_id, http_request)
 
 
 @router.post(

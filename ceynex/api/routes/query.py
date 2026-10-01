@@ -9,12 +9,12 @@ entirely on the server not blocking while an agent waits on Neo4j or the LLM.
 reports progress. Two implementations of "answer a question" would mean the
 30-question evaluation measures one of them and users get the other.
 
-**Scope note.** This was M2's seed of `ceynex/api/`; the admin routes (SRS 3.5.4)
-and the help content are still M3's and still not pre-empted here. Auth (SRS
-3.1.11) and query history (SRS 3.5.2) are wired in, but deliberately as an
-*optional* dependency — a request with no (or an invalid) token still answers
-normally, it just isn't attributed to anyone. The endpoint stays open rather
-than gated, recorded in docs/DEFERRED.md.
+**Sign-in required** (SRS 3.1.11, "account based authentication for all users
+prior to query submission"; FR-ACC-01). Until 2026-10 the token was optional and
+an anonymous query answered without being recorded; that left the paid LLM path
+open to anyone, bounded only per address. A missing or invalid token is now a
+401, before the rate limit or the graph run. An API key (`Bearer ck_...`) is a
+token like any other. Query history (SRS 3.5.2) therefore records every query.
 
 Rate limiting (SRS 3.4.6) applies here and to `/api/chat/*`;
 `ceynex/api/rate_limit.py` explains the store, the window and why it fails open.
@@ -30,7 +30,7 @@ from ceynex import settings
 from ceynex.api import rate_limit
 from ceynex.api.deps import Runtime, get_runtime
 from ceynex.api.query_runner import OrchestrationError, run_query
-from ceynex.api.routes.auth import TokenPayload, get_optional_user
+from ceynex.api.routes.auth import TokenPayload, require_user
 from ceynex.api.schemas import QueryRequest, QueryResponse
 
 log = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ router = APIRouter(tags=["query"])
 
 async def enforce_rate_limit(
     http_request: Request,
-    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+    user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> None:
     """SRS 3.4.6. A dependency rather than middleware, so it applies to the
     endpoints the requirement is about — query submission and the chat surface
@@ -49,8 +49,9 @@ async def enforce_rate_limit(
     own justification.
 
     Runs before the graph is invoked: the whole point is not to pay for the
-    fan-out. `get_optional_user` is shared with the handler below, and FastAPI
-    resolves a dependency once per request, so the token is not verified twice.
+    fan-out. `require_user` is shared with the handler below, and FastAPI
+    resolves a dependency once per request, so the token is not verified twice
+    and an anonymous call is refused before it is counted.
     """
     config = settings.load_config("api").get("rate_limit", {})
     if not config.get("enabled", True):
@@ -58,10 +59,7 @@ async def enforce_rate_limit(
 
     limit = int(config.get("query_per_minute", 30))
     window_s = int(config.get("window_seconds", 60))
-    identity = rate_limit.identity_of(
-        user.email if user else None,
-        rate_limit.client_ip(http_request),
-    )
+    identity = rate_limit.identity_of(user.email, rate_limit.client_ip(http_request))
 
     decision = await _window().check(identity, limit, window_s)
     if decision.allowed:
@@ -100,18 +98,14 @@ def set_window(window: rate_limit.Window | None) -> None:
 async def submit_query(
     request: QueryRequest,
     runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
-    user: TokenPayload | None = Depends(get_optional_user),  # noqa: B008
+    user: TokenPayload = Depends(require_user),  # noqa: B008
 ) -> QueryResponse:
     query = request.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="query must not be empty")
 
     try:
-        outcome = await run_query(
-            runtime,
-            query,
-            user_email=user.email if user else None,
-        )
+        outcome = await run_query(runtime, query, user_email=user.email)
     except OrchestrationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
