@@ -20,8 +20,12 @@ import ceynex.api.routes as routes_package
 
 #: Modules whose public functions are synchronous Postgres (and bcrypt) calls.
 BLOCKING_MODULES = {"users", "history", "preferences", "api_keys", "audit", "site_settings"}
+#: Single blocking functions in modules that are otherwise pure.
+BLOCKING_ATTRIBUTES = {("freshness", "per_source")}
 #: Route-module helpers and imported functions that wrap the same calls.
-BLOCKING_NAMES = {"authenticate", "_check_postgres", "_require_current_password", "_freshness_sync"}
+BLOCKING_NAMES = {
+    "authenticate", "_check_postgres", "_require_current_password", "_freshness_sync", "_stale_sources",
+}
 
 
 def _violations(path: Path) -> list[str]:
@@ -33,10 +37,14 @@ def _violations(path: Path) -> list[str]:
             if not isinstance(call, ast.Call):
                 continue
             func = call.func
+            attribute = (
+                (func.value.id, func.attr)
+                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                else None
+            )
             direct = (
-                isinstance(func, ast.Attribute)
-                and isinstance(func.value, ast.Name)
-                and func.value.id in BLOCKING_MODULES
+                attribute is not None
+                and (attribute[0] in BLOCKING_MODULES or attribute in BLOCKING_ATTRIBUTES)
             ) or (isinstance(func, ast.Name) and func.id in BLOCKING_NAMES)
             if direct:
                 found.append(f"{path.name}:{call.lineno} {ast.unparse(func)}() in async def {node.name}")

@@ -296,6 +296,25 @@ class PipelineStatusResponse(BaseModel):
     runs: list[PipelineRunItem]
 
 
+class SourceFreshnessItem(BaseModel):
+    """One source against its cadence (config/sources.yaml); see data/freshness.py."""
+
+    source_id: str
+    cadence_days: int | None
+    refresh: bool
+    last_success_at: str | None
+    last_success_rows: int | None
+    last_failure_at: str | None
+    last_error: str | None
+    age_days: float | None
+    stale: bool
+
+
+class PipelineFreshnessResponse(BaseModel):
+    sources: list[SourceFreshnessItem]
+    stale: int
+
+
 class DQFlagItem(BaseModel):
     flag_id: int
     item: str | None

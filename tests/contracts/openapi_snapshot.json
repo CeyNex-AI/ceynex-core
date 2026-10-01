@@ -80,6 +80,13 @@
         }
       }
     },
+    "GET /api/admin/pipeline/freshness": {
+      "responses": {
+        "200": {
+          "$ref": "PipelineFreshnessResponse"
+        }
+      }
+    },
     "GET /api/admin/pipeline/status": {
       "responses": {
         "200": {
@@ -1999,6 +2006,24 @@
       ],
       "type": "object"
     },
+    "PipelineFreshnessResponse": {
+      "properties": {
+        "sources": {
+          "items": {
+            "$ref": "SourceFreshnessItem"
+          },
+          "type": "array"
+        },
+        "stale": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sources",
+        "stale"
+      ],
+      "type": "object"
+    },
     "PipelineRunItem": {
       "properties": {
         "error": {
@@ -2700,6 +2725,91 @@
       },
       "required": [
         "theme"
+      ],
+      "type": "object"
+    },
+    "SourceFreshnessItem": {
+      "properties": {
+        "age_days": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cadence_days": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_failure_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_success_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_success_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "age_days",
+        "cadence_days",
+        "last_error",
+        "last_failure_at",
+        "last_success_at",
+        "last_success_rows",
+        "refresh",
+        "source_id",
+        "stale"
       ],
       "type": "object"
     },

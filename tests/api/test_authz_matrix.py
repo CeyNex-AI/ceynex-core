@@ -38,6 +38,7 @@ ADMIN_ROUTES: list[tuple[str, str, dict | None]] = [
     ("POST", "/api/admin/retrain", {"sector": "agriculture", "item": "cinnamon"}),
     ("POST", "/api/admin/pipeline/ingest", {}),
     ("GET", "/api/admin/pipeline/status", None),
+    ("GET", "/api/admin/pipeline/freshness", None),
     ("GET", "/api/admin/dq-flags", None),
     ("POST", "/api/admin/dq-flags/1/resolve", None),
     ("GET", "/api/admin/llm/status", None),
