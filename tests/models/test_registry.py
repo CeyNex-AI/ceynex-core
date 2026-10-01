@@ -158,6 +158,35 @@ def test_load_best_ignores_versions_that_were_never_backtested():
     assert registry.load_best(item="cinnamon").version == "scored"
 
 
+def _gbm():
+    from ceynex.models.gbm import GradientBoostedModel
+
+    return GradientBoostedModel(sector="agriculture", item="cinnamon").fit(SERIES)
+
+
+def test_a_boosted_model_needs_a_five_percent_margin_to_be_served():
+    """Live data 2026-10-01: tea LightGBM 6.71% vs SARIMA 6.90% MAPE, with 0.33
+    interval coverage. A 3% relative gain on 10 points is noise, not a win."""
+    registry.save(fitted(), version="sarima", metrics={"mape": 0.0690})
+    registry.save(_gbm(), version="gbm", metrics={"mape": 0.0671})
+
+    assert registry.load_best(item="cinnamon").version == "sarima"
+
+
+def test_a_boosted_model_that_clears_the_margin_is_served():
+    registry.save(fitted(), version="sarima", metrics={"mape": 0.20})
+    registry.save(_gbm(), version="gbm", metrics={"mape": 0.15})
+
+    assert registry.load_best(item="cinnamon").version == "gbm"
+
+
+def test_a_lone_boosted_model_is_still_served():
+    """The margin compares families; with nothing simpler scored there is nothing to beat."""
+    registry.save(_gbm(), version="gbm", metrics={"mape": 0.15})
+
+    assert registry.load_best(item="cinnamon").version == "gbm"
+
+
 def test_load_best_is_none_when_nothing_has_been_scored():
     registry.save(fitted())
     assert registry.load_best(item="cinnamon") is None

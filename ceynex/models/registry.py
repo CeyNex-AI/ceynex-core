@@ -48,6 +48,11 @@ ARTIFACT = "model.pkl"
 METADATA = "metadata.json"
 LATEST = "latest"
 
+# Families that must beat the best simpler scored model by COMPLEX_MODEL_MARGIN
+# (relative MAPE) before `load_best` serves them.
+COMPLEX_MODEL_CLASSES = frozenset({"GradientBoostedModel"})
+COMPLEX_MODEL_MARGIN = 0.05
+
 # The band `ForecastPoint.lower/upper` describe unless a model says otherwise.
 DEFAULT_INTERVAL_LEVEL = 0.80
 
@@ -325,6 +330,14 @@ def load_best(
     if not scored:
         return None
     best = min(scored, key=lambda m: m.metrics[metric])
+    simple = [m for m in scored if m.model_class not in COMPLEX_MODEL_CLASSES]
+    if best.model_class in COMPLEX_MODEL_CLASSES and simple:
+        # On 9-10 annual points a gradient-boosted model can win by a fraction
+        # of a point through noise. It is served only when it clears the same
+        # 5% margin the agriculture evaluation applies (GBM_RELATIVE_IMPROVEMENT).
+        best_simple = min(simple, key=lambda m: m.metrics[metric])
+        if best.metrics[metric] > best_simple.metrics[metric] * (1.0 - COMPLEX_MODEL_MARGIN):
+            best = best_simple
     return load(best.sector, best.item, best.target, best.version)
 
 
