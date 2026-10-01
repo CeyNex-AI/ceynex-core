@@ -38,6 +38,7 @@ async def health(
     # Off the loop: the container healthcheck calls this every 15 s, and a
     # blocking connect stalls every other request on the worker (SAD C14).
     postgres_ok, row_count = await asyncio.to_thread(_check_postgres)
+    stale = await asyncio.to_thread(_stale_sources) if postgres_ok else None
     llm_ok = runtime.llm.available
 
     # "ok" as long as the process can answer at all. A missing LLM key degrades
@@ -51,6 +52,10 @@ async def health(
         llm=llm_ok,
         detail={
             "fact_trade_rows": row_count,
+            # A count, never names: /health is public. Sources whose last
+            # successful ingest is older than their cadence (config/sources.yaml);
+            # an uptime check alerts when this leaves 0. None if unreadable.
+            "stale_sources": stale,
             "reasoning": "available" if llm_ok else "degraded: no API key, figures only",
         },
     )
@@ -65,3 +70,13 @@ def _check_postgres() -> tuple[bool, int | None]:
     except psycopg.Error as exc:
         log.warning("postgres health check failed: %s", exc)
         return False, None
+
+
+def _stale_sources() -> int | None:
+    from ceynex.data import freshness  # noqa: PLC0415
+
+    try:
+        return freshness.stale_count(freshness.per_source())
+    except (psycopg.Error, OSError) as exc:
+        log.warning("freshness check failed: %s", exc)
+        return None

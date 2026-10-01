@@ -42,6 +42,7 @@ from ceynex.api.schemas import (
     LLMStatusResponse,
     ModelsResponse,
     ModelSummary,
+    PipelineFreshnessResponse,
     PipelineRunItem,
     PipelineStatusResponse,
     ProviderStatusItem,
@@ -49,6 +50,7 @@ from ceynex.api.schemas import (
     RetrainRequest,
     SetRoleRequest,
     SetUserPasswordRequest,
+    SourceFreshnessItem,
     UserAdminItem,
     UserMutationResponse,
     UsersResponse,
@@ -233,6 +235,34 @@ async def pipeline_status(_admin: TokenPayload = Depends(require_admin)) -> Pipe
             )
             for r in runs
         ]
+    )
+
+
+@router.get("/pipeline/freshness", response_model=PipelineFreshnessResponse)
+async def pipeline_freshness(
+    _admin: TokenPayload = Depends(require_admin),  # noqa: B008
+) -> PipelineFreshnessResponse:
+    """Every source against its cadence: what the monthly refresh keeps current,
+    what is refreshed by hand, and what has gone stale (FR-DAT-03)."""
+    from ceynex.data import freshness  # noqa: PLC0415 - keeps pandas-free admin imports cheap
+
+    try:
+        rows = await asyncio.to_thread(freshness.per_source)
+    except psycopg.Error as exc:
+        raise HTTPException(status_code=503, detail="freshness unavailable") from exc
+    return PipelineFreshnessResponse(
+        sources=[
+            SourceFreshnessItem(
+                source_id=r.source_id, cadence_days=r.cadence_days, refresh=r.refresh,
+                last_success_at=r.last_success_at.isoformat() if r.last_success_at else None,
+                last_success_rows=r.last_success_rows,
+                last_failure_at=r.last_failure_at.isoformat() if r.last_failure_at else None,
+                last_error=r.last_error,
+                age_days=r.age_days, stale=r.stale,
+            )
+            for r in rows
+        ],
+        stale=freshness.stale_count(rows),
     )
 
 

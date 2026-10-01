@@ -1,0 +1,55 @@
+# Per-source facts for the scheduled refresh and the freshness view
+# (FR-DAT-03; docs/ARCHITECTURE_DELTA.md D19). Keyed by the source_id each
+# connector writes to fact_trade and ingest_run.
+#
+# cadence_days: how old the last successful ingest may get before the source is
+#   reported stale (admin freshness card, `stale_sources` in /health). null means
+#   refreshed by hand from files a person saves (EDB, JAAF, the curated tea and
+#   cinnamon workbooks), so it is never counted stale.
+# refresh: true for the sources ceynex-infra's monthly cron re-ingests
+#   (ops/refresh.sh). A cron that runs monthly is checked against 35 days, so one
+#   missed run shows up within the week.
+sources:
+  UN_COMTRADE:
+    connector: comtrade
+    cadence_days: 35
+    refresh: true
+  PINK_SHEET:
+    connector: pink_sheet
+    cadence_days: 35
+    refresh: true
+  WB_FX:
+    connector: fx
+    cadence_days: 35
+    refresh: true
+  FAOSTAT:
+    connector: faostat
+    cadence_days: 400   # annual, saved by hand
+    refresh: false
+  EDB:
+    connector: edb
+    cadence_days: null
+    refresh: false
+  JAAF:
+    connector: jaaf
+    cadence_days: null
+    refresh: false
+  TEA_BOARD:
+    connector: tea_board
+    cadence_days: null
+    refresh: false
+  CINNAMON:
+    connector: cinnamon
+    cadence_days: null
+    refresh: false
+
+# Sources published as one downloadable file, which `python -m
+# ceynex.data.fetch_snapshots` saves as a new dated snapshot folder for the
+# connector to read (connectors/_snapshots.py picks the newest).
+snapshot_fetch:
+  pink_sheet:
+    # The workbook's URL carries a per-edition document id that changes, so it
+    # is found on this page each time rather than pinned.
+    page: https://www.worldbank.org/en/research/commodity-markets
+    filename: CMO-Historical-Data-Monthly.xlsx
+    raw_subdir: pinksheet

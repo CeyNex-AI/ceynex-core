@@ -103,6 +103,7 @@ ADMIN_ROUTES = [
     ("POST", "/api/admin/retrain", {"sector": "agriculture", "item": "cinnamon"}),
     ("POST", "/api/admin/pipeline/ingest", {}),
     ("GET", "/api/admin/pipeline/status", None),
+    ("GET", "/api/admin/pipeline/freshness", None),
     ("GET", "/api/admin/dq-flags", None),
     ("POST", "/api/admin/dq-flags/1/resolve", None),
     ("GET", "/api/admin/llm/status", None),
@@ -289,6 +290,46 @@ def test_ingest_a_failing_source_does_not_fail_the_whole_request(client, monkeyp
     assert "connector exploded" in result["error"]
     # A connector that fails before writing still leaves an ingest_run row.
     assert recorded == [("EDB", "connector exploded")]
+
+
+# --- freshness (FR-DAT-03) ---------------------------------------------
+
+
+def test_freshness_lists_every_source_against_its_cadence(client, monkeypatch):
+    from datetime import UTC, datetime
+
+    from ceynex.data import freshness
+
+    rows = [
+        freshness.SourceFreshness("UN_COMTRADE", 35, True, datetime(2026, 8, 26, tzinfo=UTC), 6712,
+                                  None, None, 36.2, True),
+        freshness.SourceFreshness("EDB", None, False, datetime(2026, 8, 26, tzinfo=UTC), 4750,
+                                  None, None, 36.2, False),
+    ]
+    monkeypatch.setattr(freshness, "per_source", lambda: rows)
+
+    response = client.get("/api/admin/pipeline/freshness", headers=admin_headers())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stale"] == 1
+    assert body["sources"][0] == {
+        "source_id": "UN_COMTRADE", "cadence_days": 35, "refresh": True,
+        "last_success_at": "2026-08-26T00:00:00+00:00", "last_success_rows": 6712,
+        "last_failure_at": None, "last_error": None, "age_days": 36.2, "stale": True,
+    }
+
+
+def test_freshness_reports_an_unreachable_database_as_503(client, monkeypatch):
+    import psycopg
+
+    from ceynex.data import freshness
+
+    def down():
+        raise psycopg.OperationalError("postgres down")
+
+    monkeypatch.setattr(freshness, "per_source", down)
+    assert client.get("/api/admin/pipeline/freshness", headers=admin_headers()).status_code == 503
 
 
 # --- pipeline status ---------------------------------------------------
