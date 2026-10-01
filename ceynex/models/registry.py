@@ -408,9 +408,18 @@ def retrain(
     params = {**(_params_of(previous) or {}), "sector": sector, "item": item, "target": target}
     fitted = type(previous)(**params)
     fitted.fit(df)
+    # Scored like every other registered version. The forecast agent serves
+    # `load_best`, which skips unscored versions, so a retrain saved without
+    # metrics was never served (live: apparel_woven's 2026-09-04 retrain).
+    try:
+        metrics = fitted.backtest()
+    except Exception as exc:  # too few rows for the folds; still save the fit
+        log.warning("retrained %s/%s/%s but could not backtest it: %s", sector, item, target, exc)
+        metrics = None
     return save(
         fitted,
         training_rows=len(df),
+        metrics=metrics,
         notes=notes or f"retrained from {sector}/{item}/{target}",
     )
 
