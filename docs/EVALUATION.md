@@ -1801,3 +1801,82 @@ change, so it reaches production only when the backend is redeployed.
 flip reaches chat turns as well. That set has not been re-run with citations
 on. In a streamed turn the draft shows `[n]` as plain text until the finished
 answer replaces it with the rendered markers.
+
+## 15. Merge role on gpt-4o-mini: pre-registered capacity test (PR-01, SAD C6)
+
+**Registered 2026-10-01, M2, before any run.** This section is written and
+committed first; the rule below is not revised after the results are in.
+
+**The question.** Single-sector p95 has sat at the edge of SRS PR-01's 10 s across
+six runs: 6.2 s to 11.6 s (§11), and 11.6 s under 50 users, with OpenAI refusing
+gpt-4o calls at its rate limit. The merge role is the one gpt-4o call in the
+pipeline. Every other role already runs on gpt-4o-mini. Does moving merge to
+gpt-4o-mini bring the p95 inside budget without costing answer quality?
+
+**Arms.** Both run the 30-question set three times, cold
+(`eval.harness --repeat 3 --cold`), on the same local stack and the same day,
+with citations as deployed:
+- **A:** today's `config/llm.yaml`.
+- **B:** the same with merge on gpt-4o-mini and its own cost rates, written by
+  `python -m eval.capacity arm-b-config` and selected with `CEYNEX_CONFIG_DIR`.
+  Nothing else differs (a test asserts it).
+
+**Rule** (`python -m eval.capacity verdict A B`). Adopt B only if all four hold:
+1. **Pooled single-sector p95 of B is at most 10,000 ms,** over all 36
+   single-sector answers from its three runs. Not a per-run p95: §8 measured one
+   run's p95 moving 35% with no code change.
+2. **B's mean fully grounded answers per run is at least A's minus 1** (§8's
+   noise floor).
+3. **No answerable question in any B run comes back without evidence.**
+4. **B's mean ungrounded figures per run is at most A's plus 1.**
+
+Routing is a control, not an outcome: the router is its own role and is
+identical in both arms, so a routing difference means something else moved.
+
+**What each result means.**
+- **B adopted:** a PR moves merge in `config/llm.yaml`, then a 50-user signed-in
+  load test against production (`eval/load_test.py --emit-tokens / --tokens`) is
+  recorded in §11.
+- **B refused:** merge stays on gpt-4o. SRS PR-01 then gets this distribution as
+  its evidence, and a reworded target, rather than a claim the system meets 10 s.
+- **A already within budget** (pooled p95 at most 10 s) is reported as such,
+  whatever B does.
+
+### Result, 2026-10-01: B adopted
+
+Both arms ran the same evening on the same local stack (4,625 `fact_trade`
+rows), three cold runs each, citations on. The rule above is unchanged.
+
+| | A: merge on gpt-4o | B: merge on gpt-4o-mini |
+|---|---:|---:|
+| **Pooled single-sector p95 (36 answers)** | **28.0 s** | **8.2 s** |
+| single-sector p95, run by run | 9.8 / 7.1 / 28.0 s | 7.7 / 8.2 / 8.7 s |
+| single-sector median, slowest answer | 5.8 s, 28.0 s | 5.6 s, 8.7 s |
+| fully grounded answers per run | 23 | 23 |
+| ungrounded figures per run | 4 | 4 |
+| answerable questions with no evidence | 2 | 0 |
+| degraded answers (of 90) | 2 | 0 |
+| routing exact per run (control) | 17.7 | 17.7 |
+| cross-sector p95 (budget 20 s) | 9.0 s | 8.5 s |
+| simulation p95 (budget 20 s) | 7.5 s | 8.0 s |
+
+**Verdict: all four checks hold, so B is adopted.** The control held: routing was
+identical, so nothing else moved between the arms.
+
+**What A's 28 s is, so nobody reads more into it than there is.** Arm A's breach
+is two answers in run 3: S10 and S11. Each merge call to gpt-4o timed out at 8 s,
+twice, then the fail-safe was unavailable. The answer went degraded at 28 s with
+no evidence, because the export-analytics agent timed out in the same window.
+Leave those two out and A's single-sector p95 is 8.5 s. So when the provider
+answers, both arms meet PR-01. The difference is the tail. Over 90 questions B
+had no timeout, no degraded answer, and no single-sector answer slower than
+8.7 s. Two timeouts in 90 is a small sample. It is also the failure mode §11
+measured at scale: 208 gpt-4o first attempts refused under 50 users.
+
+What moving merge to gpt-4o-mini costs: nothing measurable on grounding. A
+prompt-for-prompt coherence rating (RR-09, `make coherence`) has still not been
+done by people, and should include B's answers when it is. It also costs about
+1/16 as much per merge call.
+
+**Next, as registered:** a PR moves merge in `config/llm.yaml`, then a 50-user
+signed-in load test against production is recorded in §11.
