@@ -1373,6 +1373,32 @@ tier, a failover key (unset here), or the merge role on the cheaper model. Each
 of those is a change to measure the same way, under this same rule, before it
 is claimed.
 
+### The production run: setup fixed before it ran (2026-10-01)
+
+§15 moved the merge role to gpt-4o-mini. This run measures that change, and
+does what run (b) left open: it runs against production itself. The rule above
+is unchanged. Only the setup is new:
+
+- **Target.** https://ceynex.cc, as deployed: nginx, two workers, Redis, the
+  production databases and model account.
+- **Load driver.** A throwaway e2-standard-2 VM in the same region, so the
+  server's VM does not also run the load generator. Tokens are minted on the
+  server's VM (`--emit-tokens`), so the JWT secret never leaves it.
+- **Shape.** `/api/query` only, at a quiet hour. 50 signed-in users ask 3
+  questions each (150 in all), paced at 2.5 s, with a 45 s client timeout.
+- **The prompt cache stays on**, because production runs with it on. The 150
+  questions are the 30-question set five times over. So the first time each
+  question is asked it is a paid call, and most repeats are cache reads.
+- **Order.** The load run goes first, so the cold calls meet the load. The
+  sequential baseline (30 questions) runs after it and mostly reads the cache,
+  so its ratio (reading 3) flatters the load run. The cold single-user
+  reference is §15's arm B: a single-sector p95 of 8.2 s.
+- **Reported alongside the verdict:**
+  - paid versus cached calls, and the spend, from `llm_usage` (read before
+    the accounts are deleted, since deleting removes their rows);
+  - each request split by whether it made a paid call;
+  - OpenAI 429s in the API log during the run.
+
 ## 12. The owner's calls of 2026-09-12, measured
 
 **Measured 2026-09-12, M2**, on the stack §9 used, before either change was
