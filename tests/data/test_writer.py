@@ -253,6 +253,35 @@ def test_dq_flags_from_an_injected_validator_are_persisted(clean_source, tmp_pat
     assert row[0] == "material"
 
 
+def _mirror(writer, *records):
+    return writer._mirror_to_parquet(writer.prepare(frame(*records)))
+
+
+def test_a_source_written_to_the_mirror_leaves_other_sources_alone(tmp_path):
+    """Two sources, one partition (agriculture/tea/2023). Until 2026-10 the mirror
+    used `delete_matching`, and the second write deleted the first source's rows."""
+    root = tmp_path / "parquet"
+    writer = UnifiedDatasetWriter(parquet_root=root)
+
+    _mirror(writer, record(source_id="UN_COMTRADE"))
+    _mirror(writer, record(source_id="FAOSTAT", export_volume=999.0))
+
+    mirrored = pd.read_parquet(root)
+    assert sorted(mirrored["source_id"]) == ["FAOSTAT", "UN_COMTRADE"]
+
+
+def test_rewriting_a_source_replaces_only_its_own_rows(tmp_path):
+    root = tmp_path / "parquet"
+    writer = UnifiedDatasetWriter(parquet_root=root)
+
+    _mirror(writer, record(source_id="UN_COMTRADE", export_volume=1000.0))
+    _mirror(writer, record(source_id="FAOSTAT", export_volume=999.0))
+    _mirror(writer, record(source_id="UN_COMTRADE", export_volume=1234.0))
+
+    mirrored = pd.read_parquet(root).set_index("source_id")["export_volume"]
+    assert mirrored.to_dict() == {"UN_COMTRADE": 1234.0, "FAOSTAT": 999.0}
+
+
 @pytest.mark.integration
 def test_parquet_is_partitioned_by_sector_item_year(clean_source, tmp_path):
     parquet_root = tmp_path / "parquet"

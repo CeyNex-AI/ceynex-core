@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -341,21 +342,30 @@ class UnifiedDatasetWriter:
     # --- parquet ---------------------------------------------------------
 
     def _mirror_to_parquet(self, frame: pd.DataFrame) -> Path | None:
-        """Partitioned by sector/item/year, per the plan.
+        """A columnar copy of what was written, partitioned by sector/item/year.
 
-        Postgres is the queryable store; Parquet is what the forecasting models
-        read, and partitioning means a model for one item does not scan the rest.
+        Postgres is the record; nothing at serve time reads this (agents and the
+        forecast models go through `data/reader.py`). It is the bulk-analysis
+        copy, so it must hold every source.
+
+        One file per source in each partition, named after the source and
+        written with `overwrite_or_ignore`: a write replaces its own source's
+        file and leaves the others alone. Until 2026-10 this used
+        `delete_matching`, which clears the whole partition, so ingesting EDB
+        deleted UN Comtrade's rows for the same item and year.
         """
         try:
             mirror = frame.copy()
             mirror["year"] = pd.to_datetime(mirror["period_start"]).dt.year
             self.parquet_root.mkdir(parents=True, exist_ok=True)
-            mirror.to_parquet(
-                self.parquet_root,
-                partition_cols=["sector", "item", "year"],
-                index=False,
-                existing_data_behavior="delete_matching",
-            )
+            for source, rows in mirror.groupby("source_id", sort=False):
+                rows.to_parquet(
+                    self.parquet_root,
+                    partition_cols=["sector", "item", "year"],
+                    index=False,
+                    existing_data_behavior="overwrite_or_ignore",
+                    basename_template=re.sub(r"[^A-Za-z0-9_-]", "_", str(source)) + "-{i}.parquet",
+                )
         except Exception as exc:  # noqa: BLE001 - the mirror is derived, Postgres is the record
             log.warning("parquet mirror failed (postgres write stands): %s", exc)
             return None
