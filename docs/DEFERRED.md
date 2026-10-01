@@ -13,17 +13,13 @@ things not built at all.
 ## Owned by M3, deliberately not pre-empted
 
 `ceynex/api/` was seeded by M2 so the orchestrator is reachable for the
-mid-evaluation demo, and is M3's from then on. Routes now exist for `GET
-/health`, `POST /api/query`, auth (`ceynex/api/routes/auth.py`), history
-(`ceynex/api/routes/history.py`), and admin
-(`ceynex/api/routes/admin.py`) — and nothing else beyond that. Specifically
-**not** built, because building them would mean guessing at M3's design and
-then arguing about it:
-
-| Deferred | Spec | Consequence today |
-|---|---|---|
-| Help and guidance content | SRS 3.5.5 | — |
-| `web/` frontend | SAD §6 | The frontend VM is intentionally empty |
+mid-evaluation demo, and is M3's from then on. *(Updated 2026-10-01.)* It has
+since grown to fourteen route modules (`ceynex/api/routes/`): health, query,
+chat and conversations, auth, history, account, admin, news, graph, usage,
+scenario, data and site. `tests/api/test_route_inventory.py` lists the few
+that answer without an account. The frontend is `ceynex-web`, deployed at
+https://ceynex.cc. Help content lives there (its Help page and the public
+Notices page), so neither row this table used to carry is open any more.
 
 **Saved / bookmarked queries (SRS 3.5.2, second half) are built**: `saved` is
 a column on `query_history` (`ceynex/api/history.py`), not a second table — a
@@ -40,7 +36,9 @@ rather than adding a second one.
 /api/admin/retrain`, `POST /api/admin/pipeline/ingest`, `GET
 /api/admin/pipeline/status`, `GET /api/admin/dq-flags`, `POST
 /api/admin/dq-flags/{id}/resolve` (`ceynex/api/routes/admin.py`,
-`ceynex/api/admin.py`). All six require the `admin` role via `require_admin` —
+`ceynex/api/admin.py`). These six, and the eight added since (LLM status, the
+audit log and six user-management routes), all require
+the `admin` role via `require_admin` —
 403 for any other signed-in role, 401 for none. Retrain and ingest wrap the
 real hooks (`ceynex.models.registry.retrain`,
 `ceynex.data.pipeline.run_source`) rather than reimplementing them, and both
@@ -135,8 +133,11 @@ evaluation is not, and it is the headline deliverable. WITS is what pays for it.
 - **Preference-loss scenarios** ("if Sri Lanka loses GSP+") need an MFN rate to
   re-impose, and that is the number WITS would have supplied. It is currently a
   documented constant in `config/elasticities.yaml`
-  (`agreement_loss_mfn_tariff`, default 9.5%), surfaced in the agent's
-  `assumptions` list on every run rather than hidden as a literal.
+  (`agreement_loss_mfn_tariff`), surfaced in the agent's `assumptions` list on
+  every run rather than hidden as a literal. Since 2026-09-28 (core #107) it is
+  sourced per sector: 0% for agriculture (the EU charges no MFN duty on tea,
+  cinnamon or rubber) and 11.5% for apparel (the WTO clothing average); see
+  docs/ELASTICITY_SOURCES.md.
 
 So the honest description is: **preference-loss magnitudes rest on a literature
 constant rather than a queried tariff schedule, and say so.** Whether GSP+
@@ -247,8 +248,9 @@ pipeline". Two different mechanisms cover the two halves:
   history), so it is scoped to the caller and has no retention or tamper
   story. It is a feature that happens to leave a trail, not an audit log.
 - **Administrative actions** are now recorded by `ceynex/api/audit.py`'s
-  `audit_log` table. `POST /api/admin/retrain`, `POST /api/admin/pipeline/ingest`
-  and `POST /api/admin/dq-flags/{id}/resolve` each write an `(actor_email,
+  `audit_log` table. `POST /api/admin/retrain`, `POST /api/admin/pipeline/ingest`,
+  `POST /api/admin/dq-flags/{id}/resolve`, every user-management route, and
+  (since 2026-10) `POST /api/site/theme` each write an `(actor_email,
   action, target, logged_at)` row via `routes/admin.py`'s `_audit()` helper
   **before** performing the mutation, and `GET /api/admin/audit-log` (also
   behind `require_admin`) lists them back, newest first.
@@ -273,9 +275,9 @@ pipeline". Two different mechanisms cover the two halves:
 
 ## Rate limiting (SRS 3.4.6) — built, with one stated exposure
 
-`ceynex/api/rate_limit.py`, wired onto `POST /api/query`, the news sidecar,
-`GET /api/graph/expand`, and — since RBAC — `POST /api/auth/login` and
-`/api/auth/signup`. Redis-backed when `REDIS_URL` is set (the deployed image
+`ceynex/api/rate_limit.py`, wired onto `POST /api/query`, the chat surface, the
+news sidecar (search and trending), `GET /api/graph/expand`, the scenario
+workbench, and — since RBAC — `POST /api/auth/login` and `/api/auth/signup`. Redis-backed when `REDIS_URL` is set (the deployed image
 runs two uvicorn workers, so a per-process counter would permit double the
 configured limit), per-process otherwise. Each surface has its own config
 block in `config/api.yaml` and its own identity-key prefix so one endpoint's
@@ -310,12 +312,13 @@ routes (a valid admin token is already the gate there).
   confirmed on the box, not assumed from this file.
 - **`COMTRADE_API_KEY` is unset.** Comtrade uses the keyless public preview
   endpoint, which returns real data at a lower rate limit.
-- **SSH (22) and RDP (3389) are open to `0.0.0.0/0`** on the `ceynex-dev` VPC.
-  Not closed unilaterally because restricting SSH to a single address could lock
-  out two teammates. RDP serves no purpose on these Linux VMs and can be deleted
-  safely.
-- **Data-tier credentials have not been rotated** since being committed as
-  `.env.example` values in `DevOps/`.
+- **SSH goes through Identity-Aware Proxy only — closed 2026-10-01.** The rules
+  opening 22 and 3389 to `0.0.0.0/0` are deleted. Port 22 accepts only Google's
+  IAP range, and the three members' accounts hold the tunnel role
+  (ceynex-infra `gcp/03_ssh_via_iap.sh`). An outside scan shows 80 and 443 only.
+- **Data-tier credentials and the JWT secret were rotated on 2026-10-01**
+  (ceynex-infra `ops/rotate-secrets.sh`), and the database ports now listen on
+  the VM's loopback only (ceynex-infra #12).
 
 ## News sidecar (D11)
 
@@ -468,10 +471,10 @@ the production build (its PRs #21 and #22). The conversational branch adds its
 42 tests to that suite. Its Playwright suite still runs only on a developer
 machine, because it drives a running API over a loaded stack.
 
-**The deployed VM.** Nothing on `feat/conversational-reasoning-layer` has been
-deployed. The nginx heartbeat, resume and cancel checks were made against a real
-nginx container running the production `location /api/` directives, not against
-the deployed host with TLS and the real network in play.
+**The deployed VM.** *(Updated 2026-10-01.)* The conversational layer has been
+live since 2026-09-12. Its heartbeat, resume and cancel checks were then repeated
+against the deployed host with TLS. Since 2026-10-01 nginx also has an explicit
+`location /api/chat/` with buffering off (ceynex-infra #12).
 
 ## Web-search results reaching an LLM — deliberately not built (D14)
 

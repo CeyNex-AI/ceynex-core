@@ -17,15 +17,15 @@ and sometimes a forecast.
 |---|---|
 | `ceynex-contracts` | Frozen interfaces — `AgentState`, `AgentOutput`, `Evidence`, `schema.sql`, `schema.cypher`. |
 | `ceynex-core` | The engine — data pipeline, Neo4j/Postgres clients, the 5 agents, the LangGraph orchestrator, the FastAPI backend, eval harness. |
-| `ceynex-infra` | GCP deployment — 3 VMs (frontend / backend / database), one VPC, only frontend has a public IP. |
+| `ceynex-infra` | GCP deployment. Production is **one VM** since 2026-09-09: three compose projects (database, backend, frontend) on one Docker network, with only 80/443 reachable from the internet and SSH through IAP. The repo also still describes the original three-VM layout. |
 | `ceynex-web` *(4th repo, M3's)* | React/Vite frontend — Login, Query page, Admin, Help. |
 
 ## Request path
 
 ```
-browser -> ceynex-web (frontend VM, :80)
-        -> nginx proxies /api -> backend VM :8000 (FastAPI)
-        -> POST /api/query  (ceynex/api/routes/query.py)
+browser -> https://ceynex.cc (nginx in ceynex-web, :443, Let's Encrypt)
+        -> nginx proxies /api -> ceynex-api :8000 (FastAPI) over the `ceynex` Docker network
+        -> POST /api/query  (ceynex/api/routes/query.py; sign-in required)
         -> LangGraph graph.ainvoke(state)
              route node  -> keyword_route() or llm_route() picks agents
              fan-out (parallel) -> export_analytics, agriculture_commodity,
@@ -37,8 +37,11 @@ browser -> ceynex-web (frontend VM, :80)
         -> rendered in Query.tsx with EvidencePanel + ForecastChart
 ```
 
-Backend only talks to the database VM (Postgres, Neo4j, Redis, Qdrant). Never the
-reverse.
+The API reaches the stores (Postgres, Neo4j, Redis, Qdrant) by container name on
+the same network; their ports listen on the VM's loopback only. Never the reverse.
+Backups go nightly to a GCS bucket, plus 90 days of disk snapshots
+(`ceynex-infra/ops/RESTORE.md`); a host cron refreshes the network-backed sources
+monthly (D19).
 
 ## Agents — 5 of 5 implemented
 
@@ -203,7 +206,9 @@ python -m ceynex.orchestrator.demo --json "..."
 ```
 
 Needs `make up` (Postgres + Neo4j + Redis + Qdrant via docker-compose) locally, or
-point `ceynex/settings.py`'s connection env vars at the GCP database VM.
+point `ceynex/settings.py`'s connection env vars at another stack. Production's
+stores listen on the VM's loopback only, so reaching them from outside means an SSH
+tunnel through IAP.
 
 Good demo questions are in `eval/questions.yaml` (30 pre-written, graded
 questions: single-sector, cross-sector, simulation, and 3 deliberately
