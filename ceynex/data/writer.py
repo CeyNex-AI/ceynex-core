@@ -270,6 +270,23 @@ class UnifiedDatasetWriter:
                 (datetime.now(UTC), status, rows, error, run_id),
             )
 
+    def record_failed_run(self, source_id: str, error: str) -> None:
+        """An ingest_run row for a source that failed before `write` was reached.
+
+        A connector that cannot fetch or parse never calls `write`, so without
+        this its failure left no row at all: the admin page and the freshness
+        view showed the last *success* and nothing about the attempts since.
+        Never raises; there is nothing better to do with a failure to record a
+        failure than to log it.
+        """
+        try:
+            with psycopg.connect(self.dsn) as conn:
+                run_id = self._start_run(conn, source_id)
+                self._finish_run(conn, run_id, "failed", 0, error[:500])
+                conn.commit()
+        except psycopg.Error:
+            log.exception("could not record the failed run of %s", source_id)
+
     def _record_failure(self, run_id: int | None, source_id: str, error: str) -> None:
         """Close a failed run in its own connection — the first one is unusable.
 

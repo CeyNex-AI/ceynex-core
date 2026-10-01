@@ -271,7 +271,12 @@ def test_ingest_a_failing_source_does_not_fail_the_whole_request(client, monkeyp
     def boom(name, writer):
         raise RuntimeError("connector exploded")
 
+    recorded: list[tuple[str, str]] = []
     monkeypatch.setattr("ceynex.data.pipeline.run_source", boom)
+    monkeypatch.setattr(
+        "ceynex.data.writer.UnifiedDatasetWriter.record_failed_run",
+        lambda self, source_id, error: recorded.append((source_id, error)),
+    )
 
     response = client.post(
         "/api/admin/pipeline/ingest", json={"sources": ["edb"]}, headers=admin_headers()
@@ -280,7 +285,10 @@ def test_ingest_a_failing_source_does_not_fail_the_whole_request(client, monkeyp
     assert response.status_code == 200
     result = response.json()["results"][0]
     assert result["status"] == "failed"
+    assert result["source_id"] == "EDB", "the source id ingest_run uses, not the connector key"
     assert "connector exploded" in result["error"]
+    # A connector that fails before writing still leaves an ingest_run row.
+    assert recorded == [("EDB", "connector exploded")]
 
 
 # --- pipeline status ---------------------------------------------------

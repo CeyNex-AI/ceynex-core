@@ -107,6 +107,23 @@ CONNECTORS: dict[str, Callable[..., DataSourceConnector]] = {
 
 AGRICULTURE_SOURCES = frozenset({"faostat", "pink_sheet", "tea_board", "cinnamon"})
 
+#: The `source_id` each connector writes, for recording a run that failed before
+#: its connector could say so itself (see `UnifiedDatasetWriter.record_failed_run`).
+SOURCE_IDS = {
+    "comtrade": "UN_COMTRADE",
+    "edb": "EDB",
+    "jaaf": "JAAF",
+    "faostat": "FAOSTAT",
+    "pink_sheet": "PINK_SHEET",
+    "tea_board": "TEA_BOARD",
+    "cinnamon": "CINNAMON",
+    "fx": "WB_FX",
+}
+
+
+def source_id_of(name: str) -> str:
+    return SOURCE_IDS.get(name, name.upper())
+
 
 def run_source(
     name: str,
@@ -186,8 +203,9 @@ def main(argv: list[str] | None = None) -> int:
             results.append(run_source(name, writer, cleaner=cleaner, **kwargs))
         except Exception as exc:  # noqa: BLE001 - one bad source must not stop the rest
             log.exception("%s failed", name)
+            writer.record_failed_run(source_id_of(name), str(exc))
             results.append(
-                WriteResult(name, None, 0, 0, 0, None, status="failed", error=str(exc))
+                WriteResult(source_id_of(name), None, 0, 0, 0, None, status="failed", error=str(exc))
             )
 
     print()

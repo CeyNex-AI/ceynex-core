@@ -78,3 +78,31 @@ def test_pipeline_injects_m1_cross_validator_into_writer(monkeypatch) -> None:
 
     assert pipeline.main(["--sources", "tea_board"]) == 0
     assert isinstance(captured["validator"], CrossValidator)
+
+
+def test_a_source_that_fails_before_writing_still_leaves_a_failed_run(monkeypatch) -> None:
+    """A connector that cannot fetch never reaches `write`, so the run would vanish
+    from ingest_run: the freshness view and the admin page would show the last
+    success and nothing about the failures since."""
+    recorded: list[tuple[str, str]] = []
+
+    class Writer:
+        def __init__(self, *, cross_validator: object) -> None:
+            pass
+
+        def record_failed_run(self, source_id: str, error: str) -> None:
+            recorded.append((source_id, error))
+
+    def unreachable(_name: str, _writer: object, **_kwargs: object) -> WriteResult:
+        raise ConnectionError("comtradeapi.un.org unreachable")
+
+    monkeypatch.setattr(pipeline, "UnifiedDatasetWriter", Writer)
+    monkeypatch.setattr(pipeline, "run_source", unreachable)
+    monkeypatch.setattr(pipeline, "_print_counts", lambda: 0)
+
+    assert pipeline.main(["--sources", "comtrade"]) == 1
+    assert recorded == [("UN_COMTRADE", "comtradeapi.un.org unreachable")]
+
+
+def test_every_connector_has_the_source_id_it_writes() -> None:
+    assert set(pipeline.SOURCE_IDS) == set(pipeline.CONNECTORS)

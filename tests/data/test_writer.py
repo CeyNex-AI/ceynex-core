@@ -283,6 +283,19 @@ def test_rewriting_a_source_replaces_only_its_own_rows(tmp_path):
 
 
 @pytest.mark.integration
+def test_a_failed_run_is_recorded_without_a_write(clean_source):
+    UnifiedDatasetWriter().record_failed_run(TEST_SOURCE, "connector exploded")
+
+    with psycopg.connect(postgres_dsn()) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT status, rows_written, error, finished_at IS NOT NULL FROM ingest_run "
+            "WHERE source_id = %s",
+            (TEST_SOURCE,),
+        )
+        assert cur.fetchall() == [("failed", 0, "connector exploded", True)]
+
+
+@pytest.mark.integration
 def test_parquet_is_partitioned_by_sector_item_year(clean_source, tmp_path):
     parquet_root = tmp_path / "parquet"
     writer = UnifiedDatasetWriter(parquet_root=parquet_root)

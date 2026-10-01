@@ -167,7 +167,7 @@ async def retrain(
 
 
 def _run_ingest(names: list[str]) -> list[IngestResultItem]:
-    from ceynex.data.pipeline import run_source
+    from ceynex.data.pipeline import run_source, source_id_of
     from ceynex.data.writer import UnifiedDatasetWriter, WriteResult
 
     writer = UnifiedDatasetWriter()
@@ -176,9 +176,10 @@ def _run_ingest(names: list[str]) -> list[IngestResultItem]:
         try:
             result: WriteResult = run_source(name, writer)
         except Exception as exc:  # noqa: BLE001 - one bad source must not stop the rest, see pipeline.main
+            writer.record_failed_run(source_id_of(name), str(exc))
             items.append(
                 IngestResultItem(
-                    source_id=name, status="failed", rows_in=0, rows_written=0,
+                    source_id=source_id_of(name), status="failed", rows_in=0, rows_written=0,
                     dq_flags=0, error=str(exc),
                 )
             )
