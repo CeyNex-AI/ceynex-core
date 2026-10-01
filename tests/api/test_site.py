@@ -13,6 +13,7 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
+from ceynex.api import audit as audit_module
 from ceynex.api import site_settings as site_settings_module
 from ceynex.api.auth import issue_token
 from ceynex.api.main import app
@@ -21,6 +22,19 @@ from ceynex.api.main import app
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def captured_audit(monkeypatch):
+    """A theme change writes an audit row first (SRS 3.4.7), so the real DB
+    write is patched to a recorder, as in test_admin.py."""
+    calls: list[dict[str, object]] = []
+
+    def fake_record(*, actor_email: str, action: str, target: str | None) -> None:
+        calls.append({"actor_email": actor_email, "action": action, "target": target})
+
+    monkeypatch.setattr(audit_module, "record", fake_record)
+    return calls
 
 
 def token_for(email: str, role: str) -> str:
@@ -83,17 +97,52 @@ def test_post_theme_as_admin_sets_it(client, monkeypatch):
     assert captured == {"theme": "signal-deck", "updated_by": "admin@ceynex.dev"}
 
 
-def test_post_theme_with_an_unknown_name_is_a_422(client, monkeypatch):
-    def boom(theme, *, updated_by):
-        raise ValueError(f"unknown theme {theme!r}; must be one of ('classic', 'signal-deck')")
-
-    monkeypatch.setattr(site_settings_module, "set_theme", boom)
-
-    response = client.post(
-        "/api/site/theme", json={"theme": "neon"}, headers=admin_headers()
-    )
+def test_post_theme_with_an_unknown_name_is_a_422_and_not_audited(client, captured_audit):
+    response = client.post("/api/site/theme", json={"theme": "neon"}, headers=admin_headers())
 
     assert response.status_code == 422
+    assert captured_audit == []
+
+
+def test_post_theme_writes_an_audit_row_before_the_change(client, monkeypatch, captured_audit):
+    order: list[str] = []
+    monkeypatch.setattr(
+        audit_module, "record", lambda **kw: (order.append("audit"), captured_audit.append(kw))
+    )
+    monkeypatch.setattr(
+        site_settings_module,
+        "set_theme",
+        lambda theme, *, updated_by: (order.append("set"), theme)[1],
+    )
+
+    response = client.post(
+        "/api/site/theme", json={"theme": "signal-deck"}, headers=admin_headers()
+    )
+
+    assert response.status_code == 200
+    assert order == ["audit", "set"]
+    assert captured_audit == [
+        {"actor_email": "admin@ceynex.dev", "action": "set_site_theme", "target": "signal-deck"}
+    ]
+
+
+def test_post_theme_is_refused_when_the_audit_row_cannot_be_written(client, monkeypatch):
+    def audit_down(**_kw):
+        raise psycopg.OperationalError("db down")
+
+    changed: list[str] = []
+    monkeypatch.setattr(audit_module, "record", audit_down)
+    monkeypatch.setattr(
+        site_settings_module, "set_theme", lambda theme, *, updated_by: changed.append(theme)
+    )
+
+    response = client.post(
+        "/api/site/theme", json={"theme": "signal-deck"}, headers=admin_headers()
+    )
+
+    assert response.status_code == 503
+    assert "audit" in response.json()["detail"]
+    assert changed == []
 
 
 def test_post_theme_outage_is_a_503(client, monkeypatch):
