@@ -25,6 +25,8 @@ WORKBOOK_URL = (
 
 
 def workbook(tea_prices: tuple[float, ...] = (3.1, 3.2)) -> bytes:
+    """Build once per test and reuse the bytes: an xlsx records when it was
+    written, so two builds a second apart are different files."""
     rows = [["World Bank Commodity Price Data (The Pink Sheet)", None, None],
             [None, "Tea, Colombo", "Rubber, TSR20"],
             [None, "($/kg)", "($/kg)"]]
@@ -61,20 +63,22 @@ def test_a_page_without_the_link_is_a_loud_failure():
 
 
 def test_a_new_edition_becomes_a_dated_snapshot(tmp_path: Path):
-    result = fetch("pink_sheet", tmp_path, client=client(LINKED, workbook()), today="2026-10-01")
+    published = workbook()
+    result = fetch("pink_sheet", tmp_path, client=client(LINKED, published), today="2026-10-01")
 
     assert result.status == "new"
     assert result.path == tmp_path / "pinksheet" / "2026-10-01" / "CMO-Historical-Data-Monthly.xlsx"
-    assert result.path.read_bytes() == workbook()
+    assert result.path.read_bytes() == published
     assert result.url == WORKBOOK_URL
 
 
 def test_an_unchanged_edition_adds_no_folder(tmp_path: Path):
     existing = tmp_path / "pinksheet" / "2026-09-01" / "CMO-Historical-Data-Monthly.xlsx"
     existing.parent.mkdir(parents=True)
-    existing.write_bytes(workbook())
+    published = workbook()
+    existing.write_bytes(published)
 
-    result = fetch("pink_sheet", tmp_path, client=client(LINKED, workbook()), today="2026-10-01")
+    result = fetch("pink_sheet", tmp_path, client=client(LINKED, published), today="2026-10-01")
 
     assert result.status == "unchanged"
     assert result.path == existing
