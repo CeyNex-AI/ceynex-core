@@ -141,6 +141,56 @@ async def test_failsafe_is_tried_after_the_primary_is_exhausted(tmp_path, monkey
     assert llm.usage.fallback_calls == 1
 
 
+def _failsafe_says(text):
+    async def call(*args, base_url=None, **kwargs):
+        if base_url is None:
+            raise RuntimeError("openai is out of credit")
+        return _CallOutcome(text, 0.0, 0, 0)
+
+    return call
+
+
+@pytest.mark.parametrize("verdict", ["User Safety: safe", "safe", "unsafe\nS2", "User Safety: safe\nResponse Safety: safe"])
+async def test_a_safety_classifier_verdict_is_a_failed_call_not_an_answer(tmp_path, monkeypatch, verdict):
+    """Live 2026-10-01: openrouter/free picked a safety classifier and an answer
+    began "User Safety: safe". A verdict alone must degrade like a timeout."""
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    monkeypatch.setattr(llm, "_call", _failsafe_says(verdict))
+
+    assert await llm.generate("merge", "sys", "user") is None
+    assert llm.provider_status()["openrouter"].status != "ok"
+
+
+async def test_a_leading_verdict_is_stripped_from_a_real_answer(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    monkeypatch.setattr(llm, "_call", _failsafe_says("User Safety: safe\n\nTea exports grew 3% in 2025."))
+
+    assert await llm.generate("merge", "sys", "user") == "Tea exports grew 3% in 2025."
+
+
+async def test_an_answer_that_mentions_safety_is_untouched(tmp_path, monkeypatch):
+    llm = client(tmp_path, api_key="sk-test", fallback_api_key="or-test", config=FALLBACK_CONFIG)
+    answer = "Shipping routes stayed safe.\nunsafe working conditions were not reported."
+    monkeypatch.setattr(llm, "_call", _failsafe_says(answer))
+
+    assert await llm.generate("merge", "sys", "user") == answer
+
+
+async def test_a_cached_verdict_is_dropped_and_the_call_made_again(tmp_path, monkeypatch):
+    """Failsafe text is cached under the primary model's key, so a verdict cached
+    before this fix would be served for the cache's whole TTL."""
+    llm = client(tmp_path, api_key="sk-test", cache=True)
+    key = llm._cache.key("gpt-4o", "sys", "user", 0.2)
+    llm._cache.put(key, "User Safety: safe", model="openrouter/free", tokens_in=0, tokens_out=0, cost_usd=0.0)
+
+    async def primary(*args, **kwargs):
+        return _CallOutcome("A real answer.", 0.0, 0, 0)
+
+    monkeypatch.setattr(llm, "_call", primary)
+    assert await llm.generate("merge", "sys", "user") == "A real answer."
+    assert llm.usage.cache_hits == 0
+
+
 async def test_failsafe_is_used_when_there_is_no_primary_key(tmp_path, monkeypatch):
     """No OPENAI_API_KEY must not skip straight to degrading if the free
     failsafe can answer instead."""
