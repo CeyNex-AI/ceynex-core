@@ -259,6 +259,26 @@ def find_region(query: str) -> str | None:
 # --- building evidence ---------------------------------------------------
 
 
+def readable_amount(value: float, unit: str) -> str:
+    """A large amount the way a reader says it: "USD 1.37 billion", not
+    "1,374,229,478.11 USD".
+
+    Only for summary prose. The evidence panel keeps the exact figure, so the
+    rounding never hides where a number came from, and
+    `grounding.ungrounded_figures` accepts these rounded forms of a corpus value.
+    """
+    magnitude = abs(value)
+    if magnitude >= 1e9:
+        number = f"{value / 1e9:,.2f} billion"
+    elif magnitude >= 1e6:
+        number = f"{value / 1e6:,.2f} million"
+    else:
+        number = f"{value:,.2f}"
+    if unit.upper() == "USD":
+        return f"USD {number}"
+    return f"{number} {unit}"
+
+
 def evidence_from_query(claim: str, cypher: str, period: str | None = None) -> Evidence:
     """Evidence whose `detail` is the literal Cypher that produced the claim.
 
@@ -551,4 +571,5 @@ __all__ = [
     "finish",
     "fx_trend_evidence",
     "parse_intent",
+    "readable_amount",
 ]

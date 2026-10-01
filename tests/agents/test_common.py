@@ -229,3 +229,13 @@ async def test_the_direction_rule_still_discards_a_rise_stated_for_a_fall(monkey
         assumptions=[],
     )
     assert patch["agent_outputs"]["trade_economics"]["degraded"] is True
+
+
+def test_readable_amount_scales_large_values_and_keeps_small_ones():
+    from ceynex.agents.common import readable_amount
+
+    assert readable_amount(1_374_229_478.11, "USD") == "USD 1.37 billion"
+    assert readable_amount(412_600_000, "USD") == "USD 412.60 million"
+    assert readable_amount(-2_500_000, "USD") == "USD -2.50 million"
+    assert readable_amount(305_400_000, "kg") == "305.40 million kg"
+    assert readable_amount(4.56, "USD/kg") == "4.56 USD/kg"
