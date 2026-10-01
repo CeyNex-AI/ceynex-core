@@ -22,14 +22,17 @@ models:
     cost_per_1k_output_tokens: 0.0006
 
   # Merging several agents' findings into one coherent answer is the hardest
-  # generation in the system (SRS 3.1.2 forbids concatenation), so it gets the
-  # stronger model.
+  # generation in the system (SRS 3.1.2 forbids concatenation). It ran on
+  # gpt-4o until 2026-10-01, when a pre-registered A/B (docs/EVALUATION.md §15)
+  # put it on gpt-4o-mini. Grounding was identical, and the single-sector p95 went
+  # from 28.0 s to 8.2 s: gpt-4o's merge calls were the ones timing out, and were
+  # what the provider refused under load (§11).
   merge:
-    model: gpt-4o
+    model: gpt-4o-mini
     temperature: 0.2
     max_tokens: 1200
-    cost_per_1k_input_tokens: 0.0025
-    cost_per_1k_output_tokens: 0.01
+    cost_per_1k_input_tokens: 0.00015
+    cost_per_1k_output_tokens: 0.0006
 
   # Per-agent explanation of its own figures.
   explanation:
