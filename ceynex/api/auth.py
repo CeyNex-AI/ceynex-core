@@ -8,9 +8,15 @@ demo" and this is that day.
 `verify_token` now makes one indexed DB lookup per authed request
 (`users.current_token_epoch`) so that a password change, role change or
 disable cuts existing sessions at their next request instead of waiting out
-the 8 h token TTL. If that lookup fails (Postgres unreachable) the token is
-accepted on its signature alone — a datastore blip must not log everyone out,
-same degrade-don't-fail posture as the rest of the codebase.
+the 8 h token TTL.
+
+**If that lookup fails** (Postgres unreachable), a datastore blip must not log
+everyone out, so a token is still accepted on its signature, with one
+exception: each worker remembers the last epoch it read for every account it
+has checked, and a token *that* rules out is refused. A session cut before the
+outage and checked since stays cut. What remains exposed is an account this
+worker has not checked since its epoch moved: same "fail open, but never weaker
+than before" line as the spend cap (ARCHITECTURE_DELTA.md D16).
 """
 
 from __future__ import annotations
@@ -68,6 +74,25 @@ class TokenPayload:
     role: str
 
 
+#: The last epoch this worker read for each account; None for an account that
+#: is gone or disabled. Consulted only when the database cannot be reached.
+#: Bounded by the number of accounts, which is small; cleared outright if that
+#: ever stops being true rather than growing without limit.
+_known_epochs: dict[str, int | None] = {}
+_KNOWN_EPOCHS_MAX = 10_000
+
+
+def _remember_epoch(email: str, epoch: int | None) -> None:
+    if len(_known_epochs) >= _KNOWN_EPOCHS_MAX and email not in _known_epochs:
+        _known_epochs.clear()
+    _known_epochs[email] = epoch
+
+
+def forget_known_epochs() -> None:
+    """Test seam."""
+    _known_epochs.clear()
+
+
 def verify_token(token: str) -> TokenPayload | None:
     """None on any failure (expired, malformed, wrong signature, superseded) —
     one outcome for the route layer to turn into a 401.
@@ -82,11 +107,16 @@ def verify_token(token: str) -> TokenPayload | None:
     except jwt.PyJWTError:
         return None
     email, role = payload["sub"], payload["role"]
+    token_epoch = payload.get("ep", 0)
     try:
         current_epoch = users.current_token_epoch(email)
     except psycopg.Error as exc:
+        if email in _known_epochs and _known_epochs[email] != token_epoch:
+            log.warning("epoch check unreachable; refusing a token this worker saw superseded")
+            return None
         log.warning("token epoch check skipped (postgres unreachable?): %s", exc)
         return TokenPayload(email=email, role=role)
-    if current_epoch is None or current_epoch != payload.get("ep", 0):
+    _remember_epoch(email, current_epoch)
+    if current_epoch is None or current_epoch != token_epoch:
         return None
     return TokenPayload(email=email, role=role)

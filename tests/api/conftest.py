@@ -11,6 +11,7 @@ The rate limit itself is exercised deliberately in `test_rate_limit.py`.
 
 import pytest
 
+from ceynex.api import auth as auth_module
 from ceynex.api import history as history_module
 from ceynex.api import rate_limit
 from ceynex.api import users as users_module
@@ -19,6 +20,15 @@ from ceynex.api.routes import chat as chat_routes
 from ceynex.api.routes import news as news_routes
 from ceynex.api.routes import query as query_routes
 from ceynex.api.routes import scenario as scenario_routes
+
+
+@pytest.fixture(autouse=True)
+def forget_known_epochs():
+    """`auth.verify_token` remembers each account's last-read epoch for use
+    during a Postgres outage. Module state, so cleared for every test."""
+    auth_module.forget_known_epochs()
+    yield
+    auth_module.forget_known_epochs()
 
 
 @pytest.fixture(autouse=True)
