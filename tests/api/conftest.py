@@ -34,19 +34,25 @@ def stub_token_epoch(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def stub_query_history(monkeypatch):
+def stub_query_history(request, monkeypatch):
     """`POST /api/query` and the chat stream require sign-in, so every query
     in these tests is attributed and recorded — a real Postgres write. Recording
     is a no-op here; `test_history.py`'s `recorded` fixture re-patches it to
-    capture the calls it asserts on."""
+    capture the calls it asserts on. Integration tests keep the real one: they
+    exist to exercise it against Postgres."""
+    if request.node.get_closest_marker("integration"):
+        return
     monkeypatch.setattr(history_module, "record", lambda **_kwargs: None)
 
 
 @pytest.fixture(autouse=True)
-def stub_standing_instructions(monkeypatch):
+def stub_standing_instructions(request, monkeypatch):
     """Every chat turn now has an owner, so the turn reads the owner's standing
-    instruction from Postgres. None here; the files that test instructions
-    (`test_turn_persistence.py`, `test_regenerate.py`) re-patch it."""
+    instruction from Postgres. None here, except in integration tests; the files
+    that test instructions (`test_turn_persistence.py`, `test_regenerate.py`)
+    re-patch it."""
+    if request.node.get_closest_marker("integration"):
+        return
 
     async def none(_user_email):
         return "", True
