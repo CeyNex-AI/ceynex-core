@@ -205,13 +205,18 @@ def _find_partner(query: str) -> str | None:
 
     Longest-first matters: "United States" must not be shadowed by a shorter
     entry, and "India" must not match inside "Indian Ocean" ahead of it.
+
+    Sri Lanka is skipped: it is always the reporter, never one of its own export
+    destinations. Matching it turned "Forecast Sri Lanka's tea export value" into
+    "tea exported to Sri Lanka", which has no records, so the forecast failed.
     """
     from ceynex.data.crosswalk import _countries
+    from ceynex.kg.queries import REPORTER_ISO3
 
     lowered = query.lower()
     candidates = sorted(_countries(), key=lambda c: -len(c.name))
     for country in candidates:
-        if len(country.name) < 4:
+        if len(country.name) < 4 or country.iso3 == REPORTER_ISO3:
             continue
         if re.search(rf"\b{re.escape(country.name.lower())}\b", lowered):
             return country.iso3
