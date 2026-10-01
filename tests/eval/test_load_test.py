@@ -104,9 +104,88 @@ async def test_a_sustained_run_needs_a_bound():
 # --- identity ----------------------------------------------------------------------
 
 
-def test_a_signed_in_user_sends_its_token_and_an_anonymous_one_does_not():
+def test_a_user_sends_its_token_and_its_own_address():
     assert load_test._headers(3, "tok") == {"X-Real-IP": "10.50.0.4", "Authorization": "Bearer tok"}
-    assert "Authorization" not in load_test._headers(3, None)
+
+
+# --- accounts: every run is signed in (SRS 3.1.11) ---------------------------------
+
+
+def _one_result():
+    return load_test.Result(
+        user=0,
+        id="Q01",
+        category="single_sector",
+        question="q",
+        status=200,
+        elapsed_ms=100.0,
+        degraded=False,
+        error=None,
+    )
+
+
+@pytest.fixture
+def fake_accounts(monkeypatch):
+    """Account creation and deletion recorded, and the run itself faked."""
+    log = {"created": [], "deleted": [], "tokens": []}
+
+    def create(count, mode="burst"):
+        accounts = [(100 + i, f"tok-{mode}-{i}") for i in range(count)]
+        log["created"].extend(accounts)
+        return accounts
+
+    async def run(base_url, users, timeout_s, *, endpoint="query", tokens=None):
+        log["tokens"].extend(tokens or [])
+        return [_one_result()], 1.0
+
+    monkeypatch.setattr(load_test, "create_accounts", create)
+    monkeypatch.setattr(
+        load_test, "delete_accounts", lambda accounts: log["deleted"].extend(accounts)
+    )
+    monkeypatch.setattr(load_test, "run", run)
+    return log
+
+
+def test_the_accounts_file_round_trips_and_is_owner_only(tmp_path):
+    path = tmp_path / "load.json"
+    load_test.write_accounts(path, [(7, "tok-a"), (8, "tok-b")], "sustained")
+    assert load_test.read_accounts(path) == [(7, "tok-a"), (8, "tok-b")]
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_run_creates_its_own_accounts_and_deletes_them(fake_accounts):
+    assert load_test.main(["--users", "3"]) == 0
+    assert fake_accounts["tokens"] == ["tok-burst-0", "tok-burst-1", "tok-burst-2"]
+    assert fake_accounts["deleted"] == fake_accounts["created"]
+
+
+def test_emit_tokens_writes_the_accounts_and_runs_nothing(fake_accounts, tmp_path):
+    path = tmp_path / "load.json"
+    assert load_test.main(["--users", "2", "--mode", "sustained", "--emit-tokens", str(path)]) == 0
+    assert load_test.read_accounts(path) == [(100, "tok-sustained-0"), (101, "tok-sustained-1")]
+    assert fake_accounts["tokens"] == [] and fake_accounts["deleted"] == []
+
+
+def test_a_run_on_minted_tokens_leaves_the_accounts_to_their_owner(fake_accounts, tmp_path):
+    path = tmp_path / "load.json"
+    load_test.write_accounts(path, [(5, "minted-0"), (6, "minted-1"), (7, "minted-2")], "burst")
+    assert load_test.main(["--users", "2", "--tokens", str(path)]) == 0
+    assert fake_accounts["tokens"] == ["minted-0", "minted-1"]
+    assert fake_accounts["created"] == [] and fake_accounts["deleted"] == []
+
+
+def test_too_few_minted_tokens_is_refused(fake_accounts, tmp_path):
+    path = tmp_path / "load.json"
+    load_test.write_accounts(path, [(5, "minted-0")], "burst")
+    with pytest.raises(SystemExit, match="holds 1 accounts"):
+        load_test.main(["--users", "2", "--tokens", str(path)])
+
+
+def test_delete_accounts_deletes_what_the_file_names(fake_accounts, tmp_path):
+    path = tmp_path / "load.json"
+    load_test.write_accounts(path, [(5, "minted-0"), (6, "minted-1")], "burst")
+    assert load_test.main(["--delete-accounts", str(path)]) == 0
+    assert fake_accounts["deleted"] == [(5, "minted-0"), (6, "minted-1")]
 
 
 async def test_every_burst_user_is_its_own_address(monkeypatch):

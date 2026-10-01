@@ -12,14 +12,12 @@ loop, the connection pools to Postgres/Neo4j, and the rate limiter, none of
 which an in-process call exercises. `docs/DEFERRED.md` has flagged this
 untested since the rate limiter shipped; this is that measurement.
 
-**Each virtual user is a distinct rate-limit identity.** `POST /api/query`
-rate-limits per client address when there is no signed-in user
-(`ceynex/api/rate_limit.py::identity_of`), keyed off `X-Real-IP` — the header
-nginx sets in front of the deployed backend (`client_ip()`'s own docstring).
-Sending 50 concurrent requests from one real IP with no header would collapse
-them into one caller's 30/minute allowance and measure the rate limiter
-instead of the server; this assigns each virtual user its own `X-Real-IP` so
-the 50 are actually 50 distinct callers, as SRS 3.4.2 intends.
+**Every virtual user is a real, signed-in account.** `POST /api/query` and the
+chat stream require sign-in (SRS 3.1.11), and SRS 3.4.2 is about *authenticated*
+users anyway, so each user gets its own account and token and is rate-limited
+as `user:{email}` (`ceynex/api/rate_limit.py::identity_of`): 50 users are 50
+allowances, not one. Each also sends its own `X-Real-IP`, a private-range
+address that nginx overwrites in production, so a local run looks the same.
 
 **Questions repeat.** N users cycle through the real 30-question set
 (`eval/questions.yaml`, the same one `eval/harness.py` uses), so several fire
@@ -41,10 +39,20 @@ reports `degraded` per response rather than counting it as a failure.
                        for --duration seconds or --per-user questions
     --endpoint chat    POST /api/chat/stream instead of /api/query, timing the
                        first frame as well as the `done` frame
-    --signed-in        SRS 3.4.2 says *authenticated* users. Each virtual user
-                       gets a real account (`load-<mode>-NNN@ceynex.dev`, created
-                       through the user store, not the IP-limited signup route)
-                       and a real token, and the accounts are deleted after.
+    (accounts)         Each virtual user gets a real account
+                       (`load-<mode>-NNN@ceynex.dev`, created through the user
+                       store, not the IP-limited signup route) and a real token,
+                       and the accounts are deleted after. `--signed-in` is
+                       accepted and does nothing: it is how every run works now.
+
+A production run mints its tokens where the database and the JWT secret are, and
+drives the load from somewhere else, so the secret never leaves the server:
+
+    docker exec ceynex-api python -m eval.load_test --emit-tokens /tmp/load.json \
+        --mode sustained --users 50                  # on the VM
+    python -m eval.load_test --tokens load.json --base-url https://ceynex.cc \
+        --mode sustained --users 50 --duration 300   # on the load driver
+    docker exec ceynex-api python -m eval.load_test --delete-accounts /tmp/load.json
     python -m eval.load_test --verdict load.json baseline.json
                        the pre-registered rule (EVALUATION.md §11) over two runs
 
@@ -133,8 +141,8 @@ def _real_ip_for(user: int) -> str:
 
 def _headers(user: int, token: str | None) -> dict[str, str]:
     """A signed-in user is limited as `user:{email}`, so its address is moot,
-    but it is sent anyway: an anonymous run and a signed-in one differ in the
-    token and nothing else."""
+    but it is sent anyway, as nginx would. `token` is None only in this module's
+    own tests, which drive a fake server."""
     headers = {"X-Real-IP": _real_ip_for(user)}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -171,6 +179,21 @@ def delete_accounts(accounts: list[tuple[int, str]]) -> None:
 
     for user_id, _ in accounts:
         users.delete_user(user_id)
+
+
+def write_accounts(path: Path, accounts: list[tuple[int, str]], mode: str) -> None:
+    """Accounts and their tokens, for a run driven from another machine.
+    Owner-only, because each token is a working sign-in until it expires."""
+    path.write_text(
+        json.dumps({"mode": mode, "accounts": [{"user_id": i, "token": t} for i, t in accounts]}),
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+
+def read_accounts(path: Path) -> list[tuple[int, str]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [(int(a["user_id"]), str(a["token"])) for a in data["accounts"]]
 
 
 # --- one request --------------------------------------------------------------
@@ -500,7 +523,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("burst", "sequential", "sustained"), default="burst")
     parser.add_argument("--endpoint", choices=("query", "chat"), default="query")
     parser.add_argument("--signed-in", action="store_true",
-                        help="real accounts and tokens, deleted after the run")
+                        help="no effect: every run uses real accounts and tokens now")
+    accounts_from = parser.add_mutually_exclusive_group()
+    accounts_from.add_argument("--emit-tokens", type=Path, metavar="FILE",
+                               help="create the accounts, write them and their tokens here, and exit")
+    accounts_from.add_argument("--tokens", type=Path, metavar="FILE",
+                               help="run as the accounts in FILE; they are not deleted afterwards")
+    accounts_from.add_argument("--delete-accounts", type=Path, metavar="FILE",
+                               help="delete the accounts in FILE and exit")
     parser.add_argument("--pace", type=float, default=PACE_S,
                         help="sustained: seconds between one user's questions")
     parser.add_argument("--per-user", type=int, default=None, help="sustained: questions per user")
@@ -516,8 +546,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if outcome["passed"] else 1
 
     users = 1 if args.mode == "sequential" else args.users
-    accounts = create_accounts(users, args.mode) if args.signed_in else []
-    tokens: list[str | None] = [token for _, token in accounts] or [None] * users
+    if args.delete_accounts:
+        accounts = read_accounts(args.delete_accounts)
+        delete_accounts(accounts)
+        print(f"deleted {len(accounts)} load-test accounts")
+        return 0
+    if args.emit_tokens:
+        write_accounts(args.emit_tokens, create_accounts(users, args.mode), args.mode)
+        print(f"wrote {users} accounts and tokens to {args.emit_tokens}")
+        return 0
+
+    # Accounts minted elsewhere belong to whoever minted them, who deletes them
+    # with --delete-accounts; accounts made here are deleted here.
+    owned = args.tokens is None
+    accounts = create_accounts(users, args.mode) if owned else read_accounts(args.tokens)[:users]
+    if len(accounts) < users:
+        raise SystemExit(f"{args.tokens} holds {len(accounts)} accounts; this run needs {users}")
+    tokens: list[str | None] = [token for _, token in accounts]
     try:
         if args.mode == "sequential":
             results, wall_s = asyncio.run(
@@ -533,11 +578,11 @@ def main(argv: list[str] | None = None) -> int:
                 run(args.base_url, users, args.timeout, endpoint=args.endpoint, tokens=tokens)
             )
     finally:
-        if accounts:
+        if owned:
             delete_accounts(accounts)
 
     summary = summarize(results, wall_s, mode=args.mode, endpoint=args.endpoint,
-                        signed_in=args.signed_in, pace_s=args.pace)
+                        signed_in=True, pace_s=args.pace)
     print(render(results, summary))
 
     if args.json:
