@@ -1841,3 +1841,42 @@ identical in both arms, so a routing difference means something else moved.
   its evidence, and a reworded target, rather than a claim the system meets 10 s.
 - **A already within budget** (pooled p95 at most 10 s) is reported as such,
   whatever B does.
+
+### Result, 2026-10-01: B adopted
+
+Both arms ran the same evening on the same local stack (4,625 `fact_trade`
+rows), three cold runs each, citations on. The rule above is unchanged.
+
+| | A: merge on gpt-4o | B: merge on gpt-4o-mini |
+|---|---:|---:|
+| **Pooled single-sector p95 (36 answers)** | **28.0 s** | **8.2 s** |
+| single-sector p95, run by run | 9.8 / 7.1 / 28.0 s | 7.7 / 8.2 / 8.7 s |
+| single-sector median, slowest answer | 5.8 s, 28.0 s | 5.6 s, 8.7 s |
+| fully grounded answers per run | 23 | 23 |
+| ungrounded figures per run | 4 | 4 |
+| answerable questions with no evidence | 2 | 0 |
+| degraded answers (of 90) | 2 | 0 |
+| routing exact per run (control) | 17.7 | 17.7 |
+| cross-sector p95 (budget 20 s) | 9.0 s | 8.5 s |
+| simulation p95 (budget 20 s) | 7.5 s | 8.0 s |
+
+**Verdict: all four checks hold, so B is adopted.** The control held: routing was
+identical, so nothing else moved between the arms.
+
+**What A's 28 s is, so nobody reads more into it than there is.** Arm A's breach
+is two answers in run 3: S10 and S11. Each merge call to gpt-4o timed out at 8 s,
+twice, then the fail-safe was unavailable. The answer went degraded at 28 s with
+no evidence, because the export-analytics agent timed out in the same window.
+Leave those two out and A's single-sector p95 is 8.5 s. So when the provider
+answers, both arms meet PR-01. The difference is the tail. Over 90 questions B
+had no timeout, no degraded answer, and no single-sector answer slower than
+8.7 s. Two timeouts in 90 is a small sample. It is also the failure mode §11
+measured at scale: 208 gpt-4o first attempts refused under 50 users.
+
+What moving merge to gpt-4o-mini costs: nothing measurable on grounding. A
+prompt-for-prompt coherence rating (RR-09, `make coherence`) has still not been
+done by people, and should include B's answers when it is. It also costs about
+1/16 as much per merge call.
+
+**Next, as registered:** a PR moves merge in `config/llm.yaml`, then a 50-user
+signed-in load test against production is recorded in §11.
