@@ -909,8 +909,13 @@ host**, not a scheduler inside the API process:
   runs inside the api container, under the same `flock` as the nightly backup:
   1. `ceynex.data.fetch_snapshots` saves a new Pink Sheet workbook if the World
      Bank has published one;
-  2. `ceynex.data.pipeline` re-ingests the sources marked `refresh: true` in
-     `config/sources.yaml` (UN Comtrade, Pink Sheet, World Bank FX);
+  2. `ceynex.data.pipeline --max-cache-age-days 25` re-ingests the sources
+     marked `refresh: true` in `config/sources.yaml` (UN Comtrade, Pink Sheet,
+     World Bank FX). Without the flag, the Comtrade and FX connectors reuse
+     their newest cached pull forever, so the first live run on 2026-10-01
+     replayed August's download and fetched nothing. With it, any cached pull
+     older than 25 days is fetched again, so revised and newly published years
+     arrive;
   3. `ceynex.kg.load --flows` rebuilds the trade-flow edges.
 
   FAOSTAT, EDB, JAAF and the curated tea and cinnamon workbooks stay manual:
