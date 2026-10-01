@@ -1801,3 +1801,43 @@ change, so it reaches production only when the backend is redeployed.
 flip reaches chat turns as well. That set has not been re-run with citations
 on. In a streamed turn the draft shows `[n]` as plain text until the finished
 answer replaces it with the rendered markers.
+
+## 15. Merge role on gpt-4o-mini: pre-registered capacity test (PR-01, SAD C6)
+
+**Registered 2026-10-01, M2, before any run.** This section is written and
+committed first; the rule below is not revised after the results are in.
+
+**The question.** Single-sector p95 has sat at the edge of SRS PR-01's 10 s across
+six runs: 6.2 s to 11.6 s (§11), and 11.6 s under 50 users, with OpenAI refusing
+gpt-4o calls at its rate limit. The merge role is the one gpt-4o call in the
+pipeline. Every other role already runs on gpt-4o-mini. Does moving merge to
+gpt-4o-mini bring the p95 inside budget without costing answer quality?
+
+**Arms.** Both run the 30-question set three times, cold
+(`eval.harness --repeat 3 --cold`), on the same local stack and the same day,
+with citations as deployed:
+- **A:** today's `config/llm.yaml`.
+- **B:** the same with merge on gpt-4o-mini and its own cost rates, written by
+  `python -m eval.capacity arm-b-config` and selected with `CEYNEX_CONFIG_DIR`.
+  Nothing else differs (a test asserts it).
+
+**Rule** (`python -m eval.capacity verdict A B`). Adopt B only if all four hold:
+1. **Pooled single-sector p95 of B is at most 10,000 ms,** over all 36
+   single-sector answers from its three runs. Not a per-run p95: §8 measured one
+   run's p95 moving 35% with no code change.
+2. **B's mean fully grounded answers per run is at least A's minus 1** (§8's
+   noise floor).
+3. **No answerable question in any B run comes back without evidence.**
+4. **B's mean ungrounded figures per run is at most A's plus 1.**
+
+Routing is a control, not an outcome: the router is its own role and is
+identical in both arms, so a routing difference means something else moved.
+
+**What each result means.**
+- **B adopted:** a PR moves merge in `config/llm.yaml`, then a 50-user signed-in
+  load test against production (`eval/load_test.py --emit-tokens / --tokens`) is
+  recorded in §11.
+- **B refused:** merge stays on gpt-4o. SRS PR-01 then gets this distribution as
+  its evidence, and a reworded target, rather than a claim the system meets 10 s.
+- **A already within budget** (pooled p95 at most 10 s) is reported as such,
+  whatever B does.
