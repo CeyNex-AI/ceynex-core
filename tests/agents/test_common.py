@@ -147,6 +147,24 @@ def test_without_the_marker_the_first_named_item_still_wins():
     assert parse_intent("How are tea and cinnamon exports doing?").item == "tea"
 
 
+def test_sri_lanka_is_the_reporter_never_the_partner():
+    """Live 2026-10-01: "Forecast Sri Lanka's tea export value" parsed partner=LKA,
+    so the forecast looked for tea exported *to* Sri Lanka, found none and failed
+    (confidence 0.17), while "Forecast tea export value" worked."""
+    from ceynex.agents.common import parse_intent
+
+    for query in ("Forecast Sri Lanka's tea export value", "What were Sri Lanka's tea exports in 2024?",
+                  "How have Sri Lankan cinnamon exports grown?"):
+        assert parse_intent(query).partner is None, query
+
+
+def test_a_destination_is_still_found_beside_sri_lanka():
+    from ceynex.agents.common import parse_intent
+
+    assert parse_intent("How much tea does Sri Lanka export to Iraq?").partner == "IRQ"
+    assert parse_intent("What does India's trade policy say about imports from Sri Lanka?").partner == "IND"
+
+
 # The trade-economics finding exactly as the agent writes it — every impact
 # signed (`USD {delta:+,.0f}`) — and the explanation the model gives of it in
 # EVALUATION.md §9: the same figure, unsigned, with the word that says it fell.
