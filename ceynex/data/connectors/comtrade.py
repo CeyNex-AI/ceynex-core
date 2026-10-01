@@ -32,6 +32,7 @@ import pandas as pd
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ceynex.contracts import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import recent_enough
 from ceynex.data.crosswalk import (
     CrosswalkError,
     drop_aggregate_partners,
@@ -93,6 +94,7 @@ class ComtradeConnector(DataSourceConnector):
         cache_root: Path | None = None,
         timeout_s: float = 30.0,
         offline: bool = False,
+        max_cache_age_days: int | None = None,
     ) -> None:
         self.hs_codes = hs_codes
         self.years = years or _default_years()
@@ -100,6 +102,9 @@ class ComtradeConnector(DataSourceConnector):
         self.cache_root = cache_root or (data_dir() / "raw" / "comtrade")
         self.timeout_s = timeout_s
         self.offline = offline
+        # The monthly refresh sets this, so old pulls are fetched again; see
+        # _snapshots.recent_enough. Offline runs ignore it: nothing to fetch with.
+        self.max_cache_age_days = None if offline else max_cache_age_days
         self.empty_pulls = []
         self._manifest: SourceManifest | None = None
 
@@ -191,7 +196,10 @@ class ComtradeConnector(DataSourceConnector):
         """Most recent cached pull for this (hs, year), across all dated folders."""
         if not self.cache_root.is_dir():
             return None
-        matches = sorted(self.cache_root.glob(f"*/{hs_code}_{year}.json"))
+        matches = sorted(
+            path for path in self.cache_root.glob(f"*/{hs_code}_{year}.json")
+            if recent_enough(path.parent.name, self.max_cache_age_days)
+        )
         return matches[-1] if matches else None
 
     @retry(

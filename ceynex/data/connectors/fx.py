@@ -27,6 +27,7 @@ import pandas as pd
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from ceynex.contracts import DataSourceConnector, SourceManifest
+from ceynex.data.connectors._snapshots import recent_enough
 from ceynex.settings import data_dir
 
 log = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class FXConnector(DataSourceConnector):
         cache_root: Path | None = None,
         timeout_s: float = 30.0,
         offline: bool = False,
+        max_cache_age_days: int | None = None,
     ) -> None:
         # years is accepted for CLI-flag compatibility (`--years FROM TO`
         # applies to every source); the API always returns full history in one
@@ -60,6 +62,8 @@ class FXConnector(DataSourceConnector):
         self.cache_root = cache_root or (data_dir() / "raw" / "fx")
         self.timeout_s = timeout_s
         self.offline = offline
+        # As in comtrade.py: the monthly refresh refetches older pulls.
+        self.max_cache_age_days = None if offline else max_cache_age_days
         self._last: pd.DataFrame | None = None
         self._fetched_at: datetime | None = None
         self._source_hash: str | None = None
@@ -97,7 +101,10 @@ class FXConnector(DataSourceConnector):
     def _newest_cached(self) -> Path | None:
         if not self.cache_root.is_dir():
             return None
-        matches = sorted(self.cache_root.glob("*/wb_fx.json"))
+        matches = sorted(
+            path for path in self.cache_root.glob("*/wb_fx.json")
+            if recent_enough(path.parent.name, self.max_cache_age_days)
+        )
         return matches[-1] if matches else None
 
     @retry(

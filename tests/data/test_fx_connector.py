@@ -79,3 +79,16 @@ def test_is_repeatable(connector):
     second = connector.to_fact_trade(connector.fetch())
     assert first["fx_usd_lkr"].tolist() == second["fx_usd_lkr"].tolist()
     assert (first["source_hash"] == second["source_hash"]).all()
+
+
+def test_a_pull_past_the_age_limit_is_fetched_again(tmp_path, monkeypatch):
+    cache = tmp_path / "fx"
+    (cache / "2026-09-24").mkdir(parents=True)
+    shutil.copy(FIXTURE, cache / "2026-09-24" / "wb_fx.json")
+    connector = FXConnector(cache_root=cache, max_cache_age_days=1)
+    fetched = []
+    monkeypatch.setattr(connector, "_request", lambda: fetched.append(1) or FIXTURE.read_bytes())
+
+    connector.fetch()
+
+    assert fetched == [1]
