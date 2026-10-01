@@ -893,3 +893,42 @@ incidence.
 Simulated tariff and preference-loss losses are larger than they were: by a
 factor of about 1.8 to 2.25 at the defaults above, and by more for an exporter
 with inelastic demand.
+
+## D19 — a scheduled refresh, by host cron, and a stale-source signal
+
+**Decided 2026-10-01, M2.**
+**Spec touched:** SRS 3.1.7 and SRS v2.0 FR-DAT-03 (scheduled refresh); SAD's
+"Scheduled Data Pipeline" component and SAD C11 (nothing alerted on stale data).
+
+D11 records that there is "no Celery, no APScheduler and no cron anywhere in this
+project", and ingestion ran only when an administrator pressed Ingest. FR-DAT-03
+asks for a monthly automatic refresh. This adds one, but as a **cron entry on the
+host**, not a scheduler inside the API process:
+
+- `ceynex-infra/ops/refresh.sh` runs on the 2nd of each month at 04:30 UTC. It
+  runs inside the api container, under the same `flock` as the nightly backup:
+  1. `ceynex.data.fetch_snapshots` saves a new Pink Sheet workbook if the World
+     Bank has published one;
+  2. `ceynex.data.pipeline` re-ingests the sources marked `refresh: true` in
+     `config/sources.yaml` (UN Comtrade, Pink Sheet, World Bank FX);
+  3. `ceynex.kg.load --flows` rebuilds the trade-flow edges.
+
+  FAOSTAT, EDB, JAAF and the curated tea and cinnamon workbooks stay manual:
+  each depends on a file a person saves.
+- **Why not in-process:** two uvicorn workers would each need a lock to avoid
+  running it twice (the news refresher already needs one), a deploy in the
+  middle would kill it, and its failure would share a log with request traffic.
+  A cron job on the host has none of those problems, and its exit status and log
+  are its own.
+- **Noticing it stopped:** `ceynex.data.freshness` judges each source's last
+  successful `ingest_run` against `cadence_days` in `config/sources.yaml`. Sources
+  with no cadence are refreshed by hand and never counted stale. The Admin page
+  shows every source (`GET /api/admin/pipeline/freshness`). `/health` carries a
+  count only, `detail.stale_sources`, because it is public. An uptime check on
+  that count is the alert (`ceynex-infra/gcp/04_monitoring_setup.sh`), with no
+  email server of our own.
+- A failed connector now leaves a `failed` `ingest_run` (`record_failed_run`, core
+  #121), so the freshness view shows the attempt as well as the last success.
+
+What stays manual is retraining. A refreshed series does not retrain its forecast
+model; the Admin page's Retrain button does.
