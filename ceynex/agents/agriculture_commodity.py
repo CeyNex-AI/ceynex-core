@@ -31,6 +31,7 @@ from ceynex.agents.common import (
     finish,
     fx_trend_evidence,
     parse_intent,
+    readable_amount,
 )
 from ceynex.contracts import AgentOutput, AgentState, Evidence, ForecastPoint, failed_output
 from ceynex.data.reader import DatasetUnavailableError, annual_series, relevant_dq_flags
@@ -431,9 +432,10 @@ async def _model_forecast(
         state,
         deps,
         summary=(
-            f"{label.title()} is {direction} at {float(head['point']):,.2f} {unit} for "
-            f"{head['period']}, with an 80% interval of {float(head['lower']):,.2f} to "
-            f"{float(head['upper']):,.2f} {unit}."
+            f"{label.title()} is {direction} at {readable_amount(float(head['point']), unit)} for "
+            f"{head['period']}, with an 80% interval of "
+            f"{readable_amount(float(head['lower']), unit)} to "
+            f"{readable_amount(float(head['upper']), unit)}."
         ),
         figures={
             prefix: round(float(head["point"]), 2),

@@ -145,6 +145,26 @@ def corpus_texts(
     return texts
 
 
+def _scaled_forms(value: str) -> set[str]:
+    """The ways a reader-facing summary may round a large corpus figure:
+    1374229478.11 also grounds "1.37", "1.4" and "1374.23" (billion and
+    million), the forms `agents.common.readable_amount` writes and the merge
+    LLM restates. Without them a correctly rounded "USD 413 million" for
+    412,600,000 would be cut as ungrounded, since 413 is no prefix of 4126.
+    """
+    try:
+        number = float(value)
+    except ValueError:
+        return set()
+    sign = "-" if number < 0 else ""
+    forms: set[str] = set()
+    for scale in (1e9, 1e6):
+        if abs(number) >= scale:
+            scaled = abs(number) / scale
+            forms |= {f"{sign}{scaled:.2f}", f"{sign}{scaled:.1f}", f"{sign}{scaled:.0f}"}
+    return forms
+
+
 def _grounded_by(value: str, pool: set[str]) -> bool:
     return value in pool or any(g.startswith(value.split(".")[0]) for g in pool)
 
@@ -200,6 +220,8 @@ def ungrounded_figures(
     grounded: set[str] = set()
     for text in corpus:
         grounded |= numbers_in(text)
+    for value in list(grounded):
+        grounded |= _scaled_forms(value)
     # The negative figures without their sign, for the direction rule.
     fallen = {value[1:] for value in grounded if value.startswith("-")}
 

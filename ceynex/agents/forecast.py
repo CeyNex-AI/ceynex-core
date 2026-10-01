@@ -30,6 +30,7 @@ from ceynex.agents.common import (
     evidence_from_query,
     finish,
     parse_intent,
+    readable_amount,
 )
 from ceynex.contracts import AgentState, Evidence, ForecastModel, ForecastPoint, failed_output
 from ceynex.kg.client import KnowledgeGraphUnavailableError
@@ -210,9 +211,10 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
 
     summary = (
         f"{item.replace('_', ' ').title()} export value is projected at "
-        f"USD {points[0]['point']:,.0f} for {points[0]['period']}, within an 80% interval of "
-        f"USD {points[0]['lower']:,.0f} to USD {points[0]['upper']:,.0f}, "
-        f"against USD {history[-1][1]:,.0f} in {history[-1][0]}."
+        f"{readable_amount(points[0]['point'], 'USD')} for {points[0]['period']}, within an 80% "
+        f"interval of {readable_amount(points[0]['lower'], 'USD')} to "
+        f"{readable_amount(points[0]['upper'], 'USD')}, "
+        f"against {readable_amount(history[-1][1], 'USD')} in {history[-1][0]}."
     )
 
     return await finish(
@@ -350,8 +352,9 @@ async def _registered_forecast(
         deps=deps,
         summary=(
             f"{model.item.replace('_', ' ').title()} {label} is projected at "
-            f"{head['point']:,.2f} {head['unit']} for {head['period']}, within an 80% interval "
-            f"of {head['lower']:,.2f} to {head['upper']:,.2f} {head['unit']}."
+            f"{readable_amount(head['point'], head['unit'])} for {head['period']}, within an 80% "
+            f"interval of {readable_amount(head['lower'], head['unit'])} to "
+            f"{readable_amount(head['upper'], head['unit'])}."
         ),
         figures=figures,
         evidence=evidence,

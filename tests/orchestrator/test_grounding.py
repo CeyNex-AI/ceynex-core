@@ -297,3 +297,19 @@ def test_splitting_loses_and_moves_nothing():
     text = "Tea rose 4.25 percent. The U.S. was not covered! Why? 2024 was the last year."
     assert "".join(split_sentences(text)) == text
     assert len(split_sentences(text)) == 4
+
+
+def test_a_rounded_billion_or_million_is_grounded_by_the_exact_figure():
+    # Found live 2026-10-01: a forecast answer read "1,374,229,478.11 USD".
+    # Summaries now say "USD 1.37 billion", and the merge LLM may round again.
+    corpus = ["Forecast 1,374,229,478.11 USD for 2026.", "Lower bound 412,600,000.00 USD."]
+    assert ungrounded_figures("Tea exports are projected at USD 1.37 billion.", corpus) == []
+    assert ungrounded_figures("That is about USD 1.4 billion.", corpus) == []
+    assert ungrounded_figures("The lower bound is USD 413 million.", corpus) == []
+    assert ungrounded_figures("The lower bound is USD 412.60 million.", corpus) == []
+
+
+def test_a_rounded_figure_that_matches_nothing_is_still_ungrounded():
+    corpus = ["Forecast 1,374,229,478.11 USD for 2026."]
+    assert ungrounded_figures("Exports reach USD 8.75 billion.", corpus) == ["8.75"]
+    assert ungrounded_figures("Exports reach USD 958 million.", corpus) == ["958"]
