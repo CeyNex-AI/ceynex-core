@@ -226,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model",
         default="timeseries",
-        choices=["timeseries", "gbm"],
+        choices=["timeseries", "gbm", "combination"],
         help="which family to fit when nothing is registered yet",
     )
     parser.add_argument("--register", action="store_true", help="save the fitted model with its metrics")
@@ -266,6 +266,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _build(family: str, **kwargs: Any) -> Any:
+    if family == "combination":
+        from ceynex.models.combination import CombinationModel
+
+        return CombinationModel(**kwargs)
     if family == "gbm":
         from ceynex.models.gbm import GradientBoostedModel
 
