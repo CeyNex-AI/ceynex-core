@@ -173,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sources", nargs="+", default=["all"], help="'all' or source names")
     parser.add_argument("--years", nargs=2, type=int, metavar=("FROM", "TO"), default=None)
     parser.add_argument("--offline", action="store_true", help="use only cached raw responses")
+    parser.add_argument("--max-cache-age-days", type=int, default=None, metavar="N",
+                        help="fetch again any cached API pull older than N days "
+                             "(the monthly refresh; default: reuse the cache)")
     parser.add_argument("--verify", action="store_true", help="print row counts per source and exit")
     args = parser.parse_args(argv)
 
@@ -192,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         kwargs["years"] = tuple(range(args.years[0], args.years[1] + 1))
     if args.offline:
         kwargs["offline"] = True
+    if args.max_cache_age_days is not None:
+        kwargs["max_cache_age_days"] = args.max_cache_age_days
 
     # M1 owns discrepancy detection.  Inject it at the entrypoint so the
     # unified writer persists flags without learning any agriculture details.

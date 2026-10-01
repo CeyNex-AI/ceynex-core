@@ -194,3 +194,38 @@ def test_the_fixture_still_contains_the_traps_it_guards():
     codes = {row["partnerCode"] for row in rows}
     assert 0 in codes, "lost the World aggregate"
     assert {842, 699, 251} <= codes, "lost the Comtrade variant partner codes"
+
+
+# --- the monthly refresh refetches old pulls (D19) ---------------------------
+
+
+def _seeded(tmp_path, folder, **kwargs):
+    cache = tmp_path / "comtrade"
+    (cache / folder).mkdir(parents=True)
+    shutil.copy(FIXTURE, cache / folder / "0902_2023.json")
+    return ComtradeConnector(hs_codes=("0902",), years=(2023,), cache_root=cache, api_key=None, **kwargs)
+
+
+def test_with_no_age_limit_an_old_pull_is_reused(tmp_path, monkeypatch):
+    connector = _seeded(tmp_path, "2026-08-26")
+    monkeypatch.setattr(connector, "_request", lambda *a: pytest.fail("fetched despite the cache"))
+    assert len(connector.fetch()) > 0
+
+
+def test_a_pull_past_the_age_limit_is_fetched_again(tmp_path, monkeypatch):
+    connector = _seeded(tmp_path, "2026-08-26", max_cache_age_days=25)
+    fetched = []
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    monkeypatch.setattr(connector, "_request", lambda hs, year: fetched.append((hs, year)) or payload)
+
+    connector.fetch()
+
+    assert fetched == [("0902", 2023)]
+    folders = sorted(path.parent.name for path in connector.cache_root.glob("*/0902_2023.json"))
+    assert folders[0] == "2026-08-26" and len(folders) == 2, "the new pull is kept beside the old"
+
+
+def test_offline_reuses_any_pull_whatever_its_age(tmp_path, monkeypatch):
+    connector = _seeded(tmp_path, "2020-01-01", max_cache_age_days=25, offline=True)
+    monkeypatch.setattr(connector, "_request", lambda *a: pytest.fail("offline must not fetch"))
+    assert len(connector.fetch()) > 0

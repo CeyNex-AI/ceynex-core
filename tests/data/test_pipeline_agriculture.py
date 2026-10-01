@@ -106,3 +106,18 @@ def test_a_source_that_fails_before_writing_still_leaves_a_failed_run(monkeypatc
 
 def test_every_connector_has_the_source_id_it_writes() -> None:
     assert set(pipeline.SOURCE_IDS) == set(pipeline.CONNECTORS)
+
+
+def test_the_cache_age_flag_reaches_the_connectors(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_source(_name, _writer, **kwargs):
+        seen.update(kwargs)
+        return WriteResult("UN_COMTRADE", None, 0, 0, 0, None)
+
+    monkeypatch.setattr(pipeline, "UnifiedDatasetWriter", lambda *, cross_validator: object())
+    monkeypatch.setattr(pipeline, "run_source", fake_run_source)
+    monkeypatch.setattr(pipeline, "_print_counts", lambda: 0)
+
+    assert pipeline.main(["--sources", "comtrade", "--max-cache-age-days", "25"]) == 0
+    assert seen["max_cache_age_days"] == 25
