@@ -28,6 +28,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,38 @@ from ceynex.observability import trace
 from ceynex.settings import llm_config, openai_api_key, openrouter_api_key
 
 log = logging.getLogger(__name__)
+
+# `openrouter/free` picks a model at random from OpenRouter's free catalog, and
+# that catalog includes safety classifiers (Llama Guard, Nemotron safety guard).
+# Asked to write an answer, they return a verdict instead: live 2026-10-01 an
+# answer began "User Safety: safe". These are the verdict lines they emit.
+_VERDICT_LINE = re.compile(
+    r"^\s*(?:"
+    r"(?:user|prompt|response)\s+safety\s*:\s*(?:safe|unsafe)"
+    r"|safety\s+categor(?:y|ies)\s*:[^\n]*"
+    r"|safe|unsafe"
+    r"|s\d{1,2}(?:\s*,\s*s\d{1,2})*"
+    r")\s*\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _without_verdict(text: str) -> str | None:
+    """`text` with any leading safety-classifier verdict lines removed.
+
+    None when the reply was nothing but a verdict, which is a failed call, not an
+    answer: the caller degrades exactly as it would on a timeout. Only leading
+    lines are removed, so an answer that mentions "safe" further down is untouched.
+    """
+    lines = text.splitlines()
+    removed = False
+    while lines and (not lines[0].strip() or _VERDICT_LINE.match(lines[0])):
+        removed = removed or bool(lines[0].strip())
+        lines.pop(0)
+    if not removed:
+        return text
+    remainder = "\n".join(lines).strip()
+    return remainder or None
 
 
 @dataclass
@@ -492,6 +525,13 @@ class LLMReasoningClient:
         observation = obs_context.current()
         bypass = observation is not None and role in observation.bypass_cache_roles
         cached = None if bypass else self._cache.get(cache_key)
+        if cached is not None and _without_verdict(cached) != cached:
+            # A failsafe verdict cached before verdicts were recognised. It is
+            # stored under the primary model's key, so left alone it would be
+            # served for the cache's whole TTL, even once the primary is back.
+            log.warning("dropping a cached safety-classifier verdict for role %s", role)
+            self._cache.delete(cache_key)
+            cached = None
         if cached is not None:
             if stream is not None:
                 # It arrives all at once, so it is shown all at once.
@@ -644,16 +684,27 @@ class LLMReasoningClient:
                     fallback=True,
                     elapsed_ms=elapsed_s * 1000,
                 )
-                if outcome.text:
-                    self._cache.put(
-                        cache_key,
-                        outcome.text,
-                        model=fallback["model"],
-                        tokens_in=outcome.tokens_in,
-                        tokens_out=outcome.tokens_out,
-                        cost_usd=outcome.cost_usd,
-                    )
-                return outcome.text
+                text = _without_verdict(outcome.text) if outcome.text else outcome.text
+                if text != outcome.text and stream is not None:
+                    # The verdict may already be on screen; replace it with what is kept.
+                    stream.restart()
+                    if text:
+                        stream.feed(text)
+                if outcome.text and text is None:
+                    self._fallback_last_ok = False
+                    self._fallback_last_error = "returned a safety-classifier verdict, not an answer"
+                    log.warning("failsafe model returned a safety-classifier verdict, not an answer — degrading")
+                else:
+                    if text:
+                        self._cache.put(
+                            cache_key,
+                            text,
+                            model=fallback["model"],
+                            tokens_in=outcome.tokens_in,
+                            tokens_out=outcome.tokens_out,
+                            cost_usd=outcome.cost_usd,
+                        )
+                    return text
 
         elapsed_s = time.perf_counter() - started
         self.usage.failures += 1
