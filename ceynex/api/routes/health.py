@@ -15,6 +15,7 @@ active scan (2026-09-15) flagged the resulting internal-IP disclosure.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import psycopg
@@ -34,7 +35,9 @@ async def health(
     runtime: Runtime = Depends(get_runtime),  # noqa: B008 - FastAPI's dependency idiom
 ) -> HealthResponse:
     neo4j_ok = await runtime.kg.verify_connectivity()
-    postgres_ok, row_count = _check_postgres()
+    # Off the loop: the container healthcheck calls this every 15 s, and a
+    # blocking connect stalls every other request on the worker (SAD C14).
+    postgres_ok, row_count = await asyncio.to_thread(_check_postgres)
     llm_ok = runtime.llm.available
 
     # "ok" as long as the process can answer at all. A missing LLM key degrades
