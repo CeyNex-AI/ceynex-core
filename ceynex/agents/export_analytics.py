@@ -99,7 +99,10 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     scope = f" among {region} markets" if region else ""
     if rows:
         leader = rows[0]
-        figures["top_partner_share"] = round(float(leader["share"]), 4)
+        # Unrounded: the summary and the evidence claim each format this once, as
+        # "{:.1f}%". Pre-rounding to 4 dp double-rounded it (0.201476 -> 0.2015
+        # -> "20.2%") while the evidence, formatted from the raw share, said "20.1%".
+        figures["top_partner_share"] = float(leader["share"])
         figures["top_partner_value_usd"] = round(float(leader["export_value_usd"]), 2)
         figures["total_export_value_usd"] = round(float(leader["total_export_value_usd"]), 2)
         figures["partner_count"] = float(len(rows))
@@ -177,7 +180,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     growth_rows, growth_cypher = await deps.kg.run(*q.cagr(item, intent.partner, from_year, year))
     growth = _cagr(growth_rows, from_year, year)
     if growth is not None:
-        figures["cagr"] = round(growth, 4)
+        figures["cagr"] = growth  # unrounded, see top_partner_share
         where = f" to {intent.partner}" if intent.partner else ""
         evidence.append(
             evidence_from_query(
@@ -199,7 +202,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     fastest = await _fastest_growing_partner(deps, item, from_year, year)
     if fastest:
         partner, rate, cypher_text = fastest
-        figures["fastest_growing_partner_cagr"] = round(rate, 4)
+        figures["fastest_growing_partner_cagr"] = rate  # unrounded, see top_partner_share
         evidence.append(
             evidence_from_query(
                 claim=(
@@ -215,7 +218,7 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     district_rows, district_cypher = await deps.kg.run(*q.district_concentration(item))
     if district_rows:
         top = district_rows[0]
-        figures["top_district_share"] = round(float(top["share"] or 0.0), 4)
+        figures["top_district_share"] = float(top["share"] or 0.0)  # unrounded, see top_partner_share
         evidence.append(
             evidence_from_query(
                 claim=(
