@@ -74,6 +74,12 @@ def test_coverage_penalty_fires_when_a_routed_agent_never_reported():
     assert coverage_penalty(["export_analytics", "forecast"], outputs) == pytest.approx(0.15)
 
 
+def test_coverage_penalty_fires_when_the_evidence_misses_every_asked_year():
+    outputs = {"forecast": _output("forecast", 0.9)}
+    assert coverage_penalty(["forecast"], outputs) == 0.0
+    assert coverage_penalty(["forecast"], outputs, period_missed=True) == pytest.approx(0.15)
+
+
 def test_coverage_penalty_fires_when_a_routed_agent_errored():
     """Coverage gap in the original suite: only the "never reported" disjunct
     of `output is None or output.get("error") or output["degraded"]` had a
