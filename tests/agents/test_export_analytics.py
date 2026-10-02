@@ -43,11 +43,14 @@ GROWTH_BY_PARTNER = [
 class KG:
     """Routes on the query text, and records every Cypher it was asked to run."""
 
-    def __init__(self, *, share=None, growth=None, by_partner=None, districts=None, raises=None):
+    def __init__(
+        self, *, share=None, growth=None, by_partner=None, districts=None, raises=None, by_year=None
+    ):
         self.share = MARKET_SHARE if share is None else share
         self.growth = CAGR_ROWS if growth is None else growth
         self.by_partner = GROWTH_BY_PARTNER if by_partner is None else by_partner
         self.districts = districts or []
+        self.by_year = by_year or []
         self.raises = raises
         self.seen: list[str] = []
 
@@ -61,6 +64,8 @@ class KG:
             return list(self.districts), cypher
         if "start_value" in cypher:
             return list(self.by_partner), cypher
+        if "$years" in cypher:
+            return list(self.by_year), cypher
         if "e.year AS year" in cypher and "sum(e.value)" in cypher:
             return list(self.growth), cypher
         return list(self.share), cypher
@@ -300,3 +305,66 @@ def test_no_region_named_still_reports_the_global_leader():
 
     assert out["figures"]["top_partner_share"] == pytest.approx(0.6)  # USA, global share
     assert out["figures"]["partner_count"] == 4.0
+
+
+# --- the years a question names (found live 2026-10-02) -----------------
+
+
+def test_each_named_year_is_read_and_the_change_between_them_computed():
+    """"Compare tea export value in 2023 and 2025" got the 2025 report and a
+    four-year CAGR, and the answer called 2023 "not available"."""
+    kg = KG(by_year=[{"year": 2020, "export_value_usd": 800.0}, {"year": 2024, "export_value_usd": 1000.0}])
+    out, _ = run("Compare Sri Lanka's tea export value in 2020 and 2024.", kg)
+
+    assert out["figures"]["export_value_usd_2020"] == 800.0
+    assert out["figures"]["export_value_usd_2024"] == 1000.0
+    assert out["figures"]["value_change_usd"] == 200.0
+    assert out["figures"]["value_change_pct"] == pytest.approx(0.25)
+    periods = {e.get("period") for e in out["evidence"]}
+    assert {"2020", "2024", "2020-2024"} <= periods
+    assert "USD 800 in 2020 to USD 1,000 in 2024, a change of +25.0%" in out["summary"]
+
+
+def test_the_per_year_figures_come_from_cypher_the_agent_ran():
+    kg = KG(by_year=[{"year": 2020, "export_value_usd": 800.0}, {"year": 2024, "export_value_usd": 1000.0}])
+    out, kg = run("How did tea export value change between 2020 and 2024?", kg)
+    by_year = [e for e in out["evidence"] if e.get("period") in ("2020", "2024", "2020-2024") and "$years" in e["detail"]]
+    assert len(by_year) == 3
+    ran = {" ".join(cypher.split()) for cypher in kg.seen}  # evidence_from_query collapses whitespace
+    assert all(e["detail"] in ran for e in by_year)
+
+
+def test_a_named_year_with_no_records_is_said_to_be_missing_not_zero():
+    """UN Comtrade has no 2018 rows at all."""
+    kg = KG(by_year=[{"year": 2024, "export_value_usd": 1000.0}])
+    out, _ = run("Compare tea export value in 2018 and 2024.", kg)
+
+    assert "export_value_usd_2018" not in out["figures"]
+    assert "value_change_pct" not in out["figures"]
+    assert any("No tea export value is recorded for 2018" in a for a in out["assumptions"])
+
+
+def test_a_question_naming_one_year_does_not_run_the_per_year_query():
+    _, kg = run("Which market took the largest share of tea exports in 2024?")
+    assert not any("$years" in c for c in kg.seen)
+
+
+def test_since_a_year_runs_to_the_latest_data_year():
+    kg = KG(by_year=[{"year": 2021, "export_value_usd": 900.0}, {"year": 2024, "export_value_usd": 1000.0}])
+    out, _ = run("How have tea exports changed since 2021?", kg)
+
+    assert out["figures"]["export_value_usd_2021"] == 900.0
+    assert out["figures"]["export_value_usd_2024"] == 1000.0
+    assert "2021-2024" in {e.get("period") for e in out["evidence"]}
+
+
+def test_growth_is_measured_over_the_span_the_question_named():
+    kg = KG(
+        growth=[{"year": 2022, "export_value_usd": 810.0, "export_volume": 1.0},
+                {"year": 2024, "export_value_usd": 1000.0, "export_volume": 1.0}],
+        by_year=[{"year": 2022, "export_value_usd": 810.0}, {"year": 2024, "export_value_usd": 1000.0}],
+    )
+    out, _ = run("How did tea export value change between 2022 and 2024?", kg)
+
+    assert out["figures"]["cagr"] == pytest.approx((1000.0 / 810.0) ** 0.5 - 1)
+    assert "Between 2022 and 2024 the value grew" in out["summary"]
