@@ -37,6 +37,7 @@ class CinnamonConnector(DataSourceConnector):
         "dq_flags",
     )
     _SHEETS = ("Annual Series", "DEA EAC Series")
+    _HEADER_ROW = 3
 
     def __init__(self, workbook_path: Path, staging_dir: Path) -> None:
         self.workbook_path = Path(workbook_path)
@@ -154,7 +155,7 @@ class CinnamonConnector(DataSourceConnector):
         workbook = resolve_snapshot_file(
             self.workbook_path, "cinnamon_annual_fallback_2011_2025.xlsx"
         )
-        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=3)
+        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=self._HEADER_ROW)
         missing = set(self._REQUIRED_COLUMNS).difference(frame.columns)
         if missing:
             raise ValueError(f"{sheet_name} sheet missing columns: {sorted(missing)}")
@@ -162,5 +163,7 @@ class CinnamonConnector(DataSourceConnector):
         frame["year"] = pd.to_numeric(frame["year"], errors="raise").astype("int64")
         frame["value"] = pd.to_numeric(frame["value"], errors="raise")
         frame["source_sheet"] = sheet_name
-        frame["source_row"] = frame.index.to_series().add(5).to_numpy()
+        # Excel is 1-indexed and the header occupies one row, so pandas index 0
+        # is spreadsheet row _HEADER_ROW + 2.
+        frame["source_row"] = frame.index.to_series().add(self._HEADER_ROW + 2).to_numpy()
         return frame

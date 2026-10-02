@@ -174,7 +174,7 @@ class TeaBoardConnector(DataSourceConnector):
     @staticmethod
     def _to_long(frame: pd.DataFrame, metric: str, value_columns: tuple[str, ...]) -> pd.DataFrame:
         long = frame.melt(
-        id_vars=["year", "source", "dq_flags", "source_sheet", "source_row"],
+            id_vars=["year", "source", "dq_flags", "source_sheet", "source_row"],
             value_vars=list(value_columns),
             var_name="category",
             value_name="value_mt",
