@@ -1446,6 +1446,39 @@ The 130 answers made 548 model calls: 190 paid and 358 cache reads, costing
 $0.034. The sequential baseline was not run. The run is repeated once the fix is
 deployed, under the same setup, with the baseline after it.
 
+### Measured 2026-10-02: the re-run after #128 passes, with the cache warm
+
+#128 was deployed at 01:59 UTC. The setup was unchanged, and the run started at
+02:01 UTC.
+
+| run | requests | answered | 429 | degraded | p95 single / cross / simulation | × one user |
+|---|---:|---:|---:|---:|---|---|
+| 50 users × 3 | 150 | 150 | 0 | 0 | 5.4 / 6.2 / 6.5 s | 1.9 / 3.0 / 4.2 |
+| one user, after it | 30 | 30 | 0 | 0 | 2.8 / 2.0 / 1.5 s | |
+
+**It passes the rule** (`--verdict`): no failures, no 429s, and every
+category's p95 inside its budget.
+- The API container peaked at 2.69 GB of its 4 GB limit, read from its cgroup's
+  `memory.peak`. Before #128 it went past 4 GB.
+- No worker died, the kernel killed nothing, and the API log has no OpenAI 429.
+
+**What this run does not show is the model under load.** The first run cached
+nearly every prompt, so this one made 3 paid calls out of 644, costing $0.0006.
+It measures CeyNex's own serving path, in production, at 50 users. Retrieval and
+its reranks run for every request, cached or not, so the memory result holds
+either way. The paid path under the same load comes from the first run: a
+single-sector p95 of 9.2 s over 35 paid answers, and no OpenAI 429. Reading 3
+calls every increase material, but the baseline itself read from the cache
+(median 0.05 s), so the ratios say little.
+
+**For SRS 3.4.2, in production:**
+- 50 signed-in users are served without failures, inside every budget, with
+  the cache warm (this run).
+- Uncached answers met single-sector's 10 s under the same load (the first
+  run).
+- No single run shows both at once. That would need a cold cache: wait out its
+  168 h TTL, or remove these runs' entries first.
+
 ## 12. The owner's calls of 2026-09-12, measured
 
 **Measured 2026-09-12, M2**, on the stack §9 used, before either change was
