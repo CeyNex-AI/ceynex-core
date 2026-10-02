@@ -18,6 +18,7 @@ Agent node contract (root CLAUDE.md), all five parts:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ceynex.agents.common import (
@@ -32,10 +33,12 @@ from ceynex.contracts import AgentState, Evidence, failed_output
 from ceynex.data.crosswalk import region_of
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
+from ceynex.orchestrator.router import named_years
 
 log = logging.getLogger(__name__)
 
 AGENT = "export_analytics"
+_SINCE = re.compile(r"\bsince\b", re.IGNORECASE)
 
 
 async def export_analytics_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
@@ -63,6 +66,14 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     item = intent.item or "tea"
     year = intent.year or await _latest_year(deps, item)
+    asked_years = sorted(set(named_years(state["query"])))
+    if len(asked_years) == 1 and _SINCE.search(state["query"]):
+        # "since 2021" is a span to the latest data, not a question about 2021.
+        latest = await _latest_year(deps, item)
+        if asked_years[0] < latest:
+            year = latest
+            asked_years = [asked_years[0], latest]
+    asked_years = [y for y in asked_years if y <= year]
     wants_list = _wants_partner_list(state["query"])
     region = find_region(state["query"])
 
@@ -175,8 +186,56 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     else:
         assumptions.append(f"No {item} export records for {year} in the knowledge graph.")
 
+    # --- the years the question named ---
+    # Found live 2026-10-02: "Compare tea export value in 2023 and 2025" got the
+    # 2025 market report and a four-year CAGR, and the answer called 2023 "not
+    # available" although the graph holds it. Each named year is read, and the
+    # first-to-last change is computed here so no one has to do the arithmetic
+    # in prose.
+    if len(asked_years) >= 2 and not region:
+        label = item.replace("_", " ")
+        where = f" to {intent.partner}" if intent.partner else ""
+        value_rows, value_cypher = await deps.kg.run(
+            *q.export_value_by_year(item, intent.partner, asked_years)
+        )
+        values = {
+            int(row["year"]): float(row["export_value_usd"])
+            for row in value_rows
+            if row.get("export_value_usd")
+        }
+        for asked in asked_years:
+            if asked in values:
+                figures[f"export_value_usd_{asked}"] = round(values[asked], 2)
+                evidence.append(
+                    evidence_from_query(
+                        claim=f"Sri Lanka's {label} export value{where} was USD {values[asked]:,.0f} in {asked}.",
+                        cypher=value_cypher,
+                        period=str(asked),
+                    )
+                )
+            else:
+                assumptions.append(f"No {label} export value{where} is recorded for {asked}.")
+        first, last = asked_years[0], asked_years[-1]
+        if values.get(first, 0.0) > 0 and last in values:
+            change = values[last] - values[first]
+            figures["value_change_usd"] = round(change, 2)
+            figures["value_change_pct"] = change / values[first]  # unrounded, see top_partner_share
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"Sri Lanka's {label} export value{where} changed by "
+                        f"{change / values[first] * 100:+.1f}% (USD {change:+,.0f}) "
+                        f"between {first} and {last}."
+                    ),
+                    cypher=value_cypher,
+                    period=f"{first}-{last}",
+                )
+            )
+
     # --- growth ---
-    from_year = year - 4
+    # Over the span the question named, when it named one; otherwise the four
+    # years before `year`.
+    from_year = asked_years[0] if len(asked_years) >= 2 else year - 4
     growth_rows, growth_cypher = await deps.kg.run(*q.cagr(item, intent.partner, from_year, year))
     growth = _cagr(growth_rows, from_year, year)
     if growth is not None:
@@ -239,7 +298,9 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence.append(figures_evidence(f"No knowledge-graph records matched {item} for {year}."))
         assumptions.append("Answer is limited by missing data, not by the question.")
 
-    summary = _summarize(item, year, figures, bool(district_rows), partner_names, region)
+    summary = _summarize(
+        item, year, figures, bool(district_rows), partner_names, region, from_year=from_year
+    )
     return await finish(
         agent=AGENT,
         state=state,
@@ -341,6 +402,8 @@ def _summarize(
     has_districts: bool,
     partner_names: list[str],
     region: str | None = None,
+    *,
+    from_year: int | None = None,
 ) -> str:
     label = item.replace("_", " ")
     if not figures:
@@ -363,12 +426,22 @@ def _summarize(
                 else "."
             )
         )
+    if "value_change_pct" in figures:
+        years = sorted(int(k.rsplit("_", 1)[1]) for k in figures if k.startswith("export_value_usd_"))
+        first, last = years[0], years[-1]
+        parts.append(
+            f"Export value went from USD {figures[f'export_value_usd_{first}']:,.0f} in {first} to "
+            f"USD {figures[f'export_value_usd_{last}']:,.0f} in {last}, a change of "
+            f"{figures['value_change_pct'] * 100:+.1f}%."
+        )
     if "cagr" in figures:
         direction = "grew" if figures["cagr"] > 0 else "contracted"
-        parts.append(
-            f"Over the preceding four years the value {direction} at "
-            f"{abs(figures['cagr']) * 100:.1f}% a year."
+        span = (
+            f"Between {from_year} and {year}"
+            if from_year is not None and from_year != year - 4
+            else "Over the preceding four years"
         )
+        parts.append(f"{span} the value {direction} at {abs(figures['cagr']) * 100:.1f}% a year.")
     if has_districts and "top_district_share" in figures:
         parts.append(
             f"Production is concentrated in one district at "

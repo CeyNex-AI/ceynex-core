@@ -104,6 +104,31 @@ def cagr(item: str, partner: str | None, from_year: int, to_year: int) -> Query:
     return cypher, params
 
 
+def export_value_by_year(item: str, partner: str | None, years: list[int]) -> Query:
+    """Total export value of an item in each of the given years.
+
+    `cagr` reads only its two endpoint years. A question naming specific years
+    ("tea export value in 2023 and 2025") needs each of them read, and a year
+    with no rows is simply absent from the result, so the caller can say which
+    year is missing rather than report it as zero.
+    """
+    partner_filter = "AND c.iso3 = $partner_iso3" if partner else ""
+    cypher = f"""
+    MATCH (i)-[e:EXPORTS_TO]->(c:Country)
+    WHERE (i:Commodity OR i:ApparelCategory)
+      AND toLower(i.name) = toLower($item)
+      AND e.year IN $years
+      {partner_filter}
+    RETURN e.year AS year,
+           sum(e.value) AS export_value_usd
+    ORDER BY year
+    """
+    params: dict[str, Any] = {"item": item, "years": list(years)}
+    if partner:
+        params["partner_iso3"] = to_iso3(partner)
+    return cypher, params
+
+
 def district_concentration(commodity: str) -> Query:
     """Which districts produce a commodity, and in what share (SRS 3.1.6).
 
