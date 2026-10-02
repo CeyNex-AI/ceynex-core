@@ -8,15 +8,20 @@ reports "no policy evidence" forever without anyone seeing an error.
 
 import asyncio
 import importlib.util
+import threading
+import time
 
 import pytest
 
 from ceynex.retrieval.client import (
     MIN_RERANK_SCORE,
+    RERANK_BATCH_SIZE,
+    RERANK_CONCURRENCY,
     PolicyRetriever,
     PolicyRetrieverUnavailableError,
     _build_filter,
     _rerank,
+    cross_encode,
 )
 from ceynex.retrieval.schema import (
     DOC_ID,
@@ -131,7 +136,7 @@ class FakeReranker:
     def __init__(self, scores):
         self._scores = scores
 
-    def rerank(self, query, texts):  # noqa: ARG002 - signature mirrors fastembed
+    def rerank(self, query, texts, batch_size=64):  # noqa: ARG002 - signature mirrors fastembed
         return self._scores
 
 
@@ -153,6 +158,53 @@ def test_returning_nothing_beats_returning_the_least_bad_chunk():
 
 def test_the_floor_is_the_models_own_relevance_boundary():
     assert MIN_RERANK_SCORE == 0.0
+
+
+# --- the cross-encoder's memory cap ----------------------------------------
+
+
+class CountingReranker:
+    """Records the batch size it was asked for and the most runs in flight."""
+
+    def __init__(self):
+        self.batch_sizes = []
+        self.in_flight = 0
+        self.most_in_flight = 0
+        self._lock = threading.Lock()
+
+    def rerank(self, query, texts, batch_size=64):  # noqa: ARG002 - mirrors fastembed
+        with self._lock:
+            self.batch_sizes.append(batch_size)
+            self.in_flight += 1
+            self.most_in_flight = max(self.most_in_flight, self.in_flight)
+        time.sleep(0.05)
+        with self._lock:
+            self.in_flight -= 1
+        return [0.0] * len(texts)
+
+
+def test_reranking_asks_for_the_small_batch():
+    """fastembed's default of 64 put all 30 pairs in one ONNX run, about 440 MB."""
+    encoder = CountingReranker()
+
+    assert cross_encode({"rerank": encoder}, "q", ["a", "b"]) == [0.0, 0.0]
+    assert encoder.batch_sizes == [RERANK_BATCH_SIZE]
+
+
+def test_no_more_reranks_run_at_once_than_the_cap():
+    """Eight at once took one process from 0.65 to 4.0 GB and production's API
+    workers past their container limit (EVALUATION.md §11, 2026-10-01)."""
+    encoder = CountingReranker()
+    threads = [
+        threading.Thread(target=cross_encode, args=({"rerank": encoder}, "q", ["a"]))
+        for _ in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert encoder.most_in_flight == RERANK_CONCURRENCY
 
 
 # --- degradation ---------------------------------------------------------

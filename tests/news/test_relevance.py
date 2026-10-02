@@ -18,9 +18,11 @@ class FakeCrossEncoder:
     def __init__(self, scores):
         self._scores = scores
         self.calls = 0
+        self.batch_sizes = []
 
-    def rerank(self, query, texts):  # noqa: ARG002 - mirrors fastembed's signature
+    def rerank(self, query, texts, batch_size=64):  # noqa: ARG002 - mirrors fastembed's signature
         self.calls += 1
+        self.batch_sizes.append(batch_size)
         return [self._scores[text] for text in texts]
 
 
@@ -57,6 +59,16 @@ async def test_headlines_come_back_most_relevant_first(provider):
     ranked = await relevance.score_articles("ceylon tea", articles, limit=5, floor=-10.0)
 
     assert [a.title for a in ranked] == ["tea prices rise", "tea exports grow", "unrelated football result"]
+
+
+async def test_headlines_share_the_policy_retrievers_cap_on_the_cross_encoder(provider):
+    """One ONNX session, so one cap on runs in flight (`retrieval.client.cross_encode`)."""
+    from ceynex.retrieval.client import RERANK_BATCH_SIZE
+
+    encoder = provider({"a": 1.0, "b": 2.0})
+    await relevance.score_articles("q", [article("a"), article("b")], limit=5)
+
+    assert encoder.batch_sizes == [RERANK_BATCH_SIZE]
 
 
 async def test_the_score_is_attached_to_the_article(provider):
@@ -153,7 +165,7 @@ async def test_without_the_policy_extra_articles_come_back_in_gdelts_own_order()
 
 async def test_a_scoring_failure_costs_the_ranking_not_the_panel():
     class BrokenEncoder:
-        def rerank(self, query, texts):
+        def rerank(self, query, texts, batch_size=64):
             raise RuntimeError("onnx session died")
 
     async def provide():

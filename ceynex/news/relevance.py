@@ -171,7 +171,9 @@ def _rerank_titles(
     Scores are replaced rather than blended with anything: there is nothing to
     blend, since GDELT gave an order and no number.
     """
-    scores = list(models["rerank"].rerank(query, [article.embed_text() for article in articles]))
+    from ceynex.retrieval.client import cross_encode  # noqa: PLC0415 - optional extra
+
+    scores = cross_encode(models, query, [article.embed_text() for article in articles])
     ranked = [
         NewsArticle(**{**vars(article), "relevance": float(score)})
         for article, score in zip(articles, scores, strict=False)

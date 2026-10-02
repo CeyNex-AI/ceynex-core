@@ -1399,6 +1399,53 @@ is unchanged. Only the setup is new:
   - each request split by whether it made a paid call;
   - OpenAI 429s in the API log during the run.
 
+### Measured 2026-10-01: the production run fails rule 1, on memory
+
+| endpoint | requests | answered | 502 | 429 | degraded | p95 single / cross / simulation |
+|---|---:|---:|---:|---:|---:|---|
+| `/api/query` | 150 | 130 | 20 | 0 | 0 | 8.0 / 10.2 / 11.3 s |
+
+**It fails rule 1.** nginx answered 502 to 20 requests, 13.6–21.8 s into the
+25 s run. The kernel killed both API workers at the container's 4 GB memory
+limit (20:15:01 and 20:15:09 UTC). That limit was new: infra #12 set it the
+same day. uvicorn restarted both workers within seconds and `/health` stayed
+ok, but the requests each worker held were lost.
+
+**The cause is the cross-encoder, measured locally.**
+- onnxruntime's CPU arena grows to hold every run in flight at once, and keeps
+  the memory afterwards.
+- One rerank of 30 passages, in fastembed's default batch of 64, adds about
+  440 MB.
+- A worker runs up to eight reranks at once: its thread pool on 4 vCPUs. Eight
+  took one process from 0.65 GB to 4.0 GB.
+- The same 50-user load, without the model, took two local workers from
+  0.67 GB to 1.4 GB and 2.5 GB.
+
+**The fix** (`retrieval/client.py::cross_encode`) allows at most two reranks per
+process at once, with 8 pairs per run.
+- Eight concurrent reranks then peak at 0.56 GB, and finish sooner: 2.5 s
+  against 2.8 s on 4 CPUs.
+- The local 50-user load peaks at 1.2 GB and 1.5 GB per worker. That is with 32
+  threads per worker; production has 8.
+
+**What held.**
+- Every answered request stayed inside its budget, and none degraded.
+- OpenAI refused nothing: the API log has no OpenAI 429, against 208 in run (b),
+  when the merge role was on gpt-4o.
+- 72 of the 130 answers made at least one paid call; 58 came wholly from the
+  prompt cache. The answers were paired with their `llm_usage` rows by user and
+  order, all 130 within 0.09 s of their request's window.
+
+| category | paid: n, p50, p95 | all from cache: n, p50, p95 |
+|---|---|---|
+| single_sector | 35, 6.1 s, **9.2 s** | 31, 0.6 s, 3.8 s |
+| cross_sector | 30, 7.2 s, 10.9 s | 20, 2.6 s, 7.1 s |
+| simulation | 7, 8.2 s, 11.3 s | 7, 5.0 s, 6.8 s |
+
+The 130 answers made 548 model calls: 190 paid and 358 cache reads, costing
+$0.034. The sequential baseline was not run. The run is repeated once the fix is
+deployed, under the same setup, with the baseline after it.
+
 ## 12. The owner's calls of 2026-09-12, measured
 
 **Measured 2026-09-12, M2**, on the stack §9 used, before either change was

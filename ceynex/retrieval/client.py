@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import replace
 from types import TracebackType
@@ -92,6 +93,19 @@ DEFAULT_LIMIT = 5
 #: support — which is the one failure `orchestrator/grounding.py` cannot see.
 MIN_RERANK_SCORE = 0.0
 
+#: Pairs the cross-encoder scores per ONNX run, and how many runs one process
+#: lets happen at once. **Memory, not speed, sets both.** onnxruntime's CPU arena
+#: grows to cover every run in flight together and never gives the memory back.
+#: One 30-pair run at fastembed's default batch of 64 adds about 440 MB, so
+#: eight at once took a process from 0.65 GB to 4.0 GB. On 2026-10-01 that is
+#: what killed both production API workers at their 4 GB container limit, under
+#: 50 signed-in users (EVALUATION.md §11). Two runs of 8 pairs at once peak at
+#: 0.56 GB for the same eight requests, and finish them sooner (2.5 s against
+#: 2.8 s on 4 CPUs): the runs were competing for the same cores anyway.
+RERANK_BATCH_SIZE = 8
+RERANK_CONCURRENCY = 2
+_rerank_slots = threading.BoundedSemaphore(RERANK_CONCURRENCY)
+
 
 class PolicyRetrieverUnavailableError(RuntimeError):
     """Qdrant could not be reached, or the search failed.
@@ -138,7 +152,7 @@ async def shared_models() -> dict[str, Any]:
     cross-encoder and must not load a second copy: another `TextCrossEncoder` is
     another ~90 MB of ONNX session for byte-identical weights, in a container
     already carrying three of them. Sharing costs nothing — the news path only
-    calls `.rerank()`, and nothing here mutates.
+    scores through `cross_encode()`, and nothing here mutates.
 
     Raises `ImportError` when the `[policy]` extra is absent. That is the caller's
     signal to degrade, not an error to handle here: `news/relevance.py` returns
@@ -382,6 +396,17 @@ def _embed_query(models: dict[str, Any], query: str) -> tuple[list[float], dict[
     return dense, {"indices": raw.indices.tolist(), "values": raw.values.tolist()}
 
 
+def cross_encode(models: dict[str, Any], query: str, texts: list[str]) -> list[float]:
+    """Cross-encoder scores for (query, text) pairs, in order. Blocking.
+
+    Every use of the shared cross-encoder goes through here, so policy reranking
+    and news scoring share one process-wide cap on runs in flight. Waiting for a
+    slot happens in the caller's worker thread, never on the event loop.
+    """
+    with _rerank_slots:
+        return list(models["rerank"].rerank(query, texts, batch_size=RERANK_BATCH_SIZE))
+
+
 def _rerank(
     models: dict[str, Any], query: str, candidates: list[PolicyChunk], limit: int
 ) -> list[PolicyChunk]:
@@ -393,7 +418,7 @@ def _rerank(
     pairs. Scores are replaced, not blended: an RRF score and a cross-encoder
     score are not on the same scale and averaging them means nothing.
     """
-    scores = list(models["rerank"].rerank(query, [c.text for c in candidates]))
+    scores = cross_encode(models, query, [c.text for c in candidates])
     ranked = sorted(
         (
             PolicyChunk(**{**vars(candidate), "score": float(score)})
@@ -460,8 +485,11 @@ __all__ = [
     "CANDIDATE_LIMIT",
     "DEFAULT_LIMIT",
     "MIN_RERANK_SCORE",
+    "RERANK_BATCH_SIZE",
+    "RERANK_CONCURRENCY",
     "RETRIEVAL_TIMEOUT_S",
     "PolicyRetriever",
     "PolicyRetrieverUnavailableError",
+    "cross_encode",
     "shared_models",
 ]
