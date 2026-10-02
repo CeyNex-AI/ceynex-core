@@ -443,8 +443,10 @@ class UnifiedDatasetWriter:
     def _record_id(conn: psycopg.Connection, record: dict[str, Any]) -> int:
         where = " AND ".join(f"{column} IS NOT DISTINCT FROM %s" for column in IDENTITY_COLUMNS)
         parameters = tuple(_db_value(record.get(column)) for column in IDENTITY_COLUMNS)
+        # Column names are a module constant; every value is a bound parameter.
+        query = f"SELECT record_id FROM fact_trade WHERE {where}"  # noqa: S608  # nosec B608
         with conn.cursor() as cur:
-            cur.execute(f"SELECT record_id FROM fact_trade WHERE {where}", parameters)  # noqa: S608
+            cur.execute(query, parameters)
             row = cur.fetchone()
         if row is None:
             raise WriterError("fact upsert succeeded but its record_id could not be found")
