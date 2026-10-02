@@ -28,7 +28,14 @@ from ceynex.settings import postgres_dsn, redacted_dsn
 
 log = logging.getLogger(__name__)
 
-CONTRACT_TABLES = ("dim_country", "dim_hs", "fact_trade", "dq_flag", "ingest_run")
+CONTRACT_TABLES = (
+    "dim_country",
+    "dim_hs",
+    "fact_trade",
+    "fact_provenance",
+    "dq_flag",
+    "ingest_run",
+)
 
 
 def schema_sql() -> str:
