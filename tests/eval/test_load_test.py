@@ -8,6 +8,7 @@ pacing, the accounting of failures and 429s, and the pre-registered verdict.
 from __future__ import annotations
 
 import json
+import sys
 
 import httpx
 import pytest
@@ -146,6 +147,7 @@ def fake_accounts(monkeypatch):
     return log
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no POSIX permission bits")
 def test_the_accounts_file_round_trips_and_is_owner_only(tmp_path):
     path = tmp_path / "load.json"
     load_test.write_accounts(path, [(7, "tok-a"), (8, "tok-b")], "sustained")
