@@ -272,9 +272,15 @@ async def test_news_searches_do_not_consume_the_query_allowance():
     assert decision.remaining == 29, "news requests leaked into the query allowance"
 
 
-def test_trending_has_its_own_allowance_separate_from_searches():
+def test_trending_has_its_own_allowance_separate_from_searches(monkeypatch):
     """Reloading the Query page reads trending each time; that must not spend
-    the searches that run beside each answer, and it is limited in its own right."""
+    the searches that run beside each answer, and it is limited in its own right.
+
+    The snapshot is stubbed: unstubbed, each request tried a real Postgres. On
+    Linux that is refused at once, but on Windows each refused connect waits
+    about two seconds, so 31 requests outlasted the 60 s window and the 31st was
+    allowed again."""
+    monkeypatch.setattr(snapshot, "latest", lambda scope: None)
     client = client_with(gdelt=FakeGdelt([]))
 
     trending = [client.get("/api/news/trending").status_code for _ in range(31)]
