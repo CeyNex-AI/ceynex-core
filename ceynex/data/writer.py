@@ -84,6 +84,25 @@ WRITABLE_COLUMNS = (
     "source_hash",
 )
 
+# Provenance is deliberately stored separately from the frozen fact_trade
+# contract.  These columns travel through connector cleaning unchanged, then
+# are written to fact_provenance only after the numeric fact has a record_id.
+PROVENANCE_COLUMNS = (
+    "publisher",
+    "source_file",
+    "source_url",
+    "workbook_file",
+    "workbook_sha256",
+    "source_sheet",
+    "source_row",
+)
+PROVENANCE_LOCATOR_COLUMNS = (
+    "workbook_file",
+    "workbook_sha256",
+    "source_sheet",
+    "source_row",
+)
+
 VALID_FREQUENCIES = {"D", "W", "M", "Q", "A"}
 
 
@@ -150,7 +169,7 @@ class UnifiedDatasetWriter:
             raise WriterError(f"records are missing non-nullable columns: {missing}")
 
         frame = records.copy()
-        for column in WRITABLE_COLUMNS:
+        for column in (*WRITABLE_COLUMNS, *PROVENANCE_COLUMNS):
             if column not in frame.columns:
                 frame[column] = None
 
@@ -165,6 +184,8 @@ class UnifiedDatasetWriter:
 
         frame["source_hash"] = [source_hash(row) for row in frame.to_dict("records")]
 
+        self._validate_provenance(frame)
+
         # Two rows with the same identity inside one batch would make the upsert
         # non-deterministic — "ON CONFLICT DO UPDATE command cannot affect row a
         # second time". Last one wins, and we say so.
@@ -176,7 +197,21 @@ class UnifiedDatasetWriter:
                 before - len(frame),
             )
 
-        return frame[list(WRITABLE_COLUMNS)]
+        return frame[list((*WRITABLE_COLUMNS, *PROVENANCE_COLUMNS))]
+
+    @staticmethod
+    def _validate_provenance(frame: pd.DataFrame) -> None:
+        """Reject partial lineage instead of silently persisting an unusable citation."""
+        metadata = frame.loc[:, list(PROVENANCE_COLUMNS)]
+        has_metadata = metadata.notna().any(axis=1)
+        missing_locator = frame.loc[:, list(PROVENANCE_LOCATOR_COLUMNS)].isna().any(axis=1)
+        invalid = has_metadata & missing_locator
+        if invalid.any():
+            count = int(invalid.sum())
+            raise WriterError(
+                f"provenance is incomplete for {count} row(s); "
+                f"required: {list(PROVENANCE_LOCATOR_COLUMNS)}"
+            )
 
     # --- writing ---------------------------------------------------------
 
@@ -208,6 +243,7 @@ class UnifiedDatasetWriter:
                 conn.commit()
 
                 written = self._upsert(conn, prepared)
+                self._write_provenance(conn, prepared)
                 self._write_flags(conn, flags)
                 self._finish_run(conn, run_id, "success", written, None)
                 conn.commit()
@@ -218,7 +254,9 @@ class UnifiedDatasetWriter:
                 resolved_source, run_id, len(prepared), 0, 0, None, "failed", str(exc)
             )
 
-        parquet_path = self._mirror_to_parquet(prepared)
+        # Keep the existing Parquet fact schema stable for forecast consumers.
+        # PostgreSQL is the queryable source of detailed provenance.
+        parquet_path = self._mirror_to_parquet(prepared.loc[:, list(WRITABLE_COLUMNS)])
 
         log.info(
             "%s: %d rows upserted, %d dq flags, parquet -> %s",
@@ -356,6 +394,64 @@ class UnifiedDatasetWriter:
                 ],
             )
 
+    def _write_provenance(self, conn: psycopg.Connection, frame: pd.DataFrame) -> None:
+        """Upsert provenance after fact upsert, in the same transaction.
+
+        Records without provenance are normal for existing connectors and are
+        intentionally ignored. Rows with any provenance have already passed
+        ``_validate_provenance``, so every saved citation has a stable workbook
+        locator.
+        """
+        present = frame.loc[:, list(PROVENANCE_COLUMNS)].notna().any(axis=1)
+        if not present.any():
+            return
+
+        values: list[tuple[object, ...]] = []
+        for record in frame.loc[present].to_dict("records"):
+            record_id = self._record_id(conn, record)
+            values.append(
+                (
+                    record_id,
+                    _nullable_text(record.get("publisher")),
+                    _nullable_text(record.get("source_file")),
+                    _nullable_text(record.get("source_url")),
+                    _required_text(record.get("workbook_file"), "workbook_file"),
+                    _required_text(record.get("workbook_sha256"), "workbook_sha256"),
+                    _required_text(record.get("source_sheet"), "source_sheet"),
+                    int(record["source_row"]),
+                )
+            )
+
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO fact_provenance (
+                    record_id, publisher, source_file, source_url,
+                    workbook_file, workbook_sha256, source_sheet, source_row
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (record_id, workbook_file, source_sheet, source_row) DO UPDATE
+                   SET publisher = EXCLUDED.publisher,
+                       source_file = EXCLUDED.source_file,
+                       source_url = EXCLUDED.source_url,
+                       workbook_sha256 = EXCLUDED.workbook_sha256,
+                       ingested_at = now()
+                """,
+                values,
+            )
+
+    @staticmethod
+    def _record_id(conn: psycopg.Connection, record: dict[str, Any]) -> int:
+        where = " AND ".join(f"{column} IS NOT DISTINCT FROM %s" for column in IDENTITY_COLUMNS)
+        parameters = tuple(_db_value(record.get(column)) for column in IDENTITY_COLUMNS)
+        # Column names are a module constant; every value is a bound parameter.
+        query = f"SELECT record_id FROM fact_trade WHERE {where}"  # noqa: S608  # nosec B608
+        with conn.cursor() as cur:
+            cur.execute(query, parameters)
+            row = cur.fetchone()
+        if row is None:
+            raise WriterError("fact upsert succeeded but its record_id could not be found")
+        return int(row[0])
+
     # --- parquet ---------------------------------------------------------
 
     def _mirror_to_parquet(self, frame: pd.DataFrame) -> Path | None:
@@ -396,3 +492,22 @@ def _single_source(records: pd.DataFrame) -> str:
     if len(sources) == 1:
         return str(sources[0])
     return "MIXED"
+
+
+def _db_value(value: object) -> object:
+    """Turn pandas missing values into database NULLs without changing real zeroes."""
+    return None if pd.isna(value) else value
+
+
+def _nullable_text(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _required_text(value: object, field: str) -> str:
+    text = _nullable_text(value)
+    if text is None:
+        raise WriterError(f"provenance {field} must not be empty")
+    return text

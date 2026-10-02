@@ -99,6 +99,33 @@ def test_prepare_adds_the_source_hash():
     assert prepared["source_hash"].notna().all()
 
 
+def test_prepare_retains_complete_provenance_outside_the_frozen_fact_contract():
+    writer = UnifiedDatasetWriter(dsn="postgresql://nowhere/nope")
+    prepared = writer.prepare(
+        frame(
+            record(
+                publisher="Tea Exporters Association",
+                source_file=None,
+                source_url=None,
+                workbook_file="tea.xlsx",
+                workbook_sha256="a" * 64,
+                source_sheet="Exports",
+                source_row=5,
+            )
+        )
+    )
+    assert prepared.loc[0, "publisher"] == "Tea Exporters Association"
+    assert prepared.loc[0, "workbook_file"] == "tea.xlsx"
+    assert prepared.loc[0, "source_sheet"] == "Exports"
+    assert prepared.loc[0, "source_row"] == 5
+
+
+def test_partial_provenance_is_refused_before_any_database_write():
+    writer = UnifiedDatasetWriter(dsn="postgresql://nowhere/nope")
+    with pytest.raises(WriterError, match="provenance is incomplete"):
+        writer.prepare(frame(record(publisher="Tea Exporters Association")))
+
+
 def test_duplicates_within_one_batch_collapse_to_the_last():
     """Postgres refuses to update the same row twice in one statement."""
     writer = UnifiedDatasetWriter(dsn="postgresql://nowhere/nope")
@@ -196,6 +223,36 @@ def test_a_revised_figure_updates_in_place(clean_source, tmp_path):
         row = cur.fetchone()
     assert row is not None
     assert float(row[0]) == 9900.0
+
+
+@pytest.mark.integration
+def test_provenance_is_upserted_with_its_fact(clean_source, tmp_path):
+    writer = UnifiedDatasetWriter(parquet_root=tmp_path / "parquet")
+    evidence = record(
+        publisher="Tea Exporters Association",
+        source_file=None,
+        source_url=None,
+        workbook_file="tea.xlsx",
+        workbook_sha256="b" * 64,
+        source_sheet="Exports",
+        source_row=5,
+    )
+
+    writer.write(frame(evidence))
+    writer.write(frame(evidence))
+
+    with psycopg.connect(postgres_dsn()) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT p.publisher, p.workbook_file, p.workbook_sha256, p.source_sheet, p.source_row
+              FROM fact_provenance AS p
+              JOIN fact_trade AS f ON f.record_id = p.record_id
+             WHERE f.source_id = %s
+            """,
+            (TEST_SOURCE,),
+        )
+        rows = cur.fetchall()
+    assert rows == [("Tea Exporters Association", "tea.xlsx", "b" * 64, "Exports", 5)]
 
 
 @pytest.mark.integration

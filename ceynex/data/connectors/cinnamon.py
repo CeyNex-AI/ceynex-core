@@ -37,6 +37,7 @@ class CinnamonConnector(DataSourceConnector):
         "dq_flags",
     )
     _SHEETS = ("Annual Series", "DEA EAC Series")
+    _HEADER_ROW = 3
 
     def __init__(self, workbook_path: Path, staging_dir: Path) -> None:
         self.workbook_path = Path(workbook_path)
@@ -53,7 +54,10 @@ class CinnamonConnector(DataSourceConnector):
 
         frames = [self._read_sheet(sheet_name) for sheet_name in self._SHEETS]
         result = pd.concat(frames, ignore_index=True)
-        result["source_hash"] = hashlib.sha256(workbook.read_bytes()).hexdigest()
+        workbook_sha256 = hashlib.sha256(workbook.read_bytes()).hexdigest()
+        result["workbook_file"] = workbook.name
+        result["workbook_sha256"] = workbook_sha256
+        result["source_hash"] = workbook_sha256
         result = result.sort_values(
             ["year", "source", "metric", "category", "unit"], ignore_index=True
         )
@@ -90,7 +94,21 @@ class CinnamonConnector(DataSourceConnector):
 
     def to_fact_trade(self, raw: pd.DataFrame) -> pd.DataFrame:
         """Map DEA/EAC annual total cinnamon exports to ``fact_trade``."""
-        required = {"year", "metric", "category", "value", "unit", "source_hash"}
+        required = {
+            "year",
+            "metric",
+            "category",
+            "value",
+            "unit",
+            "source",
+            "source_file",
+            "source_url",
+            "source_hash",
+            "workbook_file",
+            "workbook_sha256",
+            "source_sheet",
+            "source_row",
+        }
         missing = required.difference(raw.columns)
         if missing:
             raise ValueError(f"Cinnamon records missing columns: {sorted(missing)}")
@@ -123,6 +141,13 @@ class CinnamonConnector(DataSourceConnector):
                 "price_unit": None,
                 "fx_usd_lkr": None,
                 "source_hash": exports["source_hash"].to_numpy(),
+                "publisher": exports["source"].to_numpy(),
+                "source_file": exports["source_file"].to_numpy(),
+                "source_url": exports["source_url"].to_numpy(),
+                "workbook_file": exports["workbook_file"].to_numpy(),
+                "workbook_sha256": exports["workbook_sha256"].to_numpy(),
+                "source_sheet": exports["source_sheet"].to_numpy(),
+                "source_row": exports["source_row"].to_numpy(),
             }
         )
 
@@ -130,12 +155,15 @@ class CinnamonConnector(DataSourceConnector):
         workbook = resolve_snapshot_file(
             self.workbook_path, "cinnamon_annual_fallback_2011_2025.xlsx"
         )
-        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=3)
+        frame = pd.read_excel(workbook, sheet_name=sheet_name, header=self._HEADER_ROW)
         missing = set(self._REQUIRED_COLUMNS).difference(frame.columns)
         if missing:
             raise ValueError(f"{sheet_name} sheet missing columns: {sorted(missing)}")
         frame = frame.loc[:, list(self._REQUIRED_COLUMNS)].copy()
         frame["year"] = pd.to_numeric(frame["year"], errors="raise").astype("int64")
         frame["value"] = pd.to_numeric(frame["value"], errors="raise")
-        frame["source_file"] = workbook.name
+        frame["source_sheet"] = sheet_name
+        # Excel is 1-indexed and the header occupies one row, so pandas index 0
+        # is spreadsheet row _HEADER_ROW + 2.
+        frame["source_row"] = frame.index.to_series().add(self._HEADER_ROW + 2).to_numpy()
         return frame

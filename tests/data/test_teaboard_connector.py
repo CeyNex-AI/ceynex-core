@@ -57,3 +57,8 @@ def test_teaboard_connector_stages_and_maps_total_exports(tmp_path: Path) -> Non
     fact_trade = connector.to_fact_trade(raw)
     assert fact_trade["export_volume"].tolist() == [245787000, 257440000]
     assert fact_trade["volume_unit"].tolist() == ["kg", "kg"]
+    assert fact_trade["publisher"].tolist() == ["Tea Exporters Association"] * 2
+    assert fact_trade["workbook_file"].tolist() == [workbook.name] * 2
+    assert fact_trade["source_sheet"].tolist() == ["Exports"] * 2
+    assert fact_trade["source_row"].tolist() == [5, 6]
+    assert fact_trade["workbook_sha256"].str.len().tolist() == [64, 64]
