@@ -40,6 +40,7 @@ from ceynex.orchestrator.confidence import (
     confidence_band,
 )
 from ceynex.orchestrator.grounding import corpus_texts, ungrounded_figures
+from ceynex.orchestrator.router import asks_only_about_the_past, named_years
 from ceynex.settings import citations_enabled
 
 log = logging.getLogger(__name__)
@@ -264,8 +265,17 @@ async def merge(  # noqa: ANN001
     # confidence route too: a routed agent that chose not to answer is neither a
     # contributor nor a coverage failure, so coverage_penalty must not fire for
     # it.
+    #
+    # That rule assumes the real finding answered the question. It did not when
+    # "How did tea export value change between 2023 and 2025?" was answered only
+    # by a 2026 forecast (live 2026-10-02): the decline was the honest part, and
+    # dropping it left the forecast's own 0.90 as the score of an answer saying
+    # the 2023-2025 figures were not available. When the contributing evidence
+    # covers none of the past years asked about, the declines stay in the score
+    # and the coverage penalty applies.
+    period_missed = bool(contributing) and _misses_the_asked_period(state["query"], contributing)
     scored_outputs, scored_route, evidence_outputs = outputs, route, succeeded
-    if contributing and declined:
+    if contributing and declined and not period_missed:
         scored_outputs = {n: o for n, o in outputs.items() if n not in declined}
         scored_route = [n for n in route if n not in declined]
         evidence_outputs = contributing
@@ -287,6 +297,7 @@ async def merge(  # noqa: ANN001
             relevance=relevance,
             months_since_latest_observation=_staleness_months(state),
             dq_severities=list(dq_severities) + _dq_severities_from_evidence(evidence),
+            period_missed=period_missed,
         )
     )
     # Kept, not recomputed: the number shown and the working shown beside it come
@@ -540,6 +551,29 @@ def _describe_gaps(
     for agent in sorted(never_reported):
         gaps.append(f"{_topic_of(agent)} did not return in time")
     return gaps
+
+
+def _misses_the_asked_period(query: str, contributing: dict[AgentName, AgentOutput]) -> bool:
+    """True when the question names only past years and the dated evidence the
+    contributing agents returned covers none of them.
+
+    A period such as "2022-2023" covers every year from its first to its last.
+    Evidence with no year in its period says nothing either way, so when no
+    evidence is dated at all this returns False: an undated answer is not
+    assumed to be about the wrong years.
+    """
+    if not asks_only_about_the_past(query):
+        return False
+    asked = named_years(query)
+    spans = [
+        (min(years), max(years))
+        for output in contributing.values()
+        for item in output.get("evidence", [])
+        if (years := named_years(item.get("period") or ""))
+    ]
+    if not spans:
+        return False
+    return not any(low <= year <= high for low, high in spans for year in asked)
 
 
 def _split_succeeded(

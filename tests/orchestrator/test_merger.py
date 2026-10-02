@@ -886,6 +886,81 @@ async def test_a_lone_decline_still_scores_low_and_keeps_its_reason():
     assert any(e.get("detail") == "registry/tea/export_volume" for e in result.evidence)
 
 
+# --- a finding about other years is not an answer (live 2026-10-02) ------
+
+
+async def test_a_forecast_answering_a_past_years_question_does_not_score_high():
+    """Asked how tea export value changed from 2023 to 2025, the system answered
+    with a 2026 forecast and said the 2023-2025 figures were not available, at
+    0.90. The decline is the honest part of that answer, so it stays in the
+    score, and an answer about other years is a coverage gap."""
+    outputs = _tea_forecast_and_deferral()
+    outputs["forecast"]["evidence"][0]["period"] = "2026"
+    result = await merge(
+        state(
+            query="How did Sri Lanka's tea export value change between 2023 and 2025?",
+            outputs=outputs,
+            route=["agriculture_commodity", "forecast"],
+        ),
+        FakeLLMClient(available=False),
+    )
+    assert result.confidence_breakdown["coverage"] == pytest.approx(0.15)
+    assert result.confidence == pytest.approx(0.40)
+    assert result.band == "Low"
+
+
+async def test_a_finding_that_covers_an_asked_year_keeps_the_decline_out_of_the_score():
+    """The same question answered from the trade data: evidence spanning
+    2015-2025 covers both years, so the existing rule holds."""
+    outputs = {
+        "export_analytics": output(
+            "export_analytics",
+            summary="Tea export value rose from USD 1.31bn in 2023 to USD 1.43bn in 2025.",
+            evidence=[ev("KG", "Tea export value by year.")],
+            confidence=0.82,
+        ),
+        "agriculture_commodity": _tea_forecast_and_deferral()["agriculture_commodity"],
+    }
+    outputs["export_analytics"]["evidence"][0]["period"] = "2015-2025"
+    result = await merge(
+        state(
+            query="How did Sri Lanka's tea export value change between 2023 and 2025?",
+            outputs=outputs,
+            route=["export_analytics", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+    assert result.confidence_breakdown["coverage"] == 0.0
+    assert result.confidence == pytest.approx(0.82)
+
+
+async def test_undated_evidence_is_not_assumed_to_be_about_the_wrong_years():
+    result = await merge(
+        state(
+            query="How did Sri Lanka's tea export value change between 2023 and 2025?",
+            outputs={"forecast": _tea_forecast_and_deferral()["forecast"]},
+            route=["forecast"],
+        ),
+        FakeLLMClient(available=False),
+    )
+    assert result.confidence_breakdown["coverage"] == 0.0
+
+
+async def test_a_forward_looking_question_is_not_checked_against_past_years():
+    outputs = _tea_forecast_and_deferral()
+    outputs["forecast"]["evidence"][0]["period"] = "2026"
+    result = await merge(
+        state(
+            query="Forecast tea export value for 2026",
+            outputs=outputs,
+            route=["forecast", "agriculture_commodity"],
+        ),
+        FakeLLMClient(available=False),
+    )
+    assert result.confidence_breakdown["coverage"] == 0.0
+    assert result.band == "High"
+
+
 # --- a scope difference is not a disagreement ---------------------------
 
 

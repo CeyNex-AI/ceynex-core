@@ -12,7 +12,9 @@ Formula
 
     staleness = min(0.20, 0.02 * months_since_latest_observation)
     dq        = min(0.25, 0.05 * n_material_flags + 0.10 * n_severe_flags)
-    coverage  = 0.15 if any routed agent failed or returned degraded, else 0.0
+    coverage  = 0.15 if any routed agent failed or returned degraded, or the
+                question names only past years and no evidence covers any of
+                them, else 0.0
 
     final     = clamp(0.05, 0.95, weighted - staleness - dq - coverage)
 
@@ -31,6 +33,9 @@ dq         A `dq_flag` means two sources disagree about a number the answer may
 coverage   SRS 3.4.3 requires saying which part of a question could not be
            answered. A partial answer is still useful, but it is not as
            trustworthy as a complete one, and the score should show that.
+           An answer about other years is the same gap: asked how tea export
+           value changed from 2023 to 2025, a 2026 forecast is a real finding
+           but not an answer (live 2026-10-02, scored 0.90 before this).
 clamp      Never 0.0 (the system did answer) and never 1.0 (nothing forecast
            from historical trade data is certain). Both bounds are a deliberate
            refusal to overclaim.
@@ -95,8 +100,14 @@ def dq_penalty(severities: Iterable[str]) -> float:
 def coverage_penalty(
     route: Iterable[AgentName],
     outputs: Mapping[AgentName, AgentOutput],
+    *,
+    period_missed: bool = False,
 ) -> float:
-    """Penalise when a routed agent failed, degraded, or never reported at all."""
+    """Penalise when a routed agent failed, degraded, or never reported at all,
+    or when the evidence covers none of the past years the question asked about
+    (`period_missed`, decided by the merger, which holds the evidence)."""
+    if period_missed:
+        return COVERAGE_PENALTY
     for agent in route:
         output = outputs.get(agent)
         if output is None or output.get("error") or output["degraded"]:
@@ -110,10 +121,17 @@ def aggregate_confidence(
     relevance: Mapping[AgentName, float] | None = None,
     months_since_latest_observation: float | None = None,
     dq_severities: Iterable[str] = (),
+    *,
+    period_missed: bool = False,
 ) -> float:
     """The single entrypoint. See the module docstring for the formula and its rationale."""
     return aggregate_confidence_breakdown(
-        outputs, route, relevance, months_since_latest_observation, dq_severities
+        outputs,
+        route,
+        relevance,
+        months_since_latest_observation,
+        dq_severities,
+        period_missed=period_missed,
     ).final
 
 
@@ -151,6 +169,8 @@ def aggregate_confidence_breakdown(
     relevance: Mapping[AgentName, float] | None = None,
     months_since_latest_observation: float | None = None,
     dq_severities: Iterable[str] = (),
+    *,
+    period_missed: bool = False,
 ) -> ConfidenceBreakdown:
     """The same computation as `aggregate_confidence`, showing its working.
 
@@ -162,7 +182,7 @@ def aggregate_confidence_breakdown(
     weighted = weighted_agent_confidence(outputs, relevance)
     staleness = staleness_penalty(months_since_latest_observation)
     dq = dq_penalty(dq_severities)
-    coverage = coverage_penalty(route, outputs)
+    coverage = coverage_penalty(route, outputs, period_missed=period_missed)
     return ConfidenceBreakdown(
         weighted=weighted,
         staleness=staleness,
