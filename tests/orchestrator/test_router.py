@@ -16,6 +16,7 @@ from ceynex.orchestrator.router import (
     NO_TOPIC_NOTE,
     ROUTER_SYSTEM,
     SCOPE_SENTENCE,
+    asks_only_about_the_past,
     keyword_route,
     llm_route,
 )
@@ -596,3 +597,80 @@ async def test_a_client_without_forget_still_routes():
 
     decision = await llm_route(KNITWEAR, Plain())
     assert decision.route == ["apparel_manufacturing"]
+
+
+# --- a past period is history, not a forecast (found live 2026-10-02) -----
+
+_FORECAST_INSTEAD_OF_HISTORY = (
+    '{"route": ["agriculture_commodity", "forecast"], "sectors": ["agriculture"], '
+    '"relevance": {"agriculture_commodity": 1.0, "forecast": 0.8}, "out_of_scope": false, '
+    '"reason": "asks about export value"}'
+)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "How did Sri Lanka's rubber export value change between 2023 and 2025?",
+        "What was the change in Sri Lanka's cinnamon export value from 2020 to 2025?",
+        "Did Sri Lanka's coconut export value grow between 2022 and 2025?",
+        "How much did tea export earnings fall or rise from 2024 to 2025?",
+        "Compare Sri Lanka's tea export value in 2023 and 2025.",
+    ],
+)
+async def test_a_question_about_past_years_is_routed_to_history_not_the_forecast(query):
+    """gpt-4o-mini sent these to forecast, and each answer called the recorded
+    2023-2025 values "not available" beside a 2026 projection, at 0.80-0.90
+    confidence. The years are all over, so the history agent answers instead."""
+    decision = await llm_route(query, FakeLLMClient(response=_FORECAST_INSTEAD_OF_HISTORY))
+    assert "forecast" not in decision.route
+    assert decision.route == ["export_analytics", "agriculture_commodity"]
+    assert decision.relevance["export_analytics"] == 0.8
+    assert decision.method == "llm"
+    assert decision.notes == []
+
+
+async def test_the_correction_keeps_export_analytics_relevance_when_already_routed():
+    llm = FakeLLMClient(
+        response='{"route": ["apparel_manufacturing", "export_analytics", "forecast"], '
+        '"sectors": ["apparel"], "relevance": {"apparel_manufacturing": 1.0, '
+        '"export_analytics": 0.9, "forecast": 0.4}}'
+    )
+    decision = await llm_route(
+        "How did knitted apparel export value change between 2023 and 2025?", llm
+    )
+    assert decision.route == ["export_analytics", "apparel_manufacturing"]
+    assert decision.relevance["export_analytics"] == 0.9
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What will tea export value be in 2099?",
+        "Tea export value in 2099",
+        "What is the projected tea export value for 2025?",
+        "Forecast tea exports for 2024",
+        "what if tariffs rise?",
+        "What is the outlook for cinnamon exports?",
+    ],
+)
+async def test_a_forward_looking_question_keeps_the_forecast_route(query):
+    decision = await llm_route(query, FakeLLMClient(response=_FORECAST_INSTEAD_OF_HISTORY))
+    assert decision.route == ["agriculture_commodity", "forecast"]
+
+
+@pytest.mark.parametrize(
+    ("query", "this_year", "expected"),
+    [
+        ("tea export value in 2025", 2026, True),
+        ("tea export value in 2026", 2026, False),
+        ("tea exports between 2019 and 2027", 2026, False),
+        ("tea exports since 2021", 2026, True),
+        ("tea exports next year", 2026, False),
+        ("tea exports in 2024 and what to expect ahead", 2026, False),
+        ("tea exports by market", 2026, False),
+        ("tea exports in 20250", 2026, False),
+    ],
+)
+def test_asks_only_about_the_past(query, this_year, expected):
+    assert asks_only_about_the_past(query, this_year=this_year) is expected

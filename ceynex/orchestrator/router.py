@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
+from datetime import date
 
 from ceynex.contracts import ALL_AGENTS, DEFAULT_AGENT, AgentName, Sector
 
@@ -318,6 +320,32 @@ def _any(haystack: str, needles: tuple[str, ...]) -> bool:
     return any(needle in haystack for needle in needles)
 
 
+# Forward-looking phrasings FORECAST_WORDS does not hold. Kept apart from it on
+# purpose: FORECAST_WORDS steers `keyword_route`, and these only stop
+# `asks_only_about_the_past` from overriding a route that may be right.
+FUTURE_HINTS = ("project", "upcoming", "coming year", "ahead", "anticipat")
+_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def named_years(text: str) -> list[int]:
+    """Every four-digit year (1900-2099) written in `text`."""
+    return [int(y) for y in _YEAR.findall(text)]
+
+
+def asks_only_about_the_past(query: str, *, this_year: int | None = None) -> bool:
+    """True when the question names years, every one of them already over, and
+    says nothing forward-looking.
+
+    Narrow by design: a question with no year at all ("what if tariffs rise?")
+    is left alone, because a hypothetical is legitimately forward-looking.
+    """
+    lowered = query.lower()
+    if _any(lowered, FORECAST_WORDS + FUTURE_HINTS):
+        return False
+    years = named_years(query)
+    return bool(years) and max(years) < (this_year or date.today().year)
+
+
 def _explain(
     agri: bool, apparel: bool, cross_sector: bool, sim: bool, forecast: bool, analytics: bool
 ) -> str:
@@ -458,6 +486,22 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     for agent in route:
         relevance.setdefault(agent, 1.0)
 
+    # gpt-4o-mini reads "export value" next to a year range as a projection:
+    # "How did tea export value change between 2023 and 2025?" went to
+    # forecast instead of export_analytics, and the answer said the 2023-2025
+    # data was "not available" beside a 2026 forecast, at 0.90 confidence.
+    # 5 of 6 such phrasings did this live on 2026-10-02. Applied after the
+    # cache read, so routes already cached are corrected too.
+    corrected = ""
+    if "forecast" in route and asks_only_about_the_past(query):
+        weight = relevance.pop("forecast", 1.0)
+        route = [agent for agent in route if agent != "forecast"]
+        if "export_analytics" not in route:
+            route.append("export_analytics")
+        relevance["export_analytics"] = max(relevance.get("export_analytics", 0.0), weight)
+        corrected = " [forecast replaced by export_analytics: every year asked about is past]"
+        log.info("router: %s", corrected.strip(" []"))
+
     sectors = [s for s in parsed.get("sectors", []) if s in ("agriculture", "apparel", "cross_sector", "macro")]
     out_of_scope = bool(parsed.get("out_of_scope", False))
     # ROUTER_SYSTEM tells the model to omit "agriculture"/"apparel" from
@@ -489,9 +533,16 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
         # `nothing_in_scope` means. The two only diverge in `keyword_route`,
         # which can additionally see that an excluded *word* matched.
         nothing_in_scope=no_topic_recognized,
-        reason=str(parsed.get("reason", ""))[:200],
+        reason=str(parsed.get("reason", ""))[:200] + corrected,
         notes=notes,
     )
 
 
-__all__ = ["RouteDecision", "distrust_route", "keyword_route", "llm_route"]
+__all__ = [
+    "RouteDecision",
+    "asks_only_about_the_past",
+    "distrust_route",
+    "keyword_route",
+    "llm_route",
+    "named_years",
+]
