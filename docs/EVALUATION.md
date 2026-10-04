@@ -511,7 +511,7 @@ select the annual-naïve model, its forecast interval excludes the point, or the
 checkout is dirty; recording a SHA that cannot reproduce the artifact would be
 misleading.
 
-## 4. Merge coherence — not yet measured
+## 4. Merge coherence (measured 2026-10-04, see §16)
 
 SRS 3.1.2 forbids answers that concatenate per-agent responses, and no automated
 metric can detect the failure: "The agriculture agent says X. The apparel agent
@@ -527,6 +527,8 @@ the machinery instead of the prose:
 python -m eval.coherence sheet --results results.json --out coherence_sheet.csv
 python -m eval.coherence score r1.csv r2.csv r3.csv --key coherence_sheet.key.json
 ```
+
+**Measured on 2026-10-04 with three raters; the result is §16.** What follows is the original note.
 
 **This requires three human raters and has not been run. It is now unblocked** —
 it was waiting on the two sector agents, which landed 26 Aug, and on prose
@@ -603,7 +605,7 @@ Ranked by what a marker would ask about first, not by effort:
    Under-fanning yields a confident answer to half a question.
 4. **S06's contradictory price sentence** — verify by hand, then decide whether
    anything can catch a right number on a wrong claim.
-5. **The coherence rating session** — longest lead time, needs three people.
+5. **The coherence rating session** (done 2026-10-04, §16).
 
 ---
 
@@ -1979,10 +1981,84 @@ had no timeout, no degraded answer, and no single-sector answer slower than
 8.7 s. Two timeouts in 90 is a small sample. It is also the failure mode §11
 measured at scale: 208 gpt-4o first attempts refused under 50 users.
 
-What moving merge to gpt-4o-mini costs: nothing measurable on grounding. A
-prompt-for-prompt coherence rating (RR-09, `make coherence`) has still not been
-done by people, and should include B's answers when it is. It also costs about
+What moving merge to gpt-4o-mini costs: nothing measurable on grounding. The
+coherence rating (RR-09, `make coherence`) was done on B's answers on
+2026-10-04; see §16. It also costs about
 1/16 as much per merge call.
 
 **Next, as registered:** a PR moves merge in `config/llm.yaml`, then a 50-user
 signed-in load test against production is recorded in §11.
+
+## 16. Merge coherence: three blind raters (SRS 3.1.2, RR-09)
+
+### What was rated
+
+The 30 questions in `eval/questions.yaml` were asked once each, on 2026-10-02, of
+the live system at https://ceynex.cc as a signed-in researcher. The merge role was
+on gpt-4o-mini (§15). All 30 returned, and none was degraded.
+`eval/coherence.py` turned the answers into a blind sheet: agent names were removed,
+question ids were replaced by labels A01 to A30, and the rows were shuffled under
+the fixed seed. Three raters scored each answer independently on the 1 to 5 rubric:
+
+- 5 = one answer;
+- 4 = mostly unified;
+- 3 = stitched;
+- 2 = listed;
+- 1 = concatenated.
+
+Two raters are team members, so they are not independent of the system. That is a
+limit of this measurement.
+
+The data is in `eval_runs/coherence/`. It holds the three ratings with comments, the
+label key and the output of `score`.
+
+### Result
+
+| | Value |
+|---|---:|
+| Answers rated by all three raters | 30 of 30 |
+| Mean / median coherence | **3.59 / 4** |
+| Answers with a mean above 3 (better than "stitched") | 20 of 30 |
+| Answers with a mean of 4 or more | 12 of 30 |
+| Answers with a mean of 2 or less ("listed" or worse) | 2 of 30 (M04, X04) |
+| Multi-agent answers only (2 or more agents, n = 25) | mean 3.45 |
+| Rater means | 3.43 / 3.90 / 3.43 |
+| Agreement: Krippendorff's alpha (interval) | 0.64 |
+| Agreement: quadratic-weighted kappa, rater pairs | 0.44 / 0.90 / 0.49 |
+| All three raters identical / within one point | 11 / 24 of 30 |
+
+| By category | n | mean | | By agents used | n | mean |
+|---|---:|---:|---|---|---:|---:|
+| single-sector | 12 | 3.78 | | 0 (scope decline) | 1 | 4.67 |
+| simulation | 6 | 3.50 | | 1 | 4 | 4.17 |
+| cross-sector | 12 | 3.44 | | 2 | 13 | 3.62 |
+| | | | | 3 | 11 | 3.18 |
+| | | | | 4 | 1 | 4.33 |
+
+Disputed answers (the raters' scores differ by 2 or more): A09, A10, A12, A23, A29,
+A30. Raters 1 and 3 agree closely; rater 2 is about half a point more lenient
+across the board, which is where most of the disagreement comes from.
+
+### What it says
+
+**The merge produces one answer, not per-agent answers.** No answer is pasted
+together agent by agent, and two answers in thirty fall to "listed" or worse.
+FR-ORC-04 is met in form.
+
+**Its quality falls as agents are added.** One-agent answers average 4.17 and
+three-agent answers 3.18. The raters' comments name one recurring defect: a
+comparison question where one side has no data. The answer opens with a verdict,
+then the no-data finding is appended, and it contradicts the verdict.
+- **X04** (rated 1, 3, 1) says tea is the most concentrated sector, then that
+  apparel is more concentrated, then that the sectors cannot be compared.
+- **A12/X07** calls a fall from USD 2.54 bn to 1.88 bn a "rebound".
+- **A27/X08** states the same "cannot compare" point twice, either side of an
+  inserted apparel sentence.
+
+These are grounded answers, and every figure in them is real. The fault is in how
+the merge orders and reconciles the findings, which no automated check measures.
+
+**Next, if it is taken up:** when one side of a comparison has no data, the merge
+prompt should state that limit first and should not offer a verdict. Then re-rate
+the multi-agent subset under the same rubric.
+

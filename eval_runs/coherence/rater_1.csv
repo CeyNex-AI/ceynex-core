@@ -1,0 +1,31 @@
+label,rating_1_to_5,comment
+A01,5,
+A02,3,"Seam at 'However, in 2024...': the 2025 knitted figures (US USD 1.15bn) sit next to the 2024 all-apparel top-5 list (US USD 1.88bn) and the clash is pointed out but never resolved. 'Other notable markets' is taken from the 2024 list."
+A03,4,"Framed as a comparison throughout ('In contrast', price caveat), but the two sides are on different bases (cinnamon 2025 total vs apparel 2024 to-USA only)."
+A04,3,Growth answer plus loosely appended facts (Mexico share). The last sentence about producing districts has nothing to do with the question and is tacked on with 'However'.
+A05,4,"The 2024 US-only apparel figure is a different series, but it is tied in with a reasoned conclusion ('This indicates...')."
+A06,3,"Croatia answer, then two market sentences from different datasets with conflicting US figures (2025 knit vs 2024 all-apparel), placed side by side. The final sentence ties back to Croatia."
+A07,5,
+A08,3,Two apparel sentences from different datasets give two different US figures next to each other. The missing agriculture data is linked in with 'However/Therefore'.
+A09,1,"Four separate statements with no connectives. Sentence 1 gives a figure on the cinnamon baseline, and sentence 2 says the cinnamon impact is not available. The producer-price and exchange-rate sentences are unrelated add-ons."
+A10,2,"A tea profile and an apparel fact are listed, and only then comes the decline. The final 'no compatible price, volume or export-value series' line reads like another agent's output."
+A11,4,"Coherent decline plus nearest forecast. The final scope boilerplate ('limited to agriculture and apparel') doesn't fit, since tea is in scope."
+A12,2,"The opening verdict (apparel recovered faster) is cancelled by the closing sentence (no agriculture data, impossible to compare)."
+A13,5,
+A14,4,"A single templated decline with no stitching. But 'does not name anything CeyNex covers' sits oddly against a question that names tea, so it reads canned."
+A15,4,The GSP+ impact and its basis flow together. The top-5 markets sentence is appended with no link to GSP+.
+A16,3,The 2026 forecast is interrupted by an unrelated 2024 top-5 markets list. The closing '2025 forecast' decline doesn't match 'next two years'.
+A17,5,
+A18,4,"The decline is woven in well. The last sentence (export markets, Mexico) is appended with no bridge to district production."
+A19,5,
+A20,5,
+A21,3,The tea growth block (plus Iraq aside) is set against an apparel market list rather than apparel growth. The halves are different kinds of data joined by 'In contrast'.
+A22,4,"Describes the price movement. The exchange-rate sentence is a light seam, bridged by 'may provide context'."
+A23,2,"Gives a revenue figure, then the closing sentence says the knitted-apparel revenue impact could not be determined. 'Currency depreciation' appears from nowhere, as if from another scenario."
+A24,3,"Rubber profile and apparel top-5 list bridged by 'This indicates...', but the final sentence says a direct comparison can't be made, which undercuts the conclusion just drawn."
+A25,4,Tries to reconcile the 2025 knit vs 2024 US figures and closes with a tying conclusion. The CAGR sentence is tangential.
+A26,4,Forecast thread holds. The last sentence (no 2024/2025 figures) is a misplaced decline for a 'next three years' question.
+A27,2,"The decline is stated, then the apparel half appears after it ('In contrast'), and then the same decline is repeated. The apparel 'projection' is a 2024 top-5 sum."
+A28,4,"Clear thesis, evidence, contrast and conclusion. The conclusion drifts from the opening claim (export base diversifying) to a static tea-vs-apparel comparison."
+A29,2,"Opens with 'apparel is more dependent on the EU', then concludes a direct comparison cannot be made, so the verdict and the conclusion contradict."
+A30,1,"The verdict flips twice: tea is most concentrated, then apparel is more concentrated, then the sectors can't be compared. 'Despite this concentration... diversified' also contradicts itself within one sentence."

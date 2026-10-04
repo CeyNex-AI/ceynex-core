@@ -1,0 +1,386 @@
+{
+  "raters": 3,
+  "answers_rated": 30,
+  "mean_coherence": 3.59,
+  "median_coherence": 4.0,
+  "stdev": 1.05,
+  "mean_spread_between_raters": 0.83,
+  "answers_rated_3_or_below": 10,
+  "disputed_answers": [
+    "A09",
+    "A10",
+    "A12",
+    "A23",
+    "A29",
+    "A30"
+  ],
+  "per_answer": [
+    {
+      "label": "A01",
+      "question_id": "M03",
+      "scores": [
+        5,
+        5,
+        5
+      ],
+      "mean": 5.0,
+      "spread": 0
+    },
+    {
+      "label": "A02",
+      "question_id": "S07",
+      "scores": [
+        3,
+        3,
+        2
+      ],
+      "mean": 2.67,
+      "spread": 1
+    },
+    {
+      "label": "A03",
+      "question_id": "X05",
+      "scores": [
+        4,
+        4,
+        3
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A04",
+      "question_id": "S02",
+      "scores": [
+        3,
+        4,
+        4
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A05",
+      "question_id": "S08",
+      "scores": [
+        4,
+        4,
+        4
+      ],
+      "mean": 4.0,
+      "spread": 0
+    },
+    {
+      "label": "A06",
+      "question_id": "S09",
+      "scores": [
+        3,
+        3,
+        3
+      ],
+      "mean": 3.0,
+      "spread": 0
+    },
+    {
+      "label": "A07",
+      "question_id": "M01",
+      "scores": [
+        5,
+        5,
+        5
+      ],
+      "mean": 5.0,
+      "spread": 0
+    },
+    {
+      "label": "A08",
+      "question_id": "X03",
+      "scores": [
+        3,
+        4,
+        4
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A09",
+      "question_id": "M04",
+      "scores": [
+        1,
+        3,
+        2
+      ],
+      "mean": 2.0,
+      "spread": 2
+    },
+    {
+      "label": "A10",
+      "question_id": "M06",
+      "scores": [
+        2,
+        4,
+        2
+      ],
+      "mean": 2.67,
+      "spread": 2
+    },
+    {
+      "label": "A11",
+      "question_id": "S12",
+      "scores": [
+        4,
+        4,
+        4
+      ],
+      "mean": 4.0,
+      "spread": 0
+    },
+    {
+      "label": "A12",
+      "question_id": "X07",
+      "scores": [
+        2,
+        4,
+        2
+      ],
+      "mean": 2.67,
+      "spread": 2
+    },
+    {
+      "label": "A13",
+      "question_id": "X09",
+      "scores": [
+        5,
+        4,
+        4
+      ],
+      "mean": 4.33,
+      "spread": 1
+    },
+    {
+      "label": "A14",
+      "question_id": "X11",
+      "scores": [
+        4,
+        5,
+        5
+      ],
+      "mean": 4.67,
+      "spread": 1
+    },
+    {
+      "label": "A15",
+      "question_id": "M02",
+      "scores": [
+        4,
+        3,
+        4
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A16",
+      "question_id": "S10",
+      "scores": [
+        3,
+        3,
+        3
+      ],
+      "mean": 3.0,
+      "spread": 0
+    },
+    {
+      "label": "A17",
+      "question_id": "X12",
+      "scores": [
+        5,
+        5,
+        5
+      ],
+      "mean": 5.0,
+      "spread": 0
+    },
+    {
+      "label": "A18",
+      "question_id": "S04",
+      "scores": [
+        4,
+        3,
+        4
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A19",
+      "question_id": "S01",
+      "scores": [
+        5,
+        5,
+        5
+      ],
+      "mean": 5.0,
+      "spread": 0
+    },
+    {
+      "label": "A20",
+      "question_id": "S03",
+      "scores": [
+        5,
+        4,
+        5
+      ],
+      "mean": 4.67,
+      "spread": 1
+    },
+    {
+      "label": "A21",
+      "question_id": "X01",
+      "scores": [
+        3,
+        4,
+        3
+      ],
+      "mean": 3.33,
+      "spread": 1
+    },
+    {
+      "label": "A22",
+      "question_id": "S06",
+      "scores": [
+        4,
+        4,
+        3
+      ],
+      "mean": 3.67,
+      "spread": 1
+    },
+    {
+      "label": "A23",
+      "question_id": "M05",
+      "scores": [
+        2,
+        4,
+        2
+      ],
+      "mean": 2.67,
+      "spread": 2
+    },
+    {
+      "label": "A24",
+      "question_id": "X10",
+      "scores": [
+        3,
+        4,
+        3
+      ],
+      "mean": 3.33,
+      "spread": 1
+    },
+    {
+      "label": "A25",
+      "question_id": "S11",
+      "scores": [
+        4,
+        4,
+        4
+      ],
+      "mean": 4.0,
+      "spread": 0
+    },
+    {
+      "label": "A26",
+      "question_id": "S05",
+      "scores": [
+        4,
+        4,
+        4
+      ],
+      "mean": 4.0,
+      "spread": 0
+    },
+    {
+      "label": "A27",
+      "question_id": "X08",
+      "scores": [
+        2,
+        3,
+        2
+      ],
+      "mean": 2.33,
+      "spread": 1
+    },
+    {
+      "label": "A28",
+      "question_id": "X06",
+      "scores": [
+        4,
+        4,
+        4
+      ],
+      "mean": 4.0,
+      "spread": 0
+    },
+    {
+      "label": "A29",
+      "question_id": "X02",
+      "scores": [
+        2,
+        4,
+        2
+      ],
+      "mean": 2.67,
+      "spread": 2
+    },
+    {
+      "label": "A30",
+      "question_id": "X04",
+      "scores": [
+        1,
+        3,
+        1
+      ],
+      "mean": 1.67,
+      "spread": 2
+    }
+  ],
+  "by_category": {
+    "cross_sector": {
+      "n_answers": 12,
+      "mean": 3.44
+    },
+    "simulation": {
+      "n_answers": 6,
+      "mean": 3.5
+    },
+    "single_sector": {
+      "n_answers": 12,
+      "mean": 3.78
+    }
+  },
+  "by_agent_count": {
+    "0": {
+      "n_answers": 1,
+      "mean": 4.67
+    },
+    "1": {
+      "n_answers": 4,
+      "mean": 4.17
+    },
+    "2": {
+      "n_answers": 13,
+      "mean": 3.62
+    },
+    "3": {
+      "n_answers": 11,
+      "mean": 3.18
+    },
+    "4": {
+      "n_answers": 1,
+      "mean": 4.33
+    }
+  },
+  "unrated_labels": []
+}

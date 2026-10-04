@@ -1,0 +1,282 @@
+{
+  "source": "live_results_2026-10-02.json",
+  "run_at": "2026-10-02T05:29:27.253477+00:00",
+  "key": {
+    "A01": {
+      "id": "M03",
+      "category": "simulation",
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A02": {
+      "id": "S07",
+      "category": "single_sector",
+      "agents_used": [
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A03": {
+      "id": "X05",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A04": {
+      "id": "S02",
+      "category": "single_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A05": {
+      "id": "S08",
+      "category": "single_sector",
+      "agents_used": [
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A06": {
+      "id": "S09",
+      "category": "single_sector",
+      "agents_used": [
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A07": {
+      "id": "M01",
+      "category": "simulation",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A08": {
+      "id": "X03",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A09": {
+      "id": "M04",
+      "category": "simulation",
+      "agents_used": [
+        "agriculture_commodity",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A10": {
+      "id": "M06",
+      "category": "simulation",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A11": {
+      "id": "S12",
+      "category": "single_sector",
+      "agents_used": [
+        "forecast"
+      ],
+      "degraded": false
+    },
+    "A12": {
+      "id": "X07",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A13": {
+      "id": "X09",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A14": {
+      "id": "X11",
+      "category": "cross_sector",
+      "agents_used": [],
+      "degraded": false
+    },
+    "A15": {
+      "id": "M02",
+      "category": "simulation",
+      "agents_used": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A16": {
+      "id": "S10",
+      "category": "single_sector",
+      "agents_used": [
+        "apparel_manufacturing",
+        "forecast"
+      ],
+      "degraded": false
+    },
+    "A17": {
+      "id": "X12",
+      "category": "cross_sector",
+      "agents_used": [
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A18": {
+      "id": "S04",
+      "category": "single_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A19": {
+      "id": "S01",
+      "category": "single_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A20": {
+      "id": "S03",
+      "category": "single_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A21": {
+      "id": "X01",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A22": {
+      "id": "S06",
+      "category": "single_sector",
+      "agents_used": [
+        "agriculture_commodity"
+      ],
+      "degraded": false
+    },
+    "A23": {
+      "id": "M05",
+      "category": "simulation",
+      "agents_used": [
+        "apparel_manufacturing",
+        "trade_economics"
+      ],
+      "degraded": false
+    },
+    "A24": {
+      "id": "X10",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A25": {
+      "id": "S11",
+      "category": "single_sector",
+      "agents_used": [
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A26": {
+      "id": "S05",
+      "category": "single_sector",
+      "agents_used": [
+        "forecast"
+      ],
+      "degraded": false
+    },
+    "A27": {
+      "id": "X08",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "forecast"
+      ],
+      "degraded": false
+    },
+    "A28": {
+      "id": "X06",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A29": {
+      "id": "X02",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    },
+    "A30": {
+      "id": "X04",
+      "category": "cross_sector",
+      "agents_used": [
+        "agriculture_commodity",
+        "apparel_manufacturing",
+        "export_analytics"
+      ],
+      "degraded": false
+    }
+  }
+}
