@@ -221,18 +221,16 @@ One thing that *does* exist between a load test and a real outage: the SRS
 3.4.6 rate limiter caps any single caller at 30 queries/minute, so the
 50-concurrent-user figure is about 50 distinct users, not one script.
 
-## Merge coherence not yet rated
+## Merge coherence: rated 2026-10-04, one weakness left
 
-`eval/coherence.py` builds the blind rating sheets and scores them. It needs
-three human raters and the session has not happened, so SRS 3.1.2's "one
-coherent answer, not a list of per-agent responses" is currently supported by
-the merger's design and its unit tests, not by a measurement.
+**Rated by three blind raters on 2026-10-04 (EVALUATION.md §16).** The 30 live
+answers, merged on gpt-4o-mini, average 3.59/5 (median 4); 20 of 30 score above
+"stitched", and no answer is pasted together agent by agent. So FR-ORC-04 holds.
 
-**Now unblocked and now the longest-lead item.** It was waiting on the two
-sector agents (landed 26 Aug) and on prose generation being on (it is). Rating
-prose the LLM never wrote would have measured the deterministic composer, which
-is not what SRS 3.1.2 is about. Everything else outstanding is a command; this
-one needs three people's calendars, so book it before writing anything else.
+**What is still open:** three-agent answers average 3.18. When one side of a
+comparison has no data, the merged answer gives a verdict and then contradicts
+it (X04, X07, X08). The fix is in the merge prompt, and it then needs a re-rating
+of the multi-agent subset.
 
 ## Audit logging (SRS 3.4.7) — administrative half now built
 
