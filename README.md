@@ -334,4 +334,4 @@ Full method and history: [`docs/EVALUATION.md`](docs/EVALUATION.md).
 | Thisen Ekanayake (230170B) | Core systems, orchestrator, policy retrieval, news and web search, infrastructure |
 | Dhinanjaya Fernando (230181J) | Apparel data and agent, forecasting models, evaluation and judge, front end, RBAC, security and load testing |
 
-Supervisor: Dr. Chathuranga Hettiarachchi, University of Moratuwa.
+Supervisor: Dr. Chathuranga Hettiarachchi. Teaching Assistant: Birunthaban Rajendram. University of Moratuwa.
