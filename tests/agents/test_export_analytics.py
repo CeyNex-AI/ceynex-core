@@ -368,3 +368,46 @@ def test_growth_is_measured_over_the_span_the_question_named():
 
     assert out["figures"]["cagr"] == pytest.approx((1000.0 / 810.0) ** 0.5 - 1)
     assert "Between 2022 and 2024 the value grew" in out["summary"]
+
+
+# --- comparison questions (live 2026-10-05) --------------------------------
+#
+# "Which of Sri Lanka's export sectors is most concentrated?" was answered from
+# tea's figures alone and named tea, the *less* concentrated sector; "which
+# sector recovered faster, agriculture or apparel?" said agriculture had no data.
+
+
+class TwoItemKG(KG):
+    """Tea diversified, knitted apparel concentrated."""
+
+    async def run(self, cypher, params=None):
+        item = (params or {}).get("item", "")
+        if "latest_year" not in cypher and "District" not in cypher and "start_value" not in cypher \
+                and "$years" not in cypher and not ("e.year AS year" in cypher and "sum(e.value)" in cypher):
+            self.seen.append(cypher)
+            if item == "apparel_knit":
+                return [dict(MARKET_SHARE[0], share=0.9, export_value_usd=900.0),
+                        dict(MARKET_SHARE[1], share=0.1, export_value_usd=100.0)], cypher
+            return [dict(r, share=1 / 3) for r in MARKET_SHARE], cypher
+        return await super().run(cypher, params)
+
+
+def test_a_sector_comparison_reports_both_sectors():
+    out, _ = run("Which of Sri Lanka's export sectors is most concentrated in a single market?", TwoItemKG())
+
+    assert "tea_hhi" in out["figures"] and "apparel_knit_hhi" in out["figures"]
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "Tea reached" in claims and "Apparel Knit reached" in claims
+
+
+def test_the_comparison_ranks_the_sides_from_the_figures():
+    out, _ = run("Which of Sri Lanka's export sectors is most concentrated in a single market?", TwoItemKG())
+
+    ranking = next(s for s in out["summary"].split(". ") if "Ranked by destination concentration index" in s)
+    assert ranking.index("knitted apparel") < ranking.index("tea"), "the more concentrated side must rank first"
+
+
+def test_a_single_item_question_keeps_its_unprefixed_figures():
+    out, _ = run("Which country takes the largest share of Sri Lanka's tea exports?")
+
+    assert "hhi" in out["figures"] and not any(k.startswith("tea_") for k in out["figures"])

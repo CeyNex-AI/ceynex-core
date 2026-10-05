@@ -26,9 +26,13 @@ from typing import Any
 
 from ceynex.agents.common import (
     AgentDeps,
+    choose_item,
+    combine_outputs,
+    compared_items,
     evidence_from_model,
     evidence_from_query,
     finish,
+    item_label,
     parse_intent,
     readable_amount,
 )
@@ -79,6 +83,9 @@ def _baseline_confidence(observations: int) -> float:
 
 async def forecast_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     try:
+        items = compared_items(state["query"])
+        if items:
+            return await _forecast_each(state, deps, items)
         return await _forecast(state, deps)
     except KnowledgeGraphUnavailableError as exc:
         log.warning("%s: knowledge graph unavailable: %s", AGENT, exc)
@@ -94,6 +101,48 @@ async def forecast_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             "errors": [f"{AGENT}: {exc}"],
             "degraded": True,
         }
+
+
+async def _forecast_each(state: AgentState, deps: AgentDeps, items: list[str]) -> dict[str, Any]:
+    """"Forecast both tea and apparel and say which grows faster": one forecast per
+    item, and the growth comparison computed here. Live 2026-10-05 this forecast
+    tea only, and the merge guessed apparel would grow faster from export levels.
+
+    The contract carries one forecast series, so the chart shows the first item;
+    every item's forecast is in the evidence and the figures.
+    """
+    outputs = {}
+    for item in items:
+        patch = await _forecast(choose_item(state, item), deps)
+        outputs[item] = patch["agent_outputs"][AGENT]
+    growth = {}
+    for item, out in outputs.items():
+        f = out["figures"]
+        nxt = next((v for k, v in f.items() if k.startswith("forecast_next_") and not k.endswith(("_lower", "_upper"))), None)
+        last = next((v for k, v in f.items() if k.startswith("latest_actual_")), None)
+        if nxt is not None and last:
+            growth[item] = nxt / last - 1
+            out["figures"]["expected_change_pct"] = growth[item]
+    comparison = []
+    if len(growth) >= 2:
+        ranked = sorted(growth.items(), key=lambda kv: kv[1], reverse=True)
+        comparison.append(
+            "Expected change from the latest actual year to the first forecast year: "
+            + ", ".join(f"{item_label(i)} {g:+.1%}" for i, g in ranked)
+            + f". {item_label(ranked[0][0]).capitalize()} is projected to grow faster."
+        )
+    lacking = [item_label(i) for i in outputs if i not in growth]
+    if lacking:
+        comparison.append(
+            f"No growth figure could be computed for {', '.join(lacking)}, so the two cannot be "
+            "ranked on growth."
+        )
+    combined = combine_outputs(AGENT, outputs, comparison)
+    if len(outputs) > 1:
+        combined["agent_outputs"][AGENT]["assumptions"].append(
+            f"The chart shows {item_label(items[0])}; the other forecasts are in the evidence."
+        )
+    return combined
 
 
 async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
@@ -323,6 +372,14 @@ async def _registered_forecast(
         f"{prefix}_lower": round(head["lower"], 2),
         f"{prefix}_upper": round(head["upper"], 2),
     }
+    # The model's own last observation, so growth can be stated. Without it the
+    # merge said tea's "expected growth rate is not available" beside the
+    # forecast (live 2026-10-05).
+    periods, values = getattr(model, "_periods", None), getattr(model, "_values", None)
+    latest = None
+    if periods is not None and values is not None and len(values):
+        latest = (str(periods[-1])[:4], float(values[-1]))
+        figures[f"latest_actual_{model.target}"] = round(latest[1], 2)
     assumptions = [
         f"Served from the model registry: {model_id}.",
         "The registered model's own annual source series was used; no KG export-value history was substituted.",
@@ -346,6 +403,18 @@ async def _registered_forecast(
             model_id=model_id,
         ),
     ]
+    if latest is not None:
+        evidence.append(
+            evidence_from_model(
+                claim=(
+                    f"Latest actual {label} in the model's series: {latest[1]:,.2f} {model.unit} "
+                    f"in {latest[0]}, so the first forecast year is a change of "
+                    f"{head['point'] / latest[1] - 1:+.1%}."
+                ),
+                model_id=model_id,
+                period=latest[0],
+            )
+        )
     return await finish(
         agent=AGENT,
         state=state,
@@ -354,7 +423,8 @@ async def _registered_forecast(
             f"{model.item.replace('_', ' ').title()} {label} is projected at "
             f"{readable_amount(head['point'], head['unit'])} for {head['period']}, within an 80% "
             f"interval of {readable_amount(head['lower'], head['unit'])} to "
-            f"{readable_amount(head['upper'], head['unit'])}."
+            f"{readable_amount(head['upper'], head['unit'])}"
+            + (f", against {readable_amount(latest[1], head['unit'])} in {latest[0]}." if latest else ".")
         ),
         figures=figures,
         evidence=evidence,

@@ -23,10 +23,14 @@ from typing import Any
 
 from ceynex.agents.common import (
     AgentDeps,
+    choose_item,
+    combine_outputs,
+    compared_items,
     evidence_from_query,
     figures_evidence,
     find_region,
     finish,
+    item_label,
     parse_intent,
 )
 from ceynex.contracts import AgentState, Evidence, failed_output
@@ -38,13 +42,16 @@ from ceynex.orchestrator.router import named_years
 log = logging.getLogger(__name__)
 
 AGENT = "export_analytics"
-_SINCE = re.compile(r"\bsince\b", re.IGNORECASE)
+# "after 2020" is the same span to the latest data as "since 2020": X07 ("which
+# sector recovered faster after 2020") was answered with 2020's market report.
+_SINCE = re.compile(r"\b(since|after)\b", re.IGNORECASE)
 
 
 async def export_analytics_node(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     """`AgentState -> partial state`. Returns only the keys it changed."""
     try:
-        output = await _analyse(state, deps)
+        items = compared_items(state["query"])
+        output = await (_analyse_each(state, deps, items) if items else _analyse(state, deps))
     except KnowledgeGraphUnavailableError as exc:
         log.warning("%s: knowledge graph unavailable: %s", AGENT, exc)
         return {
@@ -310,6 +317,39 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence=evidence,
         assumptions=assumptions,
     )
+
+
+#: Figures two items can be compared on, with how to say which is higher.
+COMPARABLE = (
+    ("hhi", "destination concentration index", "{:.2f}"),
+    ("top_partner_share", "share taken by its largest market", "{:.1%}"),
+    ("cagr", "compound annual growth", "{:+.1%}"),
+    ("value_change_pct", "change in export value over the years asked about", "{:+.1%}"),
+    ("total_export_value_usd", "export value", "USD {:,.0f}"),
+)
+
+
+async def _analyse_each(state: AgentState, deps: AgentDeps, items: list[str]) -> dict[str, Any]:
+    """A comparison question: the full analysis once per item, then the comparison.
+
+    The comparison sentences are computed here from the figures, so the merge is
+    handed the verdict's inputs side by side and never has to infer one side.
+    """
+    outputs = {}
+    for item in items:
+        patch = await _analyse(choose_item(state, item), deps)
+        outputs[item] = patch["agent_outputs"][AGENT]
+    comparison = []
+    for key, what, fmt in COMPARABLE:
+        values = {i: o["figures"][key] for i, o in outputs.items() if key in o["figures"]}
+        if len(values) >= 2:
+            ranked = sorted(values.items(), key=lambda kv: kv[1], reverse=True)
+            listed = ", ".join(f"{item_label(i)} {fmt.format(v)}" for i, v in ranked)
+            comparison.append(f"Ranked by {what}: {listed}.")
+    missing = [item_label(i) for i, o in outputs.items() if not o["figures"]]
+    if missing:
+        comparison.append(f"No comparable figures were found for {', '.join(missing)}.")
+    return combine_outputs(AGENT, outputs, comparison)
 
 
 async def _latest_year(deps: AgentDeps, item: str) -> int:

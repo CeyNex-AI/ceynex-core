@@ -300,3 +300,34 @@ def test_the_node_never_raises_when_the_graph_is_down():
     """SAD §4.1 partial-result guarantee."""
     out = run(kg=KG(raises=RuntimeError("neo4j unreachable")))
     assert out["agent"] == AGENT
+
+
+# --- "forecast both and say which grows faster" (live 2026-10-05) ----------
+
+
+class TwoSeriesKG(KG):
+    async def run(self, cypher, params=None):
+        if "EXPORTS_TO" in cypher and "year" in cypher and (params or {}).get("item") == "apparel_knit":
+            return [{"year": y, "value": v * 10} for y, v in zip(YEARS, [300.0, 290, 280, 270, 260, 250, 240, 230, 220], strict=True)], cypher
+        return await super().run(cypher, params)
+
+
+def test_a_two_item_forecast_forecasts_both_and_ranks_growth():
+    out = run("Forecast both tea and apparel exports and say which is expected to grow faster.", TwoSeriesKG())
+
+    assert "tea_forecast_next_usd" in out["figures"] and "apparel_knit_forecast_next_usd" in out["figures"]
+    assert out["figures"]["tea_expected_change_pct"] > 0 > out["figures"]["apparel_knit_expected_change_pct"]
+    assert "Tea is projected to grow faster" in out["summary"]
+    assert out["forecast"], "the chart series is still attached"
+
+
+def test_a_registered_forecast_states_its_latest_actual():
+    frame = pd.DataFrame({"period": YEARS, "value": VALUES})
+    registry.save(
+        TimeSeriesModel(sector="agriculture", item="cinnamon").fit(frame),
+        metrics={"mape": 0.05, "rmse": 1.0, "coverage": 0.8},
+    )
+
+    out = run()
+    assert out["figures"]["latest_actual_export_value_usd"] == pytest.approx(181.0)
+    assert any("Latest actual" in e["claim"] for e in out["evidence"])
