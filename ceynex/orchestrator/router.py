@@ -518,7 +518,21 @@ async def llm_route(query: str, llm) -> RouteDecision:  # noqa: ANN001 - protoco
     # equivalent here: the LLM reports *that* something is out of scope, never
     # which word did it.
     notes: list[str] = []
-    if out_of_scope:
+    # The excluded-topic words win over the model's verdict, the same way the
+    # past-year rule above wins over its forecast choice. Live 2026-10-05, "what
+    # would a 10% rupee depreciation do to tourism revenue and apparel exports
+    # combined?" came back in scope, and when the merge prose was rejected the
+    # deterministic composer, which states only recorded gaps, answered the
+    # apparel half and never mentioned tourism. Matched at word starts, so "gem"
+    # does not fire on "management".
+    padded = f" {query.lower()} "
+    named = sorted({w.strip() for w in OUT_OF_SCOPE_WORDS if re.search(r"(?<![a-z])" + re.escape(w), padded)})
+    if named:
+        partly_in_scope = any(s in ("agriculture", "apparel", "cross_sector") for s in sectors)
+        out_of_scope = True
+        no_topic_recognized = not partly_in_scope
+        notes.append(named_out_of_scope_note(", ".join(named), partly_in_scope=partly_in_scope))
+    elif out_of_scope:
         notes.append(NO_TOPIC_NOTE if no_topic_recognized else MIXED_SCOPE_NOTE)
 
     return RouteDecision(

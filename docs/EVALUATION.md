@@ -2244,3 +2244,26 @@ five markets plus their overlap. It also sharpens rule 4a: a finding about a
 different measure is not evidence that a figure is missing, and the merge must
 never attribute a gap to "another finding". This is measured the same way
 after deploy.
+
+**After #145 (2fc001c, same set): 4/28.** S05 now gives all three forecast
+years, and X03 now names the shared markets. Of the four left:
+
+- **Genuine gaps (3).** S04 (no district data), X05 (no apparel prices), and
+  X01, which now notes that there is no apparel *volume* series. That is true,
+  and the answer still compares value growth.
+- **Still invented (1).** H64's "another finding indicates … not available"
+  persists, against the rule, on gpt-4o-mini.
+
+The run also exposed a lost gap. H69 (rupee depreciation, tourism plus apparel)
+fell back to the deterministic composer this time. The composer states only
+*recorded* gaps, and the LLM router had judged the question in scope, so
+tourism was never mentioned. #146 lets the excluded-topic word list override
+the LLM router's in-scope verdict, matching at word starts. On all four eval
+sets it fires only on unanswerable questions: X11, H25, H50, H65, H66 and H69.
+
+| Answerable answers stating a figure and a gap | Count |
+|---|---|
+| Before (548f13c) | 11 / 28 |
+| Rule 4a (#143) | 10 / 28 |
+| Explanation rule 1a (#144) | 6 / 28 |
+| Hand-over fixes (#145) | **4 / 28**, 3 of them genuine gaps |
