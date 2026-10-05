@@ -413,7 +413,9 @@ async def test_llm_route_populates_notes_for_both_out_of_scope_shapes(sectors, e
             }
         )
     )
-    decision = await llm_route("how are shipping costs affecting exporters?", llm)
+    # No excluded-topic word in the question: a named one ("shipping costs")
+    # now gets the specific note instead, the same as keyword_route.
+    decision = await llm_route("how are interest rates affecting exporters?", llm)
 
     assert decision.notes == [expected_note]
     assert "names a sector" not in decision.notes[0]
@@ -674,3 +676,28 @@ async def test_a_forward_looking_question_keeps_the_forecast_route(query):
 )
 def test_asks_only_about_the_past(query, this_year, expected):
     assert asks_only_about_the_past(query, this_year=this_year) is expected
+
+
+# --- excluded-topic words override the LLM's in-scope verdict (2026-10-05) --
+
+
+async def test_a_named_excluded_topic_is_out_of_scope_even_when_the_llm_says_otherwise():
+    llm = FakeLLMClient(
+        response='{"route": ["trade_economics", "apparel_manufacturing"], "sectors": ["apparel"], '
+        '"relevance": {"trade_economics": 1.0, "apparel_manufacturing": 1.0}, '
+        '"out_of_scope": false, "reason": "an fx simulation"}'
+    )
+    decision = await llm_route(
+        "What would a 10% rupee depreciation do to Sri Lanka's tourism revenue and apparel exports combined?", llm
+    )
+    assert decision.out_of_scope and not decision.nothing_in_scope
+    assert decision.notes and "tourism" in decision.notes[0]
+
+
+async def test_an_excluded_word_inside_another_word_does_not_fire():
+    llm = FakeLLMClient(
+        response='{"route": ["export_analytics"], "sectors": ["apparel"], "relevance": {"export_analytics": 1.0}, '
+        '"out_of_scope": false, "reason": "apparel"}'
+    )
+    decision = await llm_route("How does supply-chain management affect apparel exports?", llm)
+    assert not decision.out_of_scope and decision.notes == []
