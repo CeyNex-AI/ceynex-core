@@ -345,3 +345,18 @@ def test_base_assumptions_are_never_empty_and_name_the_shock(config):
     assumptions = shocks.base_assumptions(config, "fx", 0.05)
     assert assumptions and assumptions[0] == "Shock modelled: fx, magnitude 5.0%."
     assert te._base_assumptions(config, "fx", 0.05) == assumptions
+
+
+def test_a_demand_shock_moves_revenue_one_for_one_at_unchanged_prices():
+    out = shocks.demand_shock("apparel", BASELINE, -0.15)
+    assert out.revenue_change_usd == pytest.approx(-150_000.0)
+    assert out.price_change_pct == 0.0
+    assert out.volume_change_pct == pytest.approx(-0.15)
+    assert out.parameters == ()
+
+
+def test_losing_a_market_removes_its_purchases():
+    out = shocks.market_loss_shock("agriculture", BASELINE, 124_000.0, "IRQ")
+    assert out.revenue_change_usd == pytest.approx(-124_000.0)
+    assert out.revenue_change_pct == pytest.approx(-0.124)
+    assert "upper bound" in out.detail
