@@ -90,7 +90,11 @@ MERGE_RULES_INVIOLABLE = """1. Never write "the X agent found" or otherwise name
    which figure is which -- "USD X in 2025 on the HS-code basis, USD Y in 2024 on the
    national reporting basis" -- and move on. Never call that a discrepancy between
    sources, never present it as something the data cannot resolve, and never lead with it.
-4. If something could not be answered, say which part and why, in one clause."""
+4. If something could not be answered, say which part and why, in one clause.
+4a. A finding that says something is not available only speaks for itself. If any other
+   finding gives that figure or comparison, use it and leave the "not available" out;
+   never state a figure and then say it is unavailable. Report a gap only when no
+   finding fills it."""
 
 MERGE_RULES_PRESENTATION = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer."""

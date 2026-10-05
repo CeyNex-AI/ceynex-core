@@ -2164,3 +2164,38 @@ simulated as a rupee depreciation of the same size:
 Traceability does not establish that the right model was used. #139 adds demand
 and market-loss shocks and declines anything else. The numbers above come from
 the code before #139, and the paper discloses the error rather than re-running.
+
+## 18. Merge contradictions: labels, comparison inputs, rule 4a (2026-10-05)
+
+After #139 went live, some answers stated a figure and then said it was
+unavailable. The raters had flagged the same defect in §16. Live checks found
+three causes, and none of them was the merge model inventing anything.
+
+1. **Labels (#141).** `trade_economics` called cinnamon's revenue "Agriculture
+   export revenue" and named the lost market "IRQ". The merge model then wrote
+   that the cinnamon impact and Iraq's share were "not available". Revenue is now
+   labelled by item, and markets by name.
+2. **One side missing (#142).** `export_analytics` and `forecast` computed one
+   item per question, even for comparisons.
+   - X04 named tea as the most concentrated sector. Its HHI is 0.05, against
+     about 0.20 for knitted apparel.
+   - X07 said agriculture had no data.
+   - X08 forecast tea only, then guessed that apparel grows faster.
+
+   Each side is now computed. The ranking sentence is computed from the figures,
+   and registered forecasts state their latest actual.
+3. **A gap stated by an analysis that lacked the figure (rule 4a, this PR).** Each
+   agent's explanation prompt says "if the context lacks something, say it is not
+   available". An agent that does not cover one part of the question therefore
+   writes that the part is unavailable, and the merge model repeated that next to
+   another agent's figure:
+   - X08 said tea's growth was "not provided" after giving −4.0%;
+   - H64 had "another analysis indicates … not provided".
+
+   Rule 4a, in the inviolable block: a "not available" from one finding only
+   speaks for itself; report a gap only when no finding fills it.
+
+**After #142, before rule 4a (live, 548f13c).** X04, X07 and X08 now give the
+correct verdict with both sides' figures. X08, H64 and M04 still had a trailing
+"not available" sentence. Rule 4a is a prompt change, so §8 applies and it is
+measured live once deployed (below).

@@ -35,6 +35,10 @@ Absolute rules:
    national reporting basis" -- and move on. Never call that a discrepancy between
    sources, never present it as something the data cannot resolve, and never lead with it.
 4. If something could not be answered, say which part and why, in one clause.
+4a. A finding that says something is not available only speaks for itself. If any other
+   finding gives that figure or comparison, use it and leave the "not available" out;
+   never state a figure and then say it is unavailable. Report a gap only when no
+   finding fills it.
 5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer.
 7. You describe data. You do not give financial, legal or investment advice.'''
@@ -42,7 +46,11 @@ Absolute rules:
 
 def test_splitting_the_prompt_did_not_change_it():
     """The split is a refactor, and a prompt that changes by accident changes
-    every answer `make eval` measures. Byte-identical or it is not a refactor."""
+    every answer `make eval` measures. Byte-identical or it is not a refactor.
+
+    Changed on purpose once since: rule 4a (2026-10-05), after live answers
+    stated a figure and then called it unavailable because a second analysis
+    that lacked it said so (EVALUATION.md §18)."""
     assert MERGE_SYSTEM == ORIGINAL_MERGE_SYSTEM
 
 
