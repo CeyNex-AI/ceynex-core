@@ -710,3 +710,89 @@ def test_a_bare_coverage_question_with_no_market_is_still_answered_from_the_grap
 
     assert any(r["agreement"] in out["summary"] for r in GSP_PLUS)
     assert not out["summary"].startswith("Separately"), out["summary"]
+
+
+# --- scenarios the old `fx` default answered as a currency move (2026-10-05) --
+#
+# The held-out evaluation run found that every unrecognised scenario fell
+# through to a rupee depreciation of the same size: a 15% fall in demand was
+# reported as a 0.9% *rise* in revenue (M05), a wage rise and a district's
+# output fall came back as currency simulations (H70, H68), and a market that
+# stops buying cost 0.1% of revenue (H64) although it takes 12.4% of it.
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("If global demand for knitted apparel fell 15%, what would that do to export revenue?", "demand"),
+        ("How would a 20% fall in world rubber demand affect Sri Lanka's rubber export earnings?", "demand"),
+        ("If Iraq stopped buying Sri Lankan tea, how much export revenue would be lost?", "market_loss"),
+        ("How would losing Russia as a market affect tea exports?", "market_loss"),
+        ("How much would a 5% rise in factory wages reduce the profits of Sri Lanka's apparel exporters?",
+         "unsupported"),
+        ("If tea exports from Kandy district fell 10%, how would national tea earnings change?", "unsupported"),
+        ("Which sector should Sri Lanka prioritise for the next decade, and by how much will that raise GDP?",
+         "unsupported"),
+        ("What does Sri Lanka's National Export Strategy recommend for the apparel industry?", "policy"),
+        ("How would a 10% rupee depreciation change cinnamon export earnings?", "fx"),
+        ("Which sector would be hurt more by losing access to the United States market?", "agreement"),
+    ],
+)
+def test_a_scenario_is_classified_by_what_it_describes(query, expected):
+    from ceynex.agents.trade_economics import _classify_shock
+
+    assert _classify_shock(query) == expected
+
+
+def test_a_fall_in_demand_lowers_revenue():
+    out = asyncio.run(run("If global demand for knitted apparel fell 15%, what would that do to export revenue?", KG()))
+
+    assert out["figures"]["apparel_impact_usd"] == pytest.approx(-0.15 * BASELINE_USD)
+    assert out["figures"]["apparel_impact_pct"] == pytest.approx(-0.15)
+
+
+def test_a_rise_in_demand_raises_revenue():
+    out = asyncio.run(run("What if demand for Sri Lankan tea grew 10%?", KG()))
+
+    assert out["figures"]["agriculture_impact_pct"] == pytest.approx(0.10)
+
+
+class MarketKG(KG):
+    """Baseline plus one destination's purchases."""
+
+    def __init__(self, market_value: float | None):
+        super().__init__()
+        self._market_value = market_value
+
+    async def run(self, cypher, params=None):
+        if "partner_iso3" in (params or {}):
+            rows = [] if self._market_value is None else [{"year": 2024, "export_value_usd": self._market_value}]
+            return rows, cypher
+        return await super().run(cypher, params)
+
+
+def test_losing_a_market_costs_what_that_market_bought():
+    out = asyncio.run(run("If Iraq stopped buying Sri Lankan tea, how much export revenue would be lost?",
+                          MarketKG(124_000.0)))
+
+    assert out["figures"]["agriculture_impact_usd"] == pytest.approx(-124_000.0)
+    assert any("124,000" in e["claim"] for e in out["evidence"]), "the market's purchases are not in the evidence"
+
+
+def test_a_market_with_no_recorded_purchases_is_not_simulated():
+    out = asyncio.run(run("If Iraq stopped buying Sri Lankan tea, how much export revenue would be lost?",
+                          MarketKG(None)))
+
+    assert "agriculture_impact_usd" not in out["figures"]
+    assert any("cannot be simulated" in a for a in out["assumptions"])
+
+
+def test_an_unsupported_scenario_is_declined_without_a_figure():
+    from ceynex.orchestrator.merger import DECLINE_CONFIDENCE_CEILING
+
+    out = asyncio.run(run("How much would a 5% rise in factory wages reduce the profits of apparel exporters?", KG()))
+
+    assert out["figures"] == {}, "a declined scenario that reports an impact figure is not a decline"
+    assert out["confidence"] < DECLINE_CONFIDENCE_CEILING
+    assert "cannot be simulated" in out["summary"]
+    assert len(out["evidence"]) >= 1

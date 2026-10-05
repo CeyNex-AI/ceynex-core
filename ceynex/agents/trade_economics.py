@@ -22,6 +22,7 @@ its assumptions rather than implying a precision it does not have.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,7 +70,17 @@ SHOCK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
                    "duty free", "access to", "market access", "losing access")),
     ("tariff", ("tariff", "duty", "customs", "import tax")),
     ("fx", ("deprecia", "apprecia", "exchange rate", "rupee", "lkr", "currency", "devalu")),
+    # A buyer that stops buying. Checked after `agreement`, whose "losing access"
+    # is a preference loss rather than the market itself going away.
+    ("market_loss", ("stopped buying", "stops buying", "stop buying", "stopped importing",
+                     "stops importing", "stop importing", "as a market", "lost the market",
+                     "loses the market", "lose the market")),
+    ("demand", ("demand",)),
 )
+
+# Words that say a demand change is a fall. Anything else is read as a rise.
+DECREASE_MARKERS = ("fell", "fall", "drop", "declin", "decreas", "lower", "weak", "slump",
+                    "shrink", "contract", "collapse", " cut")
 
 # Words that posit a change. Their presence makes a question a simulation — the
 # reader is asking what *would happen*, not what the rules currently are.
@@ -102,6 +113,9 @@ DESCRIPTIVE_MARKERS = (
     "measures do", "rules of origin", "provisions", "does the", "do the ",
     "which trade agreement", "market access", "preferential access", "eligible",
     "what tariff", "which tariff", "what rate", "what duty",
+    # What a strategy document sets out. P21 ("which sectors does Italy's Export
+    # Action Plan prioritise?") matched nothing above and fell to a simulation.
+    "prioritise", "prioritize", "action plan", "export plan", "recommend",
     # Comparative forms. "How do Japan's tariffs on Sri Lankan tea compare with
     # Germany's?" asks what two schedules say; it proposes no change to either.
     # The CHANGE_MARKERS veto keeps the comparative *simulations* out -- M01
@@ -172,6 +186,14 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     if shock == "policy":
         return await _describe_policy(state, deps, intent)
 
+    if shock == "unsupported":
+        return await _decline_unsupported(state, deps, intent)
+
+    if shock == "demand":
+        lowered = state["query"].lower()
+        direction = -1.0 if any(m in lowered for m in DECREASE_MARKERS) else 1.0
+        magnitude = direction * abs(magnitude)
+
     # Which sectors the question touches. Both, unless it named one.
     sectors = _sectors_for(state, intent.item)
 
@@ -235,6 +257,34 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             # override it — that would answer a different question than the one
             # asked. Retrieved text is context here, never the input.
             outcome = _simulate_tariff(sector, baseline, magnitude, config)
+        elif shock == "demand":
+            outcome = shocks.demand_shock(sector, baseline, magnitude)
+        elif shock == "market_loss":
+            market = _destination(state["query"], intent)
+            market_value, market_cypher = None, baseline_cypher
+            if market:
+                rows, market_cypher = await deps.kg.run(
+                    *q.export_value_by_year(item, market, [baseline_year])
+                )
+                market_value = float(rows[0]["export_value_usd"]) if rows else None
+            if market_value is None:
+                assumptions.append(
+                    f"No {baseline_year} exports of {item} to "
+                    f"{market or 'the market named'} are recorded, so the loss of that "
+                    "market cannot be simulated. Reporting this rather than a number."
+                )
+                continue
+            outcome = shocks.market_loss_shock(sector, baseline, market_value, market)
+            evidence.append(
+                evidence_from_query(
+                    claim=(
+                        f"{market} bought USD {market_value:,.0f} of Sri Lanka's {item} exports "
+                        f"in {baseline_year}."
+                    ),
+                    cypher=market_cypher,
+                    period=str(baseline_year),
+                )
+            )
         else:
             outcome = _simulate_fx(sector, baseline, magnitude, config)
 
@@ -349,7 +399,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             + (", workbench override" if p.overridden else "")
             + ")"
             for p in outcome.parameters
-        )
+        ) or "no elasticity: the question supplies the volume change"
         evidence.append(
             evidence_from_model(
                 claim=detail,
@@ -780,12 +830,16 @@ def _policy_evidence(
 
 def _posits_a_change(query: str) -> bool:
     """Does the question ask what *would happen*, rather than what the rules are?"""
+    # Matched at the start of a word: "end " is a change marker, and as a bare
+    # substring it also matched "recommend for", which turned "what does the
+    # National Export Strategy recommend for the apparel industry?" (P23) into a
+    # simulation.
     lowered = query.lower()
-    return any(marker in lowered for marker in CHANGE_MARKERS)
+    return any(re.search(r"(?<![a-z])" + re.escape(marker), lowered) for marker in CHANGE_MARKERS)
 
 
 def _classify_shock(query: str) -> str:
-    """`policy` | `agreement` | `tariff` | `fx`.
+    """`policy` | `agreement` | `tariff` | `fx` | `market_loss` | `demand` | `unsupported`.
 
     The descriptive check runs first and is the only one that can veto the
     others: "what non-tariff measures does the EU apply" contains "tariff" and is
@@ -795,6 +849,13 @@ def _classify_shock(query: str) -> str:
 
     Text only. Whether a tariff question actually carries a rate to simulate with
     is `_simulate`'s call, because that is where the parsed intent lives.
+
+    **Nothing matched means `unsupported`, not `fx`.** The old `fx` default
+    answered every unrecognised scenario with a rupee depreciation of the same
+    size: on the 2026-10-05 held-out run a 5% rise in factory wages (H70) and a
+    10% fall in one district's tea exports (H68) both came back as currency
+    simulations, with confident, traceable and irrelevant figures. A scenario the
+    agent cannot model is declined instead (see `_decline_unsupported`).
     """
     lowered = query.lower()
     if any(marker in lowered for marker in DESCRIPTIVE_MARKERS) and not _posits_a_change(query):
@@ -802,7 +863,7 @@ def _classify_shock(query: str) -> str:
     for shock, keywords in SHOCK_KEYWORDS:
         if any(keyword in lowered for keyword in keywords):
             return shock
-    return "fx"
+    return "unsupported"
 
 
 def _destination(query: str, intent: Intent) -> str | None:
@@ -899,6 +960,50 @@ def _hs_for_item(item: str) -> str:
     two copies that can drift.
     """
     return HS_FOR_ITEM.get(item, "61")
+
+
+async def _decline_unsupported(state: AgentState, deps: AgentDeps, intent: Intent) -> dict[str, Any]:
+    """A scenario this agent has no model for: say so, and give no impact figure.
+
+    The baseline is still stated, because it is the half of the picture that is
+    known and it meets the two-evidence floor, but nothing is shocked. Confidence
+    sits below `merger.DECLINE_CONFIDENCE_CEILING`, so the merger reports the
+    scenario under "could not be answered" instead of weaving it in.
+    """
+    evidence: list[Evidence] = []
+    for sector in _sectors_for(state, intent.item):
+        item = _representative_item(sector, intent.item)
+        baseline, baseline_year, cypher = await baseline_value(deps.kg, item)
+        if baseline is None:
+            continue
+        evidence.append(
+            evidence_from_query(
+                claim=(
+                    f"{sector.title()} exports of {item} were USD {baseline:,.0f} in "
+                    f"{baseline_year}; this is the baseline a supported scenario would move."
+                ),
+                cypher=cypher,
+                period=str(baseline_year),
+            )
+        )
+    return await finish(
+        agent=AGENT,
+        state=state,
+        deps=deps,
+        summary=(
+            "This scenario cannot be simulated. CeyNex models changes in the exchange rate, "
+            "import tariffs, the loss of a trade preference, a change in foreign demand, and "
+            "the loss of a destination market; the question describes none of these, so no "
+            "impact figure is given."
+        ),
+        figures={},
+        evidence=evidence,
+        assumptions=[
+            "No simulation was run: the scenario is outside the shocks the model covers "
+            "(exchange rate, tariff, preference loss, demand change, market loss)."
+        ],
+        confidence=0.20,
+    )
 
 
 async def baseline_value(kg: Any, item: str) -> tuple[float | None, int | None, str]:

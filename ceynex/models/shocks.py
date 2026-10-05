@@ -331,6 +331,43 @@ def describe_config_rate(rate: Parameter) -> str:
     )
 
 
+def demand_shock(sector: str, baseline: float, change: float) -> ShockOutcome:
+    """A shift in foreign demand for the product, at unchanged prices.
+
+    Volume moves by the stated change and the price is held, so revenue moves one
+    for one. No elasticity is involved: the question supplies the volume move
+    itself. Holding the price ignores any price softening, and the detail says so.
+
+    Before this existed, a demand question fell through to the `fx` default and
+    was simulated as a rupee depreciation of the same size, which reported a 15%
+    fall in demand for knitted apparel as a 0.9% *rise* in revenue (M05,
+    measured 2026-10-05). Not in `SHOCKS`: the scenario workbench does not offer
+    it, so there is no slider to keep in parity.
+    """
+    detail = (
+        f"{sector}: a {change * 100:+.1f}% change in foreign demand applied to export volume at "
+        f"unchanged prices (no price response is modelled). Volume effect {change * 100:+.1f}%, "
+        "price effect +0.0%."
+    )
+    return ShockOutcome("demand", sector, baseline, baseline * change, change, 0.0, change, (), detail)
+
+
+def market_loss_shock(sector: str, baseline: float, market_value: float, market: str) -> ShockOutcome:
+    """A destination market stops buying: its purchases are lost, nothing is diverted.
+
+    The revenue at risk is what that market bought in the baseline year, from the
+    graph. Assuming no diversion to other buyers within the horizon makes this an
+    upper bound, and the detail says so. Not in `SHOCKS`, for the reason above.
+    """
+    share = market_value / baseline if baseline else 0.0
+    detail = (
+        f"{sector}: losing {market} removes its USD {market_value:,.0f} of purchases, "
+        f"{share * 100:.1f}% of the baseline, assuming no diversion to other markets within the "
+        "horizon (an upper bound)."
+    )
+    return ShockOutcome("market_loss", sector, baseline, -market_value, -share, 0.0, -share, (), detail)
+
+
 def base_assumptions(config: dict[str, Any], shock: str, magnitude: float) -> list[str]:
     """SRS 3.1.5 requires these to be stated. They must never be empty."""
     model = config.get("model", {})
@@ -355,9 +392,11 @@ __all__ = [
     "ShockOutcome",
     "agreement_loss_shock",
     "base_assumptions",
+    "demand_shock",
     "describe_config_rate",
     "describe_coverage",
     "fx_shock",
+    "market_loss_shock",
     "parameter",
     "tariff_shock",
 ]
