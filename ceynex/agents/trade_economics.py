@@ -37,6 +37,7 @@ from ceynex.agents.common import (
     parse_intent,
 )
 from ceynex.contracts import AgentState, Evidence, failed_output
+from ceynex.data.crosswalk import country_name
 from ceynex.kg import queries as q
 from ceynex.kg.client import KnowledgeGraphUnavailableError
 from ceynex.kg.queries import hs_hierarchy
@@ -269,17 +270,18 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
                 market_value = float(rows[0]["export_value_usd"]) if rows else None
             if market_value is None:
                 assumptions.append(
-                    f"No {baseline_year} exports of {item} to "
-                    f"{market or 'the market named'} are recorded, so the loss of that "
+                    f"No {baseline_year} exports of {_item_label(item)} to "
+                    f"{_market_label(market) if market else 'the market named'} are recorded, so the loss of that "
                     "market cannot be simulated. Reporting this rather than a number."
                 )
                 continue
-            outcome = shocks.market_loss_shock(sector, baseline, market_value, market)
+            outcome = shocks.market_loss_shock(sector, baseline, market_value, _market_label(market))
             evidence.append(
                 evidence_from_query(
                     claim=(
-                        f"{market} bought USD {market_value:,.0f} of Sri Lanka's {item} exports "
-                        f"in {baseline_year}."
+                        f"{_market_label(market)} bought USD {market_value:,.0f} of Sri Lanka's "
+                        f"{_item_label(item)} exports in {baseline_year}, "
+                        f"{market_value / baseline * 100:.1f}% of the total."
                     ),
                     cypher=market_cypher,
                     period=str(baseline_year),
@@ -332,6 +334,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             continue
 
         delta, pct, detail = outcome.as_tuple()
+        label = _revenue_label(sector, item, intent.item)
         figures[f"{sector}_baseline_usd"] = round(baseline, 2)
         figures[f"{sector}_impact_usd"] = round(delta, 2)
         figures[f"{sector}_impact_pct"] = round(pct, 4)
@@ -339,7 +342,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         evidence.append(
             evidence_from_query(
                 claim=(
-                    f"{sector.title()} export revenue of USD {baseline:,.0f} in {baseline_year} "
+                    f"{label} export revenue of USD {baseline:,.0f} in {baseline_year} "
                     f"is the baseline the simulation moves by {pct * 100:+.1f}%, "
                     f"USD {delta:+,.0f}."
                 ),
@@ -400,6 +403,8 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             + ")"
             for p in outcome.parameters
         ) or "no elasticity: the question supplies the volume change"
+        if detail.startswith(f"{sector}:"):
+            detail = f"{label}:" + detail[len(sector) + 1:]
         evidence.append(
             evidence_from_model(
                 claim=detail,
@@ -408,7 +413,7 @@ async def _simulate(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
             )
         )
         lines.append(
-            f"{sector.title()} export revenue would move by roughly USD {delta:+,.0f} "
+            f"{label} export revenue would move by roughly USD {delta:+,.0f} "
             f"({pct * 100:+.1f}%) from a {baseline_year} base of USD {baseline:,.0f}."
         )
 
@@ -943,6 +948,40 @@ def _sectors_for(state: AgentState, item: str | None) -> list[str]:
     if item and item in SECTOR_OF_ITEM:
         return [SECTOR_OF_ITEM[item]]
     return ["agriculture", "apparel"]
+
+
+#: How an item is written in prose. The keys are the graph's item names.
+ITEM_LABELS = {"apparel_knit": "knitted apparel", "apparel_woven": "woven apparel"}
+
+
+def _item_label(item: str) -> str:
+    return ITEM_LABELS.get(item, item.replace("_", " "))
+
+
+def _revenue_label(sector: str, item: str, requested: str | None) -> str:
+    """What the simulated revenue is, in words the merge cannot misread.
+
+    The figures used to be labelled by sector only: a cinnamon simulation was
+    "Agriculture export revenue of USD 246,648,361", and the merge, seeing no
+    cinnamon figure, wrote that "the impact on cinnamon export earnings is not
+    available" right after stating it (live, 2026-10-05). The question's own
+    item is named when it is the one simulated; when the agent stands in a
+    representative item for a whole sector, it says which.
+    """
+    name = _item_label(item)
+    if requested and item == requested:
+        return name[0].upper() + name[1:]
+    return f"{sector.title()} (measured on {name})"
+
+
+def _market_label(iso3: str) -> str:
+    """A country's name for prose. "IRQ" in the evidence read to the merge as a
+    different market from the "Iraq" in the question, and it wrote that Iraq's
+    share was unavailable right after giving it (live, 2026-10-05)."""
+    try:
+        return country_name(iso3)
+    except Exception:  # noqa: BLE001 -- an unknown code still reads as itself
+        return iso3
 
 
 def _representative_item(sector: str, requested: str | None) -> str:

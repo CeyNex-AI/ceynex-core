@@ -796,3 +796,36 @@ def test_an_unsupported_scenario_is_declined_without_a_figure():
     assert out["confidence"] < DECLINE_CONFIDENCE_CEILING
     assert "cannot be simulated" in out["summary"]
     assert len(out["evidence"]) >= 1
+
+
+# --- labels the merge reads (live 2026-10-05) ----------------------------
+#
+# Labelled by sector only, a cinnamon simulation read "Agriculture export
+# revenue of USD 246,648,361", and the merge wrote that the cinnamon impact was
+# "not available" right after stating it. An ISO3 code ("IRQ") likewise read as
+# a different market from the question's "Iraq".
+
+
+def test_a_named_item_is_labelled_as_that_item():
+    out = asyncio.run(run("How would a 10% rupee depreciation change cinnamon export earnings?", KG()))
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "Cinnamon export revenue of USD" in claims
+    assert "Agriculture export revenue" not in claims
+    assert "agriculture: FX" not in claims, "the model working still says agriculture"
+
+
+def test_a_sector_question_says_which_item_stands_in_for_it():
+    out = asyncio.run(run("How would a 5% rupee depreciation affect agriculture exports?", KG()))
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "Agriculture (measured on tea) export revenue" in claims
+
+
+def test_a_lost_market_is_named_not_coded():
+    out = asyncio.run(run("If Iraq stopped buying Sri Lankan tea, how much export revenue would be lost?",
+                          MarketKG(124_000.0)))
+
+    claims = " ".join(e["claim"] for e in out["evidence"])
+    assert "Iraq bought USD 124,000" in claims and "12.4% of the total" in claims
+    assert "IRQ" not in claims
