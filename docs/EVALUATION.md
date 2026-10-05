@@ -2062,3 +2062,105 @@ the merge orders and reconciles the findings, which no automated check measures.
 prompt should state that limit first and should not offer a verdict. Then re-rate
 the multi-agent subset under the same rubric.
 
+
+## 17. Held-out replication: 70 questions, 40 policy questions (2026-10-05)
+
+**Why.** The paper's grounding and claim results rest on the 30 questions in
+`eval/questions.yaml`, only 3 of which are unanswerable. The policy-retrieval
+result in §7 rests on 15 questions. Two held-out sets were added in #138 and
+committed in their own commit (`ac7a8e3`) before any condition was run on them:
+
+- `eval/questions_heldout.yaml`: 70 questions. 28 are single-sector, 27
+  cross-sector and 15 simulation. 18 are unanswerable, so 21 counting the
+  original 30.
+- `eval/policy_questions_heldout.yaml`: 25 questions (P16-P40), 5 of them
+  unanswerable, spread across the six indexed countries.
+
+One author wrote both sets after seeing the system's answers to the original
+questions, and both file headers say so. That is why they are reported here as
+a replication, next to the original sets, and not merged into them.
+
+**Run.** All three runs used one pass per condition, to preserve OpenAI
+credits. Each run used a private prompt cache cleared first and a private spend
+counter, inside `ceynex-api`. Scripts are in `paper/expansion_run/` (outside
+this repo).
+
+- Held-out 70: `eval.baseline --questions eval/questions_heldout.yaml`, with
+  merge on gpt-4o through a copied `CEYNEX_CONFIG_DIR`, matching the paper's
+  2026-09-30 run.
+- Original 30, re-run on the same backend, so that a difference cannot be put
+  down to code changes since 30 Sep.
+- Policy 15 + 25, retrieval off and on, on the production config.
+
+The GPT-4o claim judge was **not** run on the held-out set, so Table II stays at
+30 questions. Total cost was about $0.50.
+
+### Figure grounding: replicates
+
+| Not from the dataset | A (LLM only) | B (no guard) | C (full) | D (no LLM) |
+|---|---|---|---|---|
+| Original 30, mean of 5 (paper) | 67.9% | 0.3% | **0.0%** | 0.0% |
+| Held-out 70, 1 run | 81.2% | 0.4% | **0.0%** | 0.0% |
+| Original 30 re-run, 1 run | 50.0% | 0.6% | **0.0%** | 0.0% |
+
+Under the strict measure, C had 28.1% of its figures not in a cited record on
+the held-out set (26.1% in the paper). C's latency on the held-out set was p50
+6.3 s and p95 8.9 s.
+
+### Policy retrieval: replicates
+
+| Pooled 40, 1 run each | Retrieval off | Retrieval on |
+|---|---|---|
+| Answerable questions with no evidence | 8 / 32 | **0 / 32** |
+| Mean evidence per answerable answer | 3.09 | 4.03 |
+| Exact route match | 72.5% | 75.0% |
+
+On the held-out 25 alone the count went from 6/20 to 0/20. The automatic
+detector also scored fewer refusals with retrieval on (3/8 against 6/8). Those
+answers are in the human refusal sheet, described below.
+
+### Refusal: the automatic detector undercounts
+
+`harness.is_refusal` uses the merger's structural `unanswered` list. For
+condition A, which has no such list, it falls back to a phrase list. Reading the
+answers showed that it misses refusals on both sides:
+
+- **A in the paper.** A declined S12 ("I do not have data on Sri Lanka's tea
+  exports for the year 2035...") in **all five** repeats, but the phrase list
+  matched only one of them. The paper's "refused once in 15 attempts" is
+  therefore wrong: the true figure is 5/15. This error favoured our system, and
+  the paper has been corrected.
+- **C on the held-out set.** The detector counted 8/18 refusals. On reading:
+  - H26, H27, H28, H53 and H55 open with a plain "cannot be determined from the
+    available data";
+  - H67 and H69 answer the covered part and explicitly decline the rest;
+  - H52, H68 and H70 do not decline.
+
+The refusal figures will be taken from human labels instead. A blind sheet of
+115 answers was prepared: the 21 unanswerable questions under A, C and D, plus
+the 8 unanswerable policy questions with retrieval off and on. Two annotators
+label each answer `REFUSED`, `PARTIAL_DECLINED` or `ANSWERED` under a written
+rubric. The sheet, key and scorer are in `paper/` (`make_refusal_sheet.py`,
+`score_refusal.py`). The result will be recorded here when the sheets are back.
+
+### A correctness bug the grounding check could not see
+
+H68 and H70 are not refusal-detector misses. They are real failures, and they
+exposed a bug that also affects the paper's main set. `_classify_shock` fell
+back to `fx` for any scenario it did not recognise, so the scenario was
+simulated as a rupee depreciation of the same size:
+
+- **M05 (main set):** "global demand fell 15%" was answered as a **0.9% rise**
+  in revenue. The claim judge labelled all 10 of its C claims SUPPORTED across
+  the five repeats, because the figure is the agent's own computation.
+- **H58 and H62:** demand falls, also answered as small rises.
+- **H64:** "Iraq stopped buying" was answered as a 0.1% loss, although Iraq
+  takes 12.4% of tea exports.
+- **H68 and H70:** a district's output and a wage rise, both simulated as
+  currency moves.
+- **P21 and P23:** questions about what a strategy document says, also
+  simulated.
+
+Traceability does not establish that the right model was used. #139 adds demand
+and market-loss shocks and declines anything else. The numbers above come from
+the code before #139, and the paper discloses the error rather than re-running.
