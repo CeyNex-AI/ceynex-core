@@ -76,6 +76,100 @@ SECTOR_FALLBACK_ITEMS = {
 
 DISTRICT_WORDS = ("district", "region", "province", "grown", "produced", "producing")
 
+AGRICULTURE_ITEMS = ("tea", "cinnamon", "rubber", "coconut")
+APPAREL_ITEMS = ("apparel_knit", "apparel_woven")
+
+#: A question that compares the two sectors without naming a product in each.
+CROSS_SECTOR_WORDS = (
+    "which sector", "export sectors", "both sectors", "across sectors", "each sector",
+    "between sectors", "two sectors", "sectors",
+)
+
+
+def compared_items(query: str) -> list[str]:
+    """Every item a comparison question needs figures for, in the order it names them.
+
+    `parse_intent` resolves one item, which is right for a single-sector question
+    and wrong for a comparison. Live 2026-10-05, "which sector recovered faster
+    after 2020, agriculture or apparel?" got apparel figures only and answered
+    that agriculture had "no available data"; "forecast both tea and apparel"
+    forecast tea only and then guessed apparel would grow faster. Returns two or
+    more items for a comparison, one per sector when the question names a sector
+    rather than a product, and fewer than two otherwise, when callers keep
+    their single-item path. A reader's clarification choice always means one item.
+
+    Keywords match at the start of a word: "tea" must not match "instead".
+    """
+    lowered = query.lower()
+    if CHOSEN_MARKER.lower() in lowered:
+        return []
+
+    def at(keyword: str) -> int | None:
+        found = re.search(r"(?<![a-z])" + re.escape(keyword), lowered)
+        return found.start() if found else None
+
+    hits: list[tuple[int, str]] = []
+    for item, keywords in ITEM_KEYWORDS.items():
+        positions = [p for p in (at(k) for k in keywords) if p is not None]
+        if positions:
+            hits.append((min(positions), item))
+    for word in SECTOR_FALLBACK_ITEMS:
+        position = at(word)
+        if position is not None and not any(i in APPAREL_ITEMS for _, i in hits):
+            hits.append((position, SECTOR_FALLBACK_ITEMS[word]))
+    agriculture_word = at("agricultur")
+    if agriculture_word is not None and not any(i in AGRICULTURE_ITEMS for _, i in hits):
+        hits.append((agriculture_word, "tea"))
+    items = list(dict.fromkeys(item for _, item in sorted(hits)))
+
+    if any(at(word) is not None for word in CROSS_SECTOR_WORDS):
+        if not any(i in AGRICULTURE_ITEMS for i in items):
+            items.append("tea")
+        if not any(i in APPAREL_ITEMS for i in items):
+            items.append("apparel_knit")
+    return items if len(items) >= 2 else []
+
+
+def choose_item(state: AgentState, item: str) -> AgentState:
+    """The same question, with the reader's-choice marker naming one item.
+
+    `parse_intent` already lets a clarification choice outrank the question's
+    first item, so a per-item pass reuses that path instead of a second parser.
+    """
+    return {**state, "query": f"{state['query']} {CHOSEN_MARKER} {ITEM_KEYWORDS[item][0]}"}
+
+
+def item_label(item: str) -> str:
+    return {"apparel_knit": "knitted apparel", "apparel_woven": "woven apparel"}.get(
+        item, item.replace("_", " ")
+    )
+
+
+def combine_outputs(agent: AgentName, outputs: dict[str, AgentOutput], comparison: list[str]) -> dict[str, Any]:
+    """One agent output from per-item passes: figures keyed by item, evidence and
+    assumptions concatenated, the weakest confidence, and the comparison
+    sentences, computed from the figures here, appended to the summary."""
+    figures: dict[str, float] = {}
+    evidence: list[Evidence] = []
+    assumptions: list[str] = []
+    for item, out in outputs.items():
+        figures.update({f"{item}_{key}": value for key, value in out["figures"].items()})
+        evidence.extend(out["evidence"])
+        assumptions.extend(a for a in out["assumptions"] if a not in assumptions)
+    combined = AgentOutput(
+        agent=agent,
+        summary=" ".join([*(out["summary"] for out in outputs.values()), *comparison]),
+        figures=figures,
+        assumptions=assumptions,
+        evidence=evidence,
+        confidence=min(out["confidence"] for out in outputs.values()),
+        degraded=any(out["degraded"] for out in outputs.values()),
+    )
+    first = next(iter(outputs.values()))
+    if first.get("forecast"):
+        combined["forecast"] = first["forecast"]
+    return {"agent_outputs": {agent: combined}, "degraded": combined["degraded"]}
+
 
 WORD_NUMBERS = {
     "a": 1, "one": 1, "two": 2, "three": 3, "four": 4,

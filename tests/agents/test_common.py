@@ -13,6 +13,8 @@ figures/evidence/assumptions before trusting its explanation prose.
 
 from __future__ import annotations
 
+import pytest
+
 from ceynex.agents.common import AgentDeps, finish
 from ceynex.contracts import Evidence, new_state
 from ceynex.llm import FakeLLMClient
@@ -239,3 +241,31 @@ def test_readable_amount_scales_large_values_and_keeps_small_ones():
     assert readable_amount(-2_500_000, "USD") == "USD -2.50 million"
     assert readable_amount(305_400_000, "kg") == "305.40 million kg"
     assert readable_amount(4.56, "USD/kg") == "4.56 USD/kg"
+
+
+# --- comparison questions need every side's figures (live 2026-10-05) -----
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("Which sector recovered faster after 2020, agriculture or apparel?", ["tea", "apparel_knit"]),
+        ("Which of Sri Lanka's export sectors is most concentrated in a single market?", ["tea", "apparel_knit"]),
+        ("Compare the destination concentration of rubber and woven apparel.", ["rubber", "apparel_woven"]),
+        ("Forecast both tea and apparel exports and say which is expected to grow faster.", ["tea", "apparel_knit"]),
+        ("Which markets buy the most Sri Lankan knitted apparel?", []),
+        ("Which country takes the largest share of Sri Lanka's tea exports?", []),
+        ("How does Sri Lanka's tea sector compare with its fisheries sector?", []),
+        ("Tell me about exports instead of imports", []),
+    ],
+)
+def test_a_comparison_names_every_item_it_needs(query, expected):
+    from ceynex.agents.common import compared_items
+
+    assert compared_items(query) == expected
+
+
+def test_a_clarification_choice_is_never_a_comparison():
+    from ceynex.agents.common import CHOSEN_MARKER, compared_items
+
+    assert compared_items(f"Compare tea and apparel {CHOSEN_MARKER} tea") == []
