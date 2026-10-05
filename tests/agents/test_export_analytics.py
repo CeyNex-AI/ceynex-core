@@ -411,3 +411,12 @@ def test_a_single_item_question_keeps_its_unprefixed_figures():
     out, _ = run("Which country takes the largest share of Sri Lanka's tea exports?")
 
     assert "hhi" in out["figures"] and not any(k.startswith("tea_") for k in out["figures"])
+
+
+def test_a_comparison_lists_each_sides_top_markets_and_the_overlap():
+    """X03, "do agriculture and apparel go to the same markets?", was answered
+    "no information available" because each side handed over one market."""
+    out, _ = run("Do agriculture and apparel exports go to the same destination markets?", TwoItemKG())
+
+    assert "Top five markets for tea: United States" in out["summary"]
+    assert "Markets in the top five of every item compared: United States, United Kingdom." in out["summary"]
