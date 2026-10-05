@@ -2199,3 +2199,22 @@ three causes, and none of them was the merge model inventing anything.
 correct verdict with both sides' figures. X08, H64 and M04 still had a trailing
 "not available" sentence. Rule 4a is a prompt change, so §8 applies and it is
 measured live once deployed (below).
+
+**Rule 4a, measured live (d9642bd, 30 eval questions + H27/H64/H67/H69, one run
+each; `coherence/gap_check.py`, outside the repo).**
+
+| | Before 4a | After 4a |
+|---|---|---|
+| Answerable answers stating a figure and a "not available" sentence | 11 / 28 | 10 / 28 |
+| X08 "tea growth not provided" | present | gone |
+| H64, M04 trailing gap | present | present (reworded) |
+| Real gaps kept: H67 jobs, H69 tourism, S12/X11/X12 | yes | yes |
+| Empty answers; mean evidence | 0; 6.82 | 0; 6.82 |
+
+Rule 4a did no harm, but on gpt-4o-mini it fixed only one answer. The
+remaining gap sentences are cited to the agent that lacked the figure, so they
+are written upstream, in that agent's explanation. The explanation prompt's "if
+the context lacks something, say it is not available" is therefore replaced:
+an agent describes only what its own findings show, and gaps are stated once,
+by the merge, which sees every finding. This is measured the same way after
+deploy.

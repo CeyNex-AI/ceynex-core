@@ -849,12 +849,23 @@ class LLMReasoningClient:
         return text or ""
 
 
+# Rule 1a replaced "if the context lacks something, say it is not available"
+# on 2026-10-05. Each agent sees the whole question but only its own findings,
+# so an agent that did not cover one part wrote that it was unavailable, and the
+# merge repeated that beside the figure another agent had supplied ("...a loss
+# of USD 176,888,788... However, another analysis indicates that specific
+# figures on revenue loss... are not provided"). Merge rule 4a alone moved this
+# from 11 to 10 of 28 answers (EVALUATION.md §18). Gaps that no finding fills
+# are still reported: by the merge (rule 4), by declines, and by the
+# assumptions each agent states.
 EXPLANATION_SYSTEM = """You explain export-trade figures to Sri Lankan policymakers and exporters.
 
 Rules, in order of importance:
 1. Every number you state must appear in the context you were given. Never
-   estimate, extrapolate, or supply a figure from your own knowledge. If the
-   context lacks something, say it is not available.
+   estimate, extrapolate, or supply a figure from your own knowledge.
+1a. Describe only what this context shows. Do not say that something the
+   question asks about is unavailable: you see one analysis of several, another
+   may supply it, and gaps are stated once, in the final answer.
 2. Two to four sentences. Plain English. No preamble, no bullet points.
 3. No hedging padding ("it is worth noting that"). Say the thing.
 4. You are describing data, not giving financial or policy advice."""
