@@ -1,0 +1,558 @@
+# CeyNex HELD-OUT evaluation set: 70 questions, written 2026-10-05.
+#
+# PURPOSE. The 30-question set in `questions.yaml` is the pre-registered
+# baseline, and the paper calls it small. This file is a second, held-out set
+# used as a replication: the same four conditions (eval/baseline.py), the same
+# claim check (eval/claims.py), reported next to the 30 rather than merged into
+# them, so the original baseline stays comparable across runs.
+#
+# PRE-REGISTRATION. This file is committed on its own, BEFORE any of these
+# questions has been asked of any condition, for the reason `questions.yaml`
+# was: questions written after watching the system answer them describe it
+# instead of testing it. The git history is the evidence. Labels below
+# (`expected_route`, `answerable`) are the correct behaviour as judged when
+# writing, not the current router's behaviour. Where the system later disagrees,
+# do not edit the label; record the disagreement.
+#
+# DISCLOSURE. The author had seen system answers to the ORIGINAL 30 questions
+# while writing these, but none to these 70. No question here is a paraphrase of
+# one of the 30.
+#
+# Composition: 28 single-sector · 27 cross-sector · 15 simulation.
+#   18 of the 70 are unanswerable (6 single, 6 cross, 6 simulation), where the
+#   correct behaviour is to say so. With the original 30 that gives 21
+#   unanswerable questions in all, against 3 before.
+#
+# Unanswerable means the project's dataset cannot answer it: a year that has
+# not happened, a sector CeyNex does not cover (gems, tourism, fisheries,
+# software, tea machinery), or a granularity the data does not hold (district,
+# firm, monthly, employment by factory).
+#
+# Route conventions follow questions.yaml: a trade-flow question on one sector
+# routes to export_analytics; a forecast to forecast; a price or production
+# question to the sector agent; a cross-sector comparison to export_analytics
+# plus both sector agents; a shock to trade_economics plus the sector agent(s).
+
+questions:
+
+  # --- single-sector: agriculture (answerable) --------------------------
+
+  - id: H01
+    category: single_sector
+    question: What are the five largest destination markets for Sri Lankan tea by export value?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H02
+    category: single_sector
+    question: Has Sri Lanka's tea export value risen or fallen over the past decade?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H03
+    category: single_sector
+    question: Which country is the biggest buyer of Sri Lankan cinnamon?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H04
+    category: single_sector
+    question: How many countries import Sri Lankan rubber, and which one buys the most?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H05
+    category: single_sector
+    question: What was the total value of Sri Lanka's coconut exports in the latest year on record?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H06
+    category: single_sector
+    question: Is Sri Lanka's tea export market more or less concentrated than it was five years ago?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H07
+    category: single_sector
+    question: Forecast cinnamon export value for the next three years.
+    expected_route: [forecast]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H08
+    category: single_sector
+    question: What is the outlook for rubber export earnings over the next two years?
+    expected_route: [forecast]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H09
+    category: single_sector
+    question: How have world tea prices moved recently, and what does that mean for Sri Lankan tea?
+    expected_route: [agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H10
+    category: single_sector
+    question: Which market for Sri Lankan coconut products has grown the most in recent years?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H11
+    category: single_sector
+    question: What share of Sri Lanka's rubber exports goes to its top three markets combined?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H12
+    category: single_sector
+    question: How much tea does Sri Lanka produce, and how has production changed?
+    expected_route: [agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  # --- single-sector: apparel (answerable) ------------------------------
+
+  - id: H13
+    category: single_sector
+    question: What share of Sri Lanka's knitted apparel exports goes to the United States?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H14
+    category: single_sector
+    question: Which are the three largest markets for Sri Lankan woven apparel?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H15
+    category: single_sector
+    question: How did knitted apparel exports change between 2019 and the latest year?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H16
+    category: single_sector
+    question: Forecast woven apparel export value for the next three years.
+    expected_route: [forecast]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H17
+    category: single_sector
+    question: Is the destination base for Sri Lankan woven apparel diversified or concentrated?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H18
+    category: single_sector
+    question: Which European markets matter most for Sri Lankan apparel?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H19
+    category: single_sector
+    question: How vulnerable is Sri Lankan knitted apparel to a downturn in its largest market?
+    expected_route: [export_analytics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H20
+    category: single_sector
+    question: Which apparel market has declined the most for Sri Lanka in recent years?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H21
+    category: single_sector
+    question: Are knitted or woven garments the larger part of Sri Lanka's apparel exports?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H22
+    category: single_sector
+    question: What is the long-term growth rate of Sri Lankan apparel exports?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: true
+
+  # --- single-sector: unanswerable --------------------------------------
+
+  - id: H23
+    category: single_sector
+    question: How much tea did Sri Lanka export to Iraq in 2031?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: A past-tense question about a year that has not happened. A forecast is not an answer to it.
+
+  - id: H24
+    category: single_sector
+    question: Which tea estate in Nuwara Eliya earned the most from exports last year?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Firm- and estate-level data are not held.
+
+  - id: H25
+    category: single_sector
+    question: What were Sri Lanka's gem and jewellery exports last year?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Gems are outside both covered sectors.
+
+  - id: H26
+    category: single_sector
+    question: Which apparel company is Sri Lanka's largest exporter to the United Kingdom?
+    expected_route: [export_analytics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: false
+    note: Firm-level data are not held.
+
+  - id: H27
+    category: single_sector
+    question: What were Sri Lanka's knitted apparel exports in March of last year?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: false
+    note: The series are annual; there is no monthly data.
+
+  - id: H28
+    category: single_sector
+    question: How many workers are employed in Sri Lanka's garment factories in the Katunayake zone?
+    expected_route: [apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: false
+    note: No sub-national employment data.
+
+  # --- cross-sector (answerable) ----------------------------------------
+
+  - id: H29
+    category: cross_sector
+    question: Compare the United States as a market for Sri Lankan tea and for Sri Lankan apparel.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H30
+    category: cross_sector
+    question: Which earns more for Sri Lanka, tea or woven apparel, and by how much?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H31
+    category: cross_sector
+    question: Is the United Kingdom more important to Sri Lanka's agriculture exports or to its apparel exports?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H32
+    category: cross_sector
+    question: Which has the more diversified set of markets, Sri Lankan rubber or knitted apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H33
+    category: cross_sector
+    question: How did cinnamon and woven apparel exports each change after 2020?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H34
+    category: cross_sector
+    question: Do Sri Lankan tea and knitted apparel have the same largest buyer?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H35
+    category: cross_sector
+    question: Forecast cinnamon and woven apparel exports and compare their expected growth.
+    expected_route: [forecast, export_analytics]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H36
+    category: cross_sector
+    question: Which sector relies more on Middle Eastern markets, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H37
+    category: cross_sector
+    question: Has the gap between Sri Lanka's apparel and tea export earnings widened or narrowed over the last decade?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H38
+    category: cross_sector
+    question: Compare coconut and knitted apparel exports in terms of growth over the last five years.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H39
+    category: cross_sector
+    question: Which sector would gain more from stronger demand in Germany, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H40
+    category: cross_sector
+    question: Which of tea, rubber and woven apparel has the most volatile export earnings?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H41
+    category: cross_sector
+    question: How do the top markets for Sri Lankan cinnamon differ from those for Sri Lankan apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H42
+    category: cross_sector
+    question: Which sector is more exposed to India as a market, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H43
+    category: cross_sector
+    question: Rank tea, cinnamon, rubber and apparel by export value in the latest year.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H44
+    category: cross_sector
+    question: Which sector's exports fell more sharply during the 2022 economic crisis?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H45
+    category: cross_sector
+    question: Is Russia a significant market for both Sri Lankan tea and apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H46
+    category: cross_sector
+    question: Forecast rubber and knitted apparel exports for the next two years and say which carries more uncertainty.
+    expected_route: [forecast, export_analytics]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H47
+    category: cross_sector
+    question: Which sector depends more on its single largest market, agriculture or apparel?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H48
+    category: cross_sector
+    question: Compare how tea and apparel exports to the European Union have changed since 2015.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H49
+    category: cross_sector
+    question: Which market is the largest buyer of Sri Lankan goods across tea, spices and apparel combined?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  # --- cross-sector: unanswerable ---------------------------------------
+
+  - id: H50
+    category: cross_sector
+    question: Compare Sri Lanka's tea exports with its tourism earnings.
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Tourism is not covered.
+
+  - id: H51
+    category: cross_sector
+    question: Which grew faster last year, Sri Lanka's apparel exports or its IT services exports?
+    expected_route: [export_analytics]
+    expected_sectors: [apparel]
+    answerable: false
+    note: IT services are not covered.
+
+  - id: H52
+    category: cross_sector
+    question: Compare tea and apparel exports from the Southern Province.
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: false
+    note: No provincial or district data.
+
+  - id: H53
+    category: cross_sector
+    question: Which employs more people in Sri Lanka, the tea sector or the apparel sector?
+    expected_route: [agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: false
+    note: The dataset holds trade values, not employment.
+
+  - id: H54
+    category: cross_sector
+    question: How do Sri Lanka's seafood exports compare with its cinnamon exports?
+    expected_route: [export_analytics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Fisheries are not covered.
+
+  - id: H55
+    category: cross_sector
+    question: Did tea or apparel exports grow faster between 2028 and 2030?
+    expected_route: [export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: false
+    note: Past-tense question about future years.
+
+  # --- simulation (answerable) ------------------------------------------
+
+  - id: H56
+    category: simulation
+    question: What would a 10% depreciation of the rupee do to tea export earnings?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H57
+    category: simulation
+    question: If the United States raised tariffs on Sri Lankan woven apparel by 10%, how much export revenue would be at risk?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H58
+    category: simulation
+    question: How would a 20% fall in world rubber demand affect Sri Lanka's rubber export earnings?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H59
+    category: simulation
+    question: Compare the effect of a 5% rupee appreciation on tea and on apparel exports.
+    expected_route: [trade_economics, export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H60
+    category: simulation
+    question: What happens to cinnamon export revenue if Mexico imposes a 15% tariff on it?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H61
+    category: simulation
+    question: If the United Kingdom removed DCTS preferences, which would lose more, tea or apparel?
+    expected_route: [trade_economics, export_analytics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel]
+    answerable: true
+
+  - id: H62
+    category: simulation
+    question: What would a 10% drop in global demand for woven apparel mean for Sri Lanka's export revenue?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: true
+
+  - id: H63
+    category: simulation
+    question: How much would coconut export earnings change if the rupee depreciated by 15%?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  - id: H64
+    category: simulation
+    question: If Iraq stopped buying Sri Lankan tea, how much export revenue would be lost?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: true
+
+  # --- simulation: unanswerable -----------------------------------------
+
+  - id: H65
+    category: simulation
+    question: How would a 10% rupee depreciation affect Sri Lanka's gem exports?
+    expected_route: [trade_economics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Gems are not covered; an FX elasticity for another product is not an answer.
+
+  - id: H66
+    category: simulation
+    question: If the EU raised tariffs on Sri Lankan fish by 10%, what would happen to seafood export revenue?
+    expected_route: [trade_economics]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: Fisheries are not covered.
+
+  - id: H67
+    category: simulation
+    question: How many garment workers would lose their jobs if the United States raised apparel tariffs by 20%?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: false
+    note: The model gives revenue impact, not employment.
+
+  - id: H68
+    category: simulation
+    question: If tea exports from Kandy district fell 10%, how would national tea earnings change?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture]
+    answerable: false
+    note: No district data, so the district's share is unknown.
+
+  - id: H69
+    category: simulation
+    question: What would a 10% rupee depreciation do to Sri Lanka's tourism revenue and apparel exports combined?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: false
+    note: Tourism is not covered; the apparel half alone does not answer a combined figure.
+
+  - id: H70
+    category: simulation
+    question: How much would a 5% rise in factory wages reduce the profits of Sri Lanka's apparel exporters?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel]
+    answerable: false
+    note: No firm cost or profit data.

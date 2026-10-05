@@ -1,0 +1,209 @@
+# CeyNex HELD-OUT policy-retrieval set: 25 questions (P16-P40), written 2026-10-05.
+#
+# Extends the 15 questions in `policy_questions.yaml` to 40, so the retrieval
+# on/off comparison (EVALUATION.md §7; `make eval-policy-baseline` vs
+# `make eval-policy`) rests on more than 12 answerable questions. Kept in its own
+# file so the original 15 remain comparable; report the 25 and the pooled 40.
+#
+# PRE-REGISTRATION. Committed on its own BEFORE any of these questions was asked
+# of the system, with retrieval on or off. Labels are the correct behaviour as
+# judged when writing. Where the system disagrees, record it; do not edit labels.
+#
+# DISCLOSURE. The author knew which documents are in the index (the manifest in
+# ceynex/data/reference/policy_documents.csv: LKA, GBR, CAN, USA, IND, ITA) and
+# had seen the 2026-08-28 results for P01-P15, but no answer to these 25.
+# Questions are spread across the six indexed countries on purpose; five
+# (marked) target a country that is NOT indexed or a fact no document holds, so
+# the correct behaviour is to say the documents do not cover it.
+#
+# Composition: 10 single-sector · 7 cross-sector · 8 simulation.
+#   5 of the 25 are unanswerable. Categories are the existing three on purpose
+#   (see the header of policy_questions.yaml for why).
+
+questions:
+
+  # --- single-sector -----------------------------------------------------
+
+  - id: P16
+    category: single_sector
+    question: What does Sri Lanka's National Export Strategy say about developing the spices sector?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P17
+    category: single_sector
+    question: Which goals does the UK's Trade Strategy set for trade with developing countries?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+
+  - id: P18
+    category: single_sector
+    question: What tariff actions has the United States taken recently that could affect Sri Lankan apparel?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+
+  - id: P19
+    category: single_sector
+    question: Does India's Foreign Trade Policy 2023 mention preferential trade with South Asian partners?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+
+  - id: P20
+    category: single_sector
+    question: What priorities does Canada's international trade briefing set for diversifying its trade partners?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+
+  - id: P21
+    category: single_sector
+    question: Which sectors does Italy's Export Action Plan prioritise?
+    expected_route: [trade_economics]
+    expected_sectors: [macro]
+    answerable: true
+
+  - id: P22
+    category: single_sector
+    question: Which trade agreements give Sri Lankan tea preferential access to India?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P23
+    category: single_sector
+    question: What does Sri Lanka's National Export Strategy recommend for the apparel industry?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+
+  - id: P24
+    category: single_sector
+    question: What does China's latest trade policy say about tariffs on Sri Lankan rubber?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    note: China is not in the index; the correct answer says the documents do not cover it.
+
+  - id: P25
+    category: single_sector
+    question: What duty does the UAE charge on Sri Lankan coconut oil under its 2024 export development policy?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    note: The UAE documents were fetched but did not extract, so they are not indexed.
+
+  # --- cross-sector ------------------------------------------------------
+
+  - id: P26
+    category: cross_sector
+    question: Do Sri Lanka's tea and apparel exports have the same preferential access to the United Kingdom?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing, export_analytics]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+
+  - id: P27
+    category: cross_sector
+    question: Which sector is more exposed to recent United States tariff actions, agriculture or apparel?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing, export_analytics]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+
+  - id: P28
+    category: cross_sector
+    question: Which trade agreements cover both Sri Lankan spices and garments?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+
+  - id: P29
+    category: cross_sector
+    question: How does India's trade policy treat Sri Lankan agricultural goods compared with Sri Lankan textiles?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+
+  - id: P30
+    category: cross_sector
+    question: Which of Sri Lanka's export sectors does the National Export Strategy treat as the highest priority?
+    expected_route: [trade_economics, agriculture_commodity, apparel_manufacturing]
+    expected_sectors: [agriculture, apparel, macro]
+    answerable: true
+
+  - id: P31
+    category: cross_sector
+    question: Compare Canada's and Italy's stated trade priorities as they relate to Sri Lankan exports.
+    expected_route: [trade_economics, export_analytics]
+    expected_sectors: [macro]
+    answerable: true
+
+  - id: P32
+    category: cross_sector
+    question: How do the Netherlands' and Germany's import rules for tea compare?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    note: Neither country's documents are indexed.
+
+  # --- simulation --------------------------------------------------------
+
+  - id: P33
+    category: simulation
+    question: If India withdrew ISFTA preferences on Sri Lankan tea, what would happen to export revenue?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P34
+    category: simulation
+    question: What would a 10% United States tariff on Sri Lankan woven apparel do to export revenue?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+
+  - id: P35
+    category: simulation
+    question: How much would cinnamon export revenue fall if the European Union removed GSP+?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P36
+    category: simulation
+    question: If Canada imposed a 5% tariff on Sri Lankan apparel, how much revenue would be at risk?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: true
+
+  - id: P37
+    category: simulation
+    question: What happens to rubber export revenue if the United States raises its tariff on it by 10%?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P38
+    category: simulation
+    question: If the United Kingdom ended DCTS preferences, how much tea export revenue would be at risk?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: true
+
+  - id: P39
+    category: simulation
+    question: How many Sri Lankan apparel factories would close if the EU removed GSP+?
+    expected_route: [trade_economics, apparel_manufacturing]
+    expected_sectors: [apparel, macro]
+    answerable: false
+    note: No firm-level data; the model gives revenue impact only.
+
+  - id: P40
+    category: simulation
+    question: What will China's tariff on Sri Lankan tea be in 2032 after its next trade policy review?
+    expected_route: [trade_economics, agriculture_commodity]
+    expected_sectors: [agriculture, macro]
+    answerable: false
+    note: Future policy plus an unindexed country.
