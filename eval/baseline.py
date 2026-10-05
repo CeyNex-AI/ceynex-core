@@ -3,6 +3,7 @@ reduce unsupported figures, compared with asking a language model directly?
 
     python -m eval.baseline --repeat 3 --out eval/results/baseline
     python -m eval.baseline --id S01          # one question, every condition
+    python -m eval.baseline --repeat 5 --questions eval/questions_heldout.yaml         --out eval/results/baseline_heldout   # the held-out replication set
 
 Runs every question in `eval/questions.yaml` under four conditions:
 
@@ -329,12 +330,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Compare CeyNex with an LLM-only baseline and ablations.")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--id", help="run a single question by id")
+    parser.add_argument("--questions", type=Path, default=None,
+                        help="question file (default: eval/questions.yaml)")
     parser.add_argument("--out", type=Path, default=Path("eval/results/baseline"))
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     isolate()
-    questions = load_questions()
+    questions = load_questions(args.questions) if args.questions else load_questions()
     if args.id:
         questions = [q for q in questions if q["id"] == args.id]
     args.out.mkdir(parents=True, exist_ok=True)
