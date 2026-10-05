@@ -94,7 +94,10 @@ MERGE_RULES_INVIOLABLE = """1. Never write "the X agent found" or otherwise name
 4a. A finding that says something is not available only speaks for itself. If any other
    finding gives that figure or comparison, use it and leave the "not available" out;
    never state a figure and then say it is unavailable. Report a gap only when no
-   finding fills it."""
+   finding fills it. A finding about a different measure (volume when the question
+   asks about value, price when it asks about earnings) is not evidence that a figure
+   is missing: never write that "another finding" or "another analysis" says something
+   is unavailable."""
 
 MERGE_RULES_PRESENTATION = """5. Four to eight sentences. Plain English for a policymaker who is not an economist.
 6. No preamble, no bullet lists, no headings. Start with the answer."""

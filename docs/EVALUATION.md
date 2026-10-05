@@ -2218,3 +2218,29 @@ the context lacks something, say it is not available" is therefore replaced:
 an agent describes only what its own findings show, and gaps are stated once,
 by the merge, which sees every finding. This is measured the same way after
 deploy.
+
+**Explanation rule 1a (#144), measured live (33b6aa6, same set).** Answerable
+answers that state a figure and also a "not available" sentence: **11/28 before
+4a, 10/28 after 4a, 6/28 after 1a.** M04 and X08 are now clean. H27 now states
+the missing monthly figure; it said nothing before. Real gaps are kept (H67,
+H69, S12/X11/X12), with no empty answers and mean evidence still 6.82.
+
+The six left, read one by one:
+
+- **Genuine gaps.** S04 (no district data) and X05 (no apparel prices for a
+  price comparison).
+- **Hand-over gaps.** The figure existed but never reached the merge:
+  - S05: only the first forecast year was in the evidence, so it said "2027 and
+    2028 not available";
+  - X03: each side passed only its top market, so it said overlap was
+    "not available".
+- **Still invented by the merge.** X01 ("apparel figures … were not provided",
+  beside apparel's −2.7% a year) and H64 ("another finding indicates … not
+  provided"). Both cite the tea-volume finding, which is about a different
+  measure.
+
+#145 hands over every forecast year, and gives comparisons each side's top
+five markets plus their overlap. It also sharpens rule 4a: a finding about a
+different measure is not evidence that a figure is missing, and the merge must
+never attribute a gap to "another finding". This is measured the same way
+after deploy.

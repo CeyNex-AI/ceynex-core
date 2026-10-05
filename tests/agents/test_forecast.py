@@ -331,3 +331,11 @@ def test_a_registered_forecast_states_its_latest_actual():
     out = run()
     assert out["figures"]["latest_actual_export_value_usd"] == pytest.approx(181.0)
     assert any("Latest actual" in e["claim"] for e in out["evidence"])
+
+
+def test_every_forecast_year_reaches_the_evidence():
+    """S05 asked for three years and was told two of them were "not available"."""
+    out = run("forecast cinnamon exports for the next 3 years")
+
+    every = next(e["claim"] for e in out["evidence"] if "for every year asked" in e["claim"])
+    assert all(str(p["period"]) in every for p in out["forecast"])

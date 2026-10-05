@@ -69,7 +69,9 @@ async def export_analytics_node(state: AgentState, deps: AgentDeps) -> dict[str,
     return output
 
 
-async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
+async def _analyse(
+    state: AgentState, deps: AgentDeps, top_markets: dict[str, list[str]] | None = None
+) -> dict[str, Any]:
     intent = parse_intent(state["query"])
     item = intent.item or "tea"
     year = intent.year or await _latest_year(deps, item)
@@ -117,6 +119,8 @@ async def _analyse(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
     scope = f" among {region} markets" if region else ""
     if rows:
         leader = rows[0]
+        if top_markets is not None:
+            top_markets[item] = [str(row["partner"]) for row in rows[:5]]
         # Unrounded: the summary and the evidence claim each format this once, as
         # "{:.1f}%". Pre-rounding to 4 dp double-rounded it (0.201476 -> 0.2015
         # -> "20.2%") while the evidence, formatted from the raw share, said "20.1%".
@@ -336,8 +340,9 @@ async def _analyse_each(state: AgentState, deps: AgentDeps, items: list[str]) ->
     handed the verdict's inputs side by side and never has to infer one side.
     """
     outputs = {}
+    top_markets: dict[str, list[str]] = {}
     for item in items:
-        patch = await _analyse(choose_item(state, item), deps)
+        patch = await _analyse(choose_item(state, item), deps, top_markets)
         outputs[item] = patch["agent_outputs"][AGENT]
     comparison = []
     for key, what, fmt in COMPARABLE:
@@ -346,6 +351,18 @@ async def _analyse_each(state: AgentState, deps: AgentDeps, items: list[str]) ->
             ranked = sorted(values.items(), key=lambda kv: kv[1], reverse=True)
             listed = ", ".join(f"{item_label(i)} {fmt.format(v)}" for i, v in ranked)
             comparison.append(f"Ranked by {what}: {listed}.")
+    # "Do agriculture and apparel go to the same markets?" (X03) was answered
+    # "no information available" because each side handed over one market.
+    for item, markets in top_markets.items():
+        comparison.append(f"Top five markets for {item_label(item)}: {', '.join(markets)}.")
+    if len(top_markets) >= 2:
+        shared = set.intersection(*(set(m) for m in top_markets.values()))
+        listed = [m for m in next(iter(top_markets.values())) if m in shared]
+        comparison.append(
+            f"Markets in the top five of every item compared: {', '.join(listed)}."
+            if listed
+            else "No market is in the top five of every item compared."
+        )
     missing = [item_label(i) for i, o in outputs.items() if not o["figures"]]
     if missing:
         comparison.append(f"No comparable figures were found for {', '.join(missing)}.")

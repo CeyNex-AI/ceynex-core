@@ -232,6 +232,8 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         )
     )
 
+    if len(points) > 1:
+        evidence.append(_every_period(points, model_id, "export value"))
     evidence.append(
         evidence_from_query(
             claim=(
@@ -276,6 +278,22 @@ async def _forecast(state: AgentState, deps: AgentDeps) -> dict[str, Any]:
         assumptions=assumptions,
         forecast=points,
         confidence=_baseline_confidence(len(history)),
+    )
+
+
+def _every_period(points: list[ForecastPoint], model_id: str, label: str) -> Evidence:
+    """Every forecast year, not just the first. Only the first period ever reached
+    the evidence, so "forecast tea for the next three years" (S05) was answered
+    with one year and "the forecast for 2027 and 2028 is not available" (live,
+    2026-10-05), although the model had produced both."""
+    years = "; ".join(
+        f"{p['period']}: {p['point']:,.0f} {p['unit']} ({p['lower']:,.0f} to {p['upper']:,.0f})"
+        for p in points
+    )
+    return evidence_from_model(
+        claim=f"{label.capitalize()} forecast for every year asked, with 80% intervals: {years}.",
+        model_id=model_id,
+        period=f"{points[0]['period']}-{points[-1]['period']}",
     )
 
 
@@ -403,6 +421,8 @@ async def _registered_forecast(
             model_id=model_id,
         ),
     ]
+    if len(points) > 1:
+        evidence.append(_every_period(points, model_id, label))
     if latest is not None:
         evidence.append(
             evidence_from_model(
